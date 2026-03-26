@@ -1,6 +1,29 @@
-# SettleX — Split Bills. Pay On-Chain.
+﻿<p align="center">
+  <img src="public/logo.svg" alt="SettleX Logo" height="52" />
+</p>
 
-> A decentralised expense-splitting app built on the **Stellar Network**. Add group expenses, split them by any method, and pay each member's share directly from your Freighter wallet — all settled on-chain in under 5 seconds.
+<h1 align="center">SettleX — Split Bills. Pay On-Chain.</h1>
+
+<p align="center">
+  A decentralised expense-splitting application built on the <strong>Stellar Network</strong>.<br/>
+  Add group expenses, split them by any method, and settle every share directly from your wallet — confirmed on-chain in under 5 seconds.
+</p>
+
+<p align="center">
+  <a href="https://stellar.expert/explorer/testnet/contract/CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74">
+    <img src="https://img.shields.io/badge/Contract-Testnet%20Deployed-4CAF50?style=flat-square&logo=stellar" alt="Contract Deployed" />
+  </a>
+  <a href="https://stellar.expert/explorer/testnet/tx/588b55a12910227e3d7aa849f70efebde6ab2f0ca75e95389a67e33f9dd930ff">
+    <img src="https://img.shields.io/badge/Sample%20Tx-Verified-blue?style=flat-square&logo=stellar" alt="Sample Transaction" />
+  </a>
+  <img src="https://img.shields.io/badge/Network-Stellar%20Testnet-7B68EE?style=flat-square" alt="Stellar Testnet" />
+  <img src="https://img.shields.io/badge/Tests-45%20Passing-brightgreen?style=flat-square" alt="45 Tests Passing" />
+</p>
+
+<p align="center">
+  <a href="https://settle-x-pi.vercel.app/"><strong>Live Demo</strong></a> &nbsp;&bull;&nbsp;
+  <a href="https://youtu.be/gnUaUONmb3I"><strong>Demo Video</strong></a>
+</p>
 
 ---
 
@@ -9,31 +32,35 @@
 - [Project Description](#project-description)
 - [Features](#features)
 - [Tech Stack](#tech-stack)
+- [Screenshots](#screenshots)
 - [How It Works](#how-it-works)
+- [Smart Contract](#smart-contract)
 - [Setup Instructions](#setup-instructions)
 - [Environment Variables](#environment-variables)
+- [Testing](#testing)
 - [Project Structure](#project-structure)
-- [Blockchain Integration](#blockchain-integration)
-- [Screenshots](#screenshots)
+- [Testnet Notes](#testnet-notes)
 
 ---
 
 ## Project Description
 
-SettleX solves a common problem: splitting group expenses fairly and actually collecting the money. Traditional apps (Splitwise, etc.) only track IOUs — you still have to chase people for cash. SettleX closes the loop by letting every participant pay their exact share directly via the **Stellar blockchain** in a single click.
+SettleX solves a fundamental problem with group expense sharing: apps like Splitwise only track IOUs — you still have to chase people for real money. SettleX closes the loop by connecting split calculations directly to on-chain payments.
 
-Key differentiators:
+Every payment produces a **real, verifiable transaction hash** on the Stellar blockchain. An on-chain Soroban smart contract acts as an immutable settlement ledger, so payment records cannot be edited or disputed. The app syncs across all participants in real time — when someone pays, everyone sees it immediately.
 
-- **No intermediary** — money moves peer-to-peer between Stellar wallets.
-- **On-chain receipts** — every payment produces a real transaction hash traceable on any Stellar explorer.
-- **QR code payments** — generates a SEP-0007 payment URI so anyone with a Stellar wallet can pay by scanning.
-- **Trip mode** — group multiple expenses under a trip, track net balances, and settle the whole trip with one flow.
-- **Non-custodial** — your private key never leaves your Freighter wallet extension; SettleX only receives the signed transaction envelope.
+**Core design principles:**
+
+- **Non-custodial** — your private key never leaves your wallet extension. SettleX only receives the signed transaction envelope.
+- **No intermediary** — money moves peer-to-peer between Stellar wallets; the app never holds funds.
+- **On-chain receipts** — every settled share has a Stellar transaction hash you can verify on [stellar.expert](https://stellar.expert/explorer/testnet).
+- **Multi-wallet** — supports Freighter, xBull, and Lobstr via a custom `StellarWalletsKit` with install detection.
 
 ---
 
 ## Features
 
+<<<<<<< HEAD
 | Feature                                                    | Status  |
 | ---------------------------------------------------------- | ------- |
 | Wallet connect via Freighter                               | ✅ Live |
@@ -45,11 +72,27 @@ Key differentiators:
 | Trip mode (group expenses + settle up)                     | ✅ Live |
 | Net balance calculator per trip                            | ✅ Live |
 | Mobile-responsive UI                                       | ✅ Live |
+=======
+| Feature                                                      | Status |
+| ------------------------------------------------------------ | ------ |
+| Multi-wallet connect (Freighter, xBull, Lobstr)              | Live   |
+| Create and split expenses — equal, percentage, custom weight | Live   |
+| Pay shares with XLM (Stellar Payment operation)              | Live   |
+| SEP-0007 QR code generation for mobile wallets               | Live   |
+| Transaction hash receipt linked to Stellar Explorer          | Live   |
+| Soroban contract: immutable on-chain payment recording       | Live   |
+| Real-time event listening from contract (`pmt_rec` events)   | Live   |
+| Trip mode — group expenses with net-balance settle-up        | Live   |
+| Live cross-user sync via Supabase Realtime                   | Live   |
+| Net-balance algorithm (minimises transactions needed)        | Live   |
+| Mobile-responsive UI                                         | Live   |
+>>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ---
 
 ## Tech Stack
 
+<<<<<<< HEAD
 | Layer          | Technology                              |
 | -------------- | --------------------------------------- |
 | Framework      | Next.js 14 (App Router, TypeScript)     |
@@ -61,31 +104,155 @@ Key differentiators:
 | QR codes       | `qrcode.react`, `qrcode`                |
 | State          | React Context + Supabase + localStorage |
 | UI primitives  | Radix UI, Lucide React                  |
+=======
+| Layer            | Technology                                     |
+| ---------------- | ---------------------------------------------- |
+| Framework        | Next.js 14 (App Router, TypeScript)            |
+| Styling          | Tailwind CSS 3.4, Framer Motion                |
+| Blockchain SDK   | `@stellar/stellar-sdk` v14                     |
+| Wallet support   | `@stellar/freighter-api` v6, xBull SDK, Lobstr |
+| Smart contract   | Soroban (Rust, `soroban-sdk` v21)              |
+| Network          | Stellar Testnet (Horizon + Soroban RPC)        |
+| Database         | Supabase (PostgreSQL + Realtime)               |
+| QR codes         | `qrcode.react`, `qrcode`                       |
+| Testing          | Jest 29 + ts-jest (45 unit tests)              |
+| State management | React Context + Supabase + localStorage        |
+| UI primitives    | Radix UI, Lucide React                         |
+
+---
+
+## Screenshots
+
+### Home / Landing Page
+
+![Home](public/home.png)
+
+---
+
+### Dashboard — Wallet Connected & Balance Displayed
+
+The dashboard shows your connected public key, live XLM balance fetched from Horizon, and the Testnet indicator.
+
+![Dashboard](public/Dashboard.png)
+
+---
+
+### Expenses — Wallet Options & Split View
+
+The multi-wallet selector lets users connect via Freighter, xBull, or Lobstr. Wallets not installed show an "Install" badge. Below it the expenses list shows split breakdowns with Pay XLM buttons per share.
+
+![Expenses](public/expencess.png)
+
+---
+
+### Trips Overview
+
+![Trips](public/trips.png)
+
+---
+
+### New Expense Form
+
+Define members, set amounts, and choose the split mode (equal / percentage / custom weight). The form calculates each share in real time.
+
+![New Expense Form](public/new_expencess_form.png)
+
+---
+
+### Test Output — 45 Tests Passing
+
+All three test suites passing with Jest + ts-jest.
+
+![Test Output](public/test_pass.png)
+>>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ---
 
 ## How It Works
 
 ```
-User adds expense
-       ↓
-Defines members + split mode (equal / percent / weight)
-       ↓
-SDK builds a Stellar Payment operation
-  • from:   payer's public key
-  • to:     payee's Stellar address
-  • amount: share amount in XLM
-  • memo:   expense ID
-       ↓
-Freighter signs the transaction client-side
-(private key never leaves the browser extension)
-       ↓
+User connects wallet (Freighter / xBull / Lobstr)
+              |
+User creates expense, adds members, picks split mode
+              |
+App calculates each member's exact share
+              |
+Payer clicks "Pay XLM"
+              |
+    +---------+-----------+
+    |                     |
+buildTransaction()    checkIsPaid()     <- on-chain duplicate check (Soroban)
+    |
+TransactionBuilder constructs Payment operation
+  · from:   payer public key
+  · to:     payee Stellar address
+  · amount: share amount in XLM
+  · memo:   expense ID
+    |
+Wallet extension signs client-side
+(private key never leaves the browser)
+    |
 Signed envelope submitted to Horizon REST API
-       ↓
-Stellar validators confirm → finalised in ~5s
-       ↓
-tx hash stored → share marked "paid" in app
+    |
+Stellar validators confirm in ~5 seconds
+    |
+recordPaymentOnChain() stores to Soroban contract:
+  trip_id, expense_id, payer, member, amount, tx_hash
+    |
+tx hash stored in app, share marked "paid"
+useContractEvents polls every 10s -> syncs state for all participants
 ```
+
+---
+
+## Smart Contract
+
+SettleX deploys a **Soroban smart contract** on Stellar Testnet as an immutable, tamper-proof ledger of all settled payments.
+
+### Deployed Contract
+
+| Field       | Value                                                                                                                                  |
+| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Contract ID | `CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74`                                                                             |
+| Network     | Stellar Testnet                                                                                                                        |
+| Language    | Rust (`soroban-sdk` v21.7.6)                                                                                                           |
+| Explorer    | [stellar.expert → contract](https://stellar.expert/explorer/testnet/contract/CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74) |
+
+### Verified Contract Call Transaction
+
+**Transaction hash:** `588b55a12910227e3d7aa849f70efebde6ab2f0ca75e95389a67e33f9dd930ff`
+
+[View on Stellar Explorer](https://stellar.expert/explorer/testnet/tx/588b55a12910227e3d7aa849f70efebde6ab2f0ca75e95389a67e33f9dd930ff)
+
+This transaction is a live, verifiable `record_payment` call to the deployed contract on Stellar Testnet.
+
+### Contract Functions
+
+| Function                                                              | Type  | Purpose                                                 |
+| --------------------------------------------------------------------- | ----- | ------------------------------------------------------- |
+| `record_payment(trip_id, expense_id, payer, member, amount, tx_hash)` | Write | Stores payment record on-chain after XLM transfer       |
+| `get_payments(trip_id)`                                               | Read  | Returns all payment records for a trip                  |
+| `is_paid(expense_id, member)`                                         | Read  | Checks if a member has already settled a specific share |
+
+**Error codes handled by the frontend:**
+
+| Code | Name            | Meaning                                  |
+| ---- | --------------- | ---------------------------------------- |
+| #1   | `InvalidAmount` | Payment amount is zero or negative       |
+| #2   | `AlreadyPaid`   | This share was already settled on-chain  |
+| #3   | `EmptyId`       | Trip ID or expense ID is an empty string |
+
+### Why a Smart Contract?
+
+In a Horizon-only setup there is no shared source of truth for payment status — any user could mark a share as paid without actually transferring XLM. The Soroban contract solves this:
+
+- `record_payment` stores the real Stellar `tx_hash` as proof of transfer.
+- `is_paid` acts as a duplicate guard — re-settling an already-paid share is rejected on-chain with `AlreadyPaid (#2)`.
+- All records are permanently on the Stellar ledger and cannot be modified or deleted by anyone, including the app operator.
+
+### Real-Time Events
+
+The contract emits a `pmt_rec` event for every confirmed payment. `hooks/useContractEvents.ts` polls the Soroban RPC every 10 seconds and on browser tab focus. New events are deduplicated by `txHash` and merged into React state — all participants see confirmed payments without refreshing the page.
 
 ---
 
@@ -95,15 +262,15 @@ tx hash stored → share marked "paid" in app
 
 - **Node.js** v18 or later
 - **npm** v9 or later
-- **Freighter Wallet** browser extension → [freighter.app](https://freighter.app)
-  - Switch Freighter to **Testnet** in Settings → Network
-- A funded Stellar **Testnet** account — get free XLM at [friendbot](https://horizon-testnet.stellar.org/friendbot?addr=YOUR_PUBLIC_KEY)
+- **Freighter Wallet** browser extension — [freighter.app](https://freighter.app)
+  - In Freighter: Settings → Network → select **Testnet**
+- A funded Stellar Testnet account — get free XLM from [Stellar Friendbot](https://horizon-testnet.stellar.org/friendbot?addr=YOUR_PUBLIC_KEY)
 
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/settlex.git
-cd settlex
+git clone https://github.com/soumen0818/SettleX.git
+cd SettleX
 ```
 
 ### 2. Install dependencies
@@ -112,6 +279,7 @@ cd settlex
 npm install
 ```
 
+<<<<<<< HEAD
 ### 3. Set up Supabase (Required for real-time sync)
 
 **New Feature**: SettleX now syncs expenses in real-time across all users!
@@ -123,6 +291,15 @@ Quick summary:
 1. Create a free Supabase project at [supabase.com](https://supabase.com)
 2. Run the SQL schema from [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)
 3. Copy your project URL and anon key to `.env.local`
+=======
+### 3. Create a Supabase project
+
+SettleX uses Supabase for real-time cross-user sync. Without it, data only persists locally in the current browser session.
+
+1. Create a free project at [supabase.com](https://supabase.com).
+2. In the SQL Editor, run the full schema from [`supabase-setup.sql`](supabase-setup.sql) (or follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) for a walkthrough).
+3. Copy your **Project URL** and **anon key** from Project Settings → API.
+>>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ### 4. Configure environment variables
 
@@ -130,17 +307,23 @@ Quick summary:
 cp .env.local.example .env.local
 ```
 
+<<<<<<< HEAD
 Edit `.env.local` with your Supabase credentials:
 
 See [Environment Variables](#environment-variables) below for details.
 
 ### 5. Run the development server
+=======
+Fill in your Supabase credentials. The contract ID and RPC URL are pre-filled with the deployed testnet values. See [Environment Variables](#environment-variables) for the full reference.
+
+### 5. Start the development server
+>>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ```bash
 npm run dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) in your browser.
+Open [http://localhost:3000](http://localhost:3000) and connect your Freighter wallet (set to Testnet).
 
 ### 6. Build for production
 
@@ -153,7 +336,7 @@ npm run start
 
 ## Environment Variables
 
-Create a `.env.local` file in the project root:
+Create (or edit) `.env.local` in the project root:
 
 ```env
 # Stellar Network
@@ -161,7 +344,15 @@ NEXT_PUBLIC_STELLAR_NETWORK=TESTNET
 NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org
 NEXT_PUBLIC_STELLAR_EXPLORER=https://stellar.expert/explorer/testnet
 
+<<<<<<< HEAD
 # Supabase (Get these from your Supabase project dashboard)
+=======
+# Soroban Smart Contract (deployed — no changes needed)
+NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
+NEXT_PUBLIC_CONTRACT_ID=CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74
+
+# Supabase (from Project Settings → API in your Supabase dashboard)
+>>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 
@@ -170,7 +361,44 @@ NEXT_PUBLIC_APP_NAME=SettleX
 NEXT_PUBLIC_APP_VERSION=1.0.0
 ```
 
+<<<<<<< HEAD
 > All variables are prefixed with `NEXT_PUBLIC_` because they are read client-side. The Supabase anon key is safe to expose — it only allows public access as configured in your RLS policies.
+=======
+> All variables carry the `NEXT_PUBLIC_` prefix because they are read client-side. The Supabase anon key is safe to expose — access is governed by Row Level Security (RLS) policies in your database.
+
+---
+
+## Testing
+
+### JavaScript / TypeScript unit tests
+
+```bash
+npm test
+```
+
+For coverage report:
+
+```bash
+npm run test:coverage
+```
+
+| Test file                                 | Coverage                                                                                     |
+| ----------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `__tests__/split/calculator.test.ts`      | Equal split, custom/weighted split, amount validation, Stellar address format checks         |
+| `__tests__/settlement/netBalance.test.ts` | Net-balance algorithm: simple debt, netting, three-person chains, wallet address passthrough |
+| `__tests__/utils/formatters.test.ts`      | `formatAddress`, `formatXLM`, `stroopsToXlm` conversions                                     |
+
+**45 tests across 3 suites — all passing.** See the test output screenshot in [Screenshots](#screenshots).
+
+### Rust contract tests
+
+```bash
+cd contract
+cargo test
+```
+
+8 tests: `record_and_query`, `multiple_members`, `multiple_expenses_same_trip`, `duplicate_payment_rejected`, `zero_amount_rejected`, `negative_amount_rejected`, `is_paid_unknown_returns_false`, `get_payments_unknown_trip_is_empty`.
+>>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ---
 
@@ -179,104 +407,72 @@ NEXT_PUBLIC_APP_VERSION=1.0.0
 ```
 settlex/
 ├── app/
-│   ├── page.tsx              # Landing page
-│   ├── dashboard/page.tsx    # Main app dashboard
-│   ├── expenses/page.tsx     # Expense list + management
+│   ├── page.tsx                  # Landing page
+│   ├── auth/page.tsx             # Authentication
+│   ├── dashboard/page.tsx        # Dashboard (wallet + balance)
+│   ├── expenses/page.tsx         # Expense list and management
 │   └── trips/
-│       ├── page.tsx          # Trip list
-│       └── [id]/page.tsx     # Trip detail (expenses + settle up)
+│       ├── page.tsx              # Trip list
+│       └── [id]/page.tsx         # Trip detail — expenses + settle-up tab
 │
 ├── components/
-│   ├── landing/              # Hero, Features, HowItWorks, etc.
-│   ├── expenses/             # ExpenseForm, SplitCalculator, PaymentRow
-│   ├── payment/              # PayButton, PaymentStatus, QRCodeDisplay
-│   ├── trips/                # TripCard, TripForm, ExpenseList, SettlementSummary
-│   ├── wallet/               # ConnectWalletButton, WalletInfo, WalletGuard
-│   └── ui/                   # Button, Modal, Badge, Spinner, Toast
+│   ├── landing/                  # Hero, Features, HowItWorks, Pricing, Testimonials
+│   ├── expenses/                 # ExpenseForm, SplitCalculator, PaymentRow, ReceiptModal
+│   ├── payment/                  # PayButton, PaymentStatus, QRCodeDisplay, TransactionHash
+│   ├── trips/                    # TripCard, TripForm, ExpenseList, SettlementSummary
+│   ├── wallet/                   # ConnectWalletButton, WalletInfo, WalletGuard
+│   └── ui/                       # Button, Modal, Badge, Spinner, Toast, Logo
 │
 ├── context/
-│   ├── ExpenseContext.tsx    # Global expense state
-│   └── TripContext.tsx       # Global trip state
+│   ├── ExpenseContext.tsx        # Global expense state
+│   ├── TripContext.tsx           # Global trip state
+│   ├── AuthContext.tsx           # Authentication state
+│   └── WalletContext.tsx         # Wallet connection state
 │
 ├── hooks/
-│   ├── useWallet.ts          # Freighter wallet connection
-│   ├── useExpense.ts         # Expense CRUD operations
-│   ├── useTrip.ts            # Trip CRUD operations
-│   └── usePayment.ts         # Payment flow orchestration
+│   ├── useWallet.ts              # Multi-wallet connection (StellarWalletsKit)
+│   ├── useExpense.ts             # Expense CRUD
+│   ├── useTrip.ts                # Trip CRUD
+│   ├── usePayment.ts             # Full 7-state payment flow orchestration
+│   └── useContractEvents.ts      # Real-time Soroban event polling
 │
 ├── lib/
 │   ├── stellar/
-│   │   ├── buildTransaction.ts   # Constructs Stellar Payment tx
-│   │   └── submitTransaction.ts  # Broadcasts to Horizon
-│   ├── qr/
-│   │   └── generator.ts          # SEP-0007 URI + QR generation
-│   └── settlement/
-│       └── netBalance.ts         # Net balance algorithm for trips
+│   │   ├── walletsKit.ts         # Custom multi-wallet provider (Freighter, xBull, Lobstr)
+│   │   ├── contract.ts           # Soroban contract calls + error decoding
+│   │   ├── events.ts             # pmt_rec event fetch and decode
+│   │   ├── buildTransaction.ts   # Stellar Payment transaction builder
+│   │   ├── submitTransaction.ts  # Horizon broadcast
+│   │   └── getBalance.ts         # Account balance query
+│   ├── qr/generator.ts           # SEP-0007 URI + QR generation
+│   └── settlement/netBalance.ts  # Net-balance optimisation algorithm
 │
-└── types/
-    ├── expense.ts
-    └── trip.ts
+├── contract/
+│   └── src/lib.rs                # Soroban smart contract source (Rust)
+│
+├── __tests__/
+│   ├── split/calculator.test.ts
+│   ├── settlement/netBalance.test.ts
+│   └── utils/formatters.test.ts
+│
+└── docs/
+    ├── QUICKSTART.md
+    ├── SUPABASE_SETUP.md
+    ├── AUTHENTICATION_SETUP.md
+    └── MANUAL_TESTING_GUIDE.md
 ```
-
----
-
-## Blockchain Integration
-
-SettleX uses **Stellar's native payment protocol** — no smart contracts are required because peer-to-peer XLM transfers are a first-class primitive on the Stellar ledger.
-
-### Payment flow (code path)
-
-1. **`lib/stellar/buildTransaction.ts`**
-   - Loads the payer's account sequence number from Horizon
-   - Constructs a `TransactionBuilder` with a `Payment` operation
-   - Attaches a `Memo.text(expenseId)` so the payment is traceable
-   - Returns a serialised XDR transaction envelope
-
-2. **`@stellar/freighter-api` — `signTransaction()`**
-   - Sends the XDR to the Freighter extension for signing
-   - User approves in the popup — private key never exposed to the app
-
-3. **`lib/stellar/submitTransaction.ts`**
-   - POSTs the signed XDR to `https://horizon-testnet.stellar.org/transactions`
-   - Returns the `hash` of the confirmed transaction
-
-4. **`hooks/usePayment.ts`**
-   - Orchestrates steps 1–3
-   - On success: calls `updateShare(expenseId, memberId, { paid: true, txHash })`
-   - The `txHash` is shown to the user and links to [stellar.expert](https://stellar.expert/explorer/testnet)
-
-### Why no smart contract?
-
-Stellar's protocol natively supports trustless, atomic XLM transfers. Each `Payment` operation is:
-
-- **Atomic** — it either fully succeeds or fully fails
-- **Transparent** — publicly verifiable on any Stellar block explorer
-- **Final** — confirmed within ~5 seconds, no rollback possible
-- **Auditable** — the memo field ties every on-chain payment back to a specific expense
-
----
-
-## Screenshots
-
-> _Screenshots section — to be added after testnet testing._
->
-> Required captures:
->
-> - Wallet connected state (dashboard with public key displayed)
-> - Balance displayed in wallet info panel
-> - Successful testnet transaction (PaymentStatus showing tx hash)
-> - Transaction result shown to user (link to stellar.expert)
 
 ---
 
 ## Testnet Notes
 
 - This app runs entirely on **Stellar Testnet** — no real funds are used.
-- Fund your Freighter testnet account via Stellar Friendbot:
+- Fund your Freighter testnet wallet with the Friendbot:
   ```
   https://horizon-testnet.stellar.org/friendbot?addr=YOUR_PUBLIC_KEY
   ```
-- All transactions are visible at [stellar.expert/explorer/testnet](https://stellar.expert/explorer/testnet).
+- All transactions and contract events are visible at [stellar.expert/explorer/testnet](https://stellar.expert/explorer/testnet).
+- The deployed contract address and sample transaction on this page can be verified live on the explorer at any time.
 
 ---
 

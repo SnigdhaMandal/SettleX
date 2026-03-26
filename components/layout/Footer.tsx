@@ -3,7 +3,8 @@
 import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Zap, Twitter, Github, ExternalLink, ArrowUpRight } from "lucide-react";
+import { Twitter, Github, ExternalLink, ArrowUpRight } from "lucide-react";
+import { SettleXLogo } from "@/components/ui/Logo";
 
 const footerLinks = {
   Product: [
@@ -43,13 +44,8 @@ export default function Footer() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 pb-12 border-b border-white/10">
           {/* Brand column */}
           <div className="lg:col-span-4">
-            <Link href="/" className="flex items-center gap-2 mb-4">
-              <div className="flex items-center justify-center w-9 h-9 bg-[#B9FF66] rounded-xl">
-                <Zap size={18} className="text-[#0F0F14] fill-[#0F0F14]" />
-              </div>
-              <span className="text-xl font-black tracking-tight">
-                Settle<span className="text-[#B9FF66]">X</span>
-              </span>
+            <Link href="/" className="inline-flex mb-4" aria-label="SettleX home">
+              <SettleXLogo size="md" variant="dark" />
             </Link>
             <p className="text-[#888] text-sm leading-relaxed max-w-xs mb-6">
               Decentralized bill-splitting on the Stellar blockchain. Split expenses, pay instantly, track transparently.

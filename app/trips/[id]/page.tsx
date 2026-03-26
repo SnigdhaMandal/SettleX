@@ -38,9 +38,11 @@ type Tab = "expenses" | "settle";
 function TripExpenseCard({
   expense,
   currentUserPublicKey,
+  tripId,
 }: {
   expense: Expense;
   currentUserPublicKey?: string | null;
+  tripId: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [payingShareId, setPayingShareId] = useState<string | null>(null);
@@ -61,6 +63,7 @@ function TripExpenseCard({
       share,
       expenseTitle: expense.title,
       payerWalletAddress: payer?.walletAddress ?? "",
+      tripId,
     });
     setPayingShareId(null);
   };
@@ -412,6 +415,7 @@ export default function TripDetailPage() {
                           key={expense.id}
                           expense={expense}
                           currentUserPublicKey={publicKey}
+                          tripId={trip.id}
                         />
                       ))}
                     </AnimatePresence>

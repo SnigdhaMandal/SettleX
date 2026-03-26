@@ -3,10 +3,11 @@
 import React, { useState, useEffect, useRef } from "react";
 import Link from "next/link";
 import { motion, AnimatePresence } from "framer-motion";
-import { Menu, X, Zap, LogOut, User, LayoutDashboard, Receipt, Map, ChevronDown, Copy } from "lucide-react";
+import { Menu, X, LogOut, User, LayoutDashboard, Receipt, Map, ChevronDown, Copy } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { useAuth } from "@/context/AuthContext";
 import { cn, formatAddress } from "@/lib/utils";
+import { SettleXLogo } from "@/components/ui/Logo";
 
 const navLinks = [
   { label: "Features", href: "#features" },
@@ -79,13 +80,11 @@ export default function Header() {
           <div className="max-w-7xl mx-auto px-5 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
               {/* Logo */}
-              <Link href="/" className="flex items-center gap-2 group">
-                <div className="flex items-center justify-center w-8 h-8 bg-[#B9FF66] rounded-xl shadow-[0_2px_12px_-2px_rgba(185,255,102,0.5)] group-hover:shadow-[0_4px_16px_-2px_rgba(185,255,102,0.7)] transition-all duration-200">
-                  <Zap size={16} className="text-[#0F0F14] fill-[#0F0F14]" />
-                </div>
-                <span className="text-lg font-black tracking-tight text-[#0F0F14]">
-                  Settle<span className="text-[#B9FF66] drop-shadow-sm">X</span>
-                </span>
+              <Link href="/" className="group" aria-label="SettleX home">
+                <SettleXLogo
+                  size="md"
+                  className="group-hover:opacity-90 transition-opacity duration-150"
+                />
               </Link>
 
               {/* Desktop Nav */}
