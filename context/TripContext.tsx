@@ -14,7 +14,6 @@ import { supabase, createAuthenticatedClient } from "@/lib/supabase/client";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { useWalletContext } from "./WalletContext";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface TripContextType {
   trips: Trip[];
@@ -27,12 +26,10 @@ interface TripContextType {
   isLoading: boolean;
 }
 
-// ─── Context ──────────────────────────────────────────────────────────────────
 
 const TripContext = createContext<TripContextType | null>(null);
 TripContext.displayName = "TripContext";
 
-// ─── Helper: Convert DB row to Trip ──────────────────────────────────────────
 
 function dbRowToTrip(row: any): Trip {
   return {
@@ -46,16 +43,11 @@ function dbRowToTrip(row: any): Trip {
   };
 }
 
-// ─── Helper: Convert Trip to DB row ──────────────────────────────────────────
-
 function tripToDbRow(trip: Trip, creatorWallet: string) {
-  // Extract wallet addresses from members
   const memberWallets = trip.members
     .map((m) => m.walletAddress)
     .filter((addr): addr is string => !!addr);
 
-  // Ensure the authenticated creator wallet is always in member_wallets
-  // (RLS requires created_by_wallet = ANY(member_wallets))
   const allMemberWallets = creatorWallet && !memberWallets.includes(creatorWallet)
     ? [creatorWallet, ...memberWallets]
     : memberWallets;
@@ -68,12 +60,11 @@ function tripToDbRow(trip: Trip, creatorWallet: string) {
     expense_ids: trip.expenseIds,
     created_at: trip.createdAt,
     settled: trip.settled,
-    created_by_wallet: creatorWallet,  // always the authenticated user
+    created_by_wallet: creatorWallet,
     member_wallets: allMemberWallets,
   };
 }
 
-// ─── Provider ────────────────────────────────────────────────────────────────
 
 export function TripProvider({ children }: { children: React.ReactNode }) {
   const [trips, setTrips] = useState<Trip[]>([]);
@@ -81,12 +72,9 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
   const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
   const { publicKey } = useWalletContext();
 
-  // Get the appropriate Supabase client (authenticated if wallet connected)
   const getClient = useCallback(() => {
     return publicKey ? createAuthenticatedClient(publicKey) : supabase;
   }, [publicKey]);
-
-  // ── Initial load from Supabase ─────────────────────────────────────────────
 
   useEffect(() => {
     let isMounted = true;
@@ -114,7 +102,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
             setTrips(JSON.parse(raw) as Trip[]);
           }
         } catch {
-          // Ignore localStorage errors
+          // ignore
         }
       } finally {
         if (isMounted) {
@@ -130,7 +118,6 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     };
   }, [getClient]);
 
-  // ── Subscribe to realtime updates ──────────────────────────────────────────
 
   useEffect(() => {
     if (isLoading) return;
@@ -186,12 +173,9 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isLoading]);
 
-  // ── CRUD ──────────────────────────────────────────────────────────────────
-
   const addTrip = useCallback(async (trip: Trip) => {
     if (!publicKey) throw new Error("Wallet not connected");
 
-    // Optimistic update immediately
     setTrips((prev) => {
       const updated = [trip, ...prev];
       localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
@@ -205,7 +189,6 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       .insert([tripToDbRow(trip, publicKey)]);
 
     if (error) {
-      // Rollback optimistic update on hard failure
       setTrips((prev) => {
         const rolled = prev.filter((t) => t.id !== trip.id);
         localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
@@ -360,12 +343,8 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─── Raw context hook (internal use / testing) ────────────────────────────────
-
 export function useTripContext(): TripContextType {
   const ctx = useContext(TripContext);
-  if (!ctx) {
-    throw new Error("useTripContext must be used inside <TripProvider>");
-  }
+  if (!ctx) throw new Error("useTripContext must be used inside <TripProvider>");
   return ctx;
 }

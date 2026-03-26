@@ -14,7 +14,6 @@ import { supabase, createAuthenticatedClient } from "@/lib/supabase/client";
 import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
 import { useWalletContext } from "./WalletContext";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface ExpenseContextType {
   expenses: Expense[];
@@ -26,12 +25,9 @@ interface ExpenseContextType {
   isLoading: boolean;
 }
 
-// ─── Context ──────────────────────────────────────────────────────────────────
 
 const ExpenseContext = createContext<ExpenseContextType | null>(null);
 ExpenseContext.displayName = "ExpenseContext";
-
-// ─── Helper: Convert DB row to Expense ───────────────────────────────────────
 
 function dbRowToExpense(row: any): Expense {
   return {
@@ -49,16 +45,11 @@ function dbRowToExpense(row: any): Expense {
   };
 }
 
-// ─── Helper: Convert Expense to DB row ───────────────────────────────────────
-
 function expenseToDbRow(expense: Expense, creatorWallet: string) {
-  // Extract wallet addresses from members
   const memberWallets = expense.members
     .map((m) => m.walletAddress)
     .filter((addr): addr is string => !!addr);
 
-  // Ensure the authenticated creator wallet is always in member_wallets
-  // (RLS INSERT policy requires created_by_wallet = ANY(member_wallets))
   const allMemberWallets =
     creatorWallet && !memberWallets.includes(creatorWallet)
       ? [creatorWallet, ...memberWallets]
@@ -76,12 +67,11 @@ function expenseToDbRow(expense: Expense, creatorWallet: string) {
     shares: expense.shares,
     created_at: expense.createdAt,
     settled: expense.settled,
-    created_by_wallet: creatorWallet, // always the authenticated user
+    created_by_wallet: creatorWallet,
     member_wallets: allMemberWallets,
   };
 }
 
-// ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
@@ -93,7 +83,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const getClient = useCallback(() => {
     return publicKey ? createAuthenticatedClient(publicKey) : supabase;
   }, [publicKey]);
-  // ── Initial load from Supabase ─────────────────────────────────────────────
+
 
   useEffect(() => {
     let isMounted = true;
@@ -112,19 +102,15 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         if (isMounted && data) {
           const expenses = data.map(dbRowToExpense);
           setExpenses(expenses);
-          // Cache to localStorage for offline support
           localStorage.setItem(LS_EXPENSES, JSON.stringify(expenses));
         }
       } catch (err) {
         console.warn("Failed to load from Supabase, using localStorage:", err);
-        // Fallback to localStorage if Supabase fails
         try {
           const raw = localStorage.getItem(LS_EXPENSES);
-          if (raw && isMounted) {
-            setExpenses(JSON.parse(raw) as Expense[]);
-          }
+          if (raw && isMounted) setExpenses(JSON.parse(raw) as Expense[]);
         } catch {
-          // Ignore localStorage errors
+          // ignore
         }
       } finally {
         if (isMounted) {
@@ -140,10 +126,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     };
   }, [getClient]);
 
-  // ── Subscribe to realtime updates ──────────────────────────────────────────
-
   useEffect(() => {
-    if (isLoading) return; // Wait until initial load is complete
+    if (isLoading) return;
 
     const channel = supabase
       .channel("expenses-changes")
@@ -153,7 +137,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         (payload: RealtimePostgresChangesPayload<any>) => {
           const newExpense = dbRowToExpense(payload.new);
           setExpenses((prev) => {
-            // Avoid duplicates
             if (prev.some((e) => e.id === newExpense.id)) return prev;
             const updated = [newExpense, ...prev];
             localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
@@ -197,12 +180,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     };
   }, [isLoading]);
 
-  // ── CRUD ───────────────────────────────────────────────────────────────────
-
   const addExpense = useCallback(async (expense: Expense) => {
     if (!publicKey) throw new Error("Wallet not connected");
 
-    // Optimistic update immediately (fast UI feedback)
     setExpenses((prev) => {
       const updated = [expense, ...prev];
       localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
@@ -216,7 +196,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       .insert([expenseToDbRow(expense, publicKey)]);
 
     if (error) {
-      // Rollback optimistic update on hard failure
       setExpenses((prev) => {
         const rolled = prev.filter((e) => e.id !== expense.id);
         localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
@@ -229,7 +208,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const updateExpense = useCallback(
     async (id: string, updates: Partial<Expense>) => {
       try {
-        // Get the current expense to merge updates
         const current = expenses.find((e) => e.id === id);
         if (!current) return;
 
@@ -244,7 +222,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
         if (error) throw error;
 
-        // Optimistic update
         setExpenses((prev) => {
           const updated = prev.map((e) => (e.id === id ? merged : e));
           localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
@@ -252,7 +229,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         });
       } catch (err) {
         console.error("Failed to update expense in Supabase:", err);
-        // Fallback: update locally only
         setExpenses((prev) => {
           const updated = prev.map((e) =>
             e.id === id ? { ...e, ...updates } : e
@@ -272,7 +248,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       if (error) throw error;
 
-      // Optimistic update
       setExpenses((prev) => {
         const updated = prev.filter((e) => e.id !== id);
         localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
@@ -280,7 +255,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       });
     } catch (err) {
       console.error("Failed to delete expense from Supabase:", err);
-      // Fallback: delete locally only
       setExpenses((prev) => {
         const updated = prev.filter((e) => e.id !== id);
         localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
@@ -289,14 +263,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     }
   }, [getClient]);
 
-  // ── Mark a share as paid ───────────────────────────────────────────────────
-
   const markSharePaid = useCallback(
     async (expenseId: string, memberId: string, txHash: string) => {
       const current = expenses.find((e) => e.id === expenseId);
       if (!current) throw new Error("Expense not found in state — please refresh and try again.");
 
-      // ── Optimistic update FIRST — instant UI feedback regardless of network ──
       setExpenses((prev) => {
         const updated = prev.map((e) => {
           if (e.id !== expenseId) return e;
@@ -310,13 +281,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         return updated;
       });
 
-      // Persist to Supabase with read-then-write to avoid stale-closure overwrites.
-      // The RLS UPDATE policy now also matches any wallet that appears on a share,
-      // so non-creator members can record their own payment without being blocked.
       try {
         const client = getClient();
 
-        // Step 1: Read fresh shares from DB so concurrent payments don't clobber each other
         const { data: freshData, error: fetchErr } = await client
           .from("expenses")
           .select("shares")
@@ -325,13 +292,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
         if (fetchErr) throw fetchErr;
 
-        // Step 2: Merge this payment into the fresh snapshot
         const freshShares = (freshData.shares as SplitShare[]).map((s: SplitShare) =>
           s.memberId === memberId ? { ...s, paid: true, txHash } : s
         );
         const freshSettled = freshShares.every((s: SplitShare) => s.paid);
 
-        // Step 3: Write back — .select("id") lets us detect a silent RLS block (0 rows)
         const { data: rowsUpdated, error: updateErr } = await client
           .from("expenses")
           .update({ shares: freshShares, settled: freshSettled })
@@ -346,7 +311,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           );
         }
 
-        // Step 4: Sync React state with DB truth
         setExpenses((prev) => {
           const synced = prev.map((e) =>
             e.id !== expenseId ? e : { ...e, shares: freshShares, settled: freshSettled }
@@ -356,7 +320,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         });
       } catch (err) {
         console.error("Failed to persist markSharePaid to Supabase:", err);
-        // Rollback optimistic update so the UI is honest
         setExpenses((prev) => {
           const rolled = prev.map((e) => (e.id === expenseId ? current : e));
           localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
@@ -367,8 +330,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     },
     [expenses, getClient]
   );
-
-  // ── Look up single expense ─────────────────────────────────────────────────
 
   const getExpense = useCallback(
     (id: string) => expenses.find((e) => e.id === id),
@@ -392,12 +353,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
-
 export function useExpenseContext(): ExpenseContextType {
   const ctx = useContext(ExpenseContext);
-  if (!ctx) {
-    throw new Error("useExpenseContext must be used within <ExpenseProvider />");
-  }
+  if (!ctx) throw new Error("useExpenseContext must be used within <ExpenseProvider />");
   return ctx;
 }

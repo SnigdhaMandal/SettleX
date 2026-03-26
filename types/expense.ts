@@ -1,44 +1,34 @@
-// ─── Split mode ───────────────────────────────────────────────────────────────
-
 export type SplitMode = "equal" | "custom";
 
-// ─── Member ───────────────────────────────────────────────────────────────────
-
 export interface Member {
-  id: string;               // uuid
+  id: string;
   name: string;
-  walletAddress?: string;   // Stellar G... address (optional — user may not know it yet)
-  weight?: number;          // 1–100, used for custom split only
+  walletAddress?: string;
+  weight?: number;
 }
-
-// ─── Single share ─────────────────────────────────────────────────────────────
 
 export interface SplitShare {
   memberId: string;
   name: string;
   walletAddress?: string;
-  amount: string;           // XLM with 7 decimal places e.g. "3.3333333"
+  amount: string;
   paid: boolean;
-  txHash?: string;          // Stellar TX hash once paid
+  txHash?: string;
 }
-
-// ─── Expense ──────────────────────────────────────────────────────────────────
 
 export interface Expense {
-  id: string;               // uuid
+  id: string;
   title: string;
   description?: string;
-  totalAmount: string;      // XLM as string e.g. "10.0000000"
+  totalAmount: string;
   currency: "XLM";
   splitMode: SplitMode;
-  paidByMemberId: string;   // the member who paid the bill upfront
+  paidByMemberId: string;
   members: Member[];
   shares: SplitShare[];
-  createdAt: string;        // ISO 8601
-  settled: boolean;         // true when all shares are paid
+  createdAt: string;
+  settled: boolean;
 }
-
-// ─── Form data (subset used when creating) ────────────────────────────────────
 
 export type ExpenseFormData = {
   title: string;

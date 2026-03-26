@@ -7,14 +7,9 @@ interface UseBalanceResult {
   balance: string | null;
   isLoading: boolean;
   error: string | null;
-  /** Manually re-fetch the balance (e.g. after a payment). */
   refresh: () => Promise<void>;
 }
 
-/**
- * Fetches and tracks the XLM balance for the given `publicKey`.
- * Automatically refetches if the key changes.
- */
 export function useBalance(publicKey: string | null): UseBalanceResult {
   const [balance, setBalance]   = useState<string | null>(null);
   const [isLoading, setLoading] = useState(false);
@@ -27,7 +22,6 @@ export function useBalance(publicKey: string | null): UseBalanceResult {
       return;
     }
 
-    // Cancel any in-flight request
     abortRef.current?.abort();
     abortRef.current = new AbortController();
 

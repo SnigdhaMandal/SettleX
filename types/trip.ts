@@ -5,9 +5,8 @@ export interface Trip {
   name: string;
   description?: string;
   members: Member[];
-  /** IDs of expenses that belong to this trip */
   expenseIds: string[];
-  createdAt: string;   // ISO 8601
+  createdAt: string;
   settled: boolean;
 }
 

@@ -1,8 +1,3 @@
-/**
- * Supabase Database Type Definitions
- * Auto-generated types for database schema
- */
-
 export type Json =
   | string
   | number

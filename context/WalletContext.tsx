@@ -8,18 +8,17 @@ import React, {
   useRef,
   useState,
 } from "react";
-import { connectFreighter, getFreighterNetwork, isFreighterInstalled } from "@/lib/freighter";
+import { getFreighterNetwork, isFreighterInstalled } from "@/lib/freighter";
+import { getWalletsKit, FREIGHTER_ID } from "@/lib/stellar/walletsKit";
 import { getXLMBalance } from "@/lib/stellar/getBalance";
 import { LS_PUBLIC_KEY } from "@/lib/utils/constants";
 import type { WalletContextType } from "@/types/wallet";
 import { useToast } from "@/components/ui/Toast";
 
-// ─── Context ──────────────────────────────────────────────────────────────────
 
 const WalletContext = createContext<WalletContextType | null>(null);
 WalletContext.displayName = "WalletContext";
 
-// ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [publicKey, setPublicKey]           = useState<string | null>(null);
@@ -29,12 +28,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   const [isLoadingBalance, setLoadingBal]   = useState(false);
   const [isHydrated, setIsHydrated]         = useState(false);
   const [error, setError]                   = useState<string | null>(null);
+  const [selectedWalletId, setSelectedWalletId] = useState<string | null>(null);
 
   const isConnected = !!publicKey;
   const didMount    = useRef(false);
   const { error: toastError, success: toastSuccess, info: toastInfo } = useToast();
-
-  // ── Internal helpers ────────────────────────────────────────────────────────
 
   const fetchBalance = useCallback(async (pk: string, silent = false) => {
     if (!silent) setLoadingBal(true);
@@ -42,8 +40,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const bal = await getXLMBalance(pk);
       setBalance(bal);
     } catch {
-      // Non-fatal — keep the last known balance so we never display a misleading "0"
-      // caused by a transient Horizon error or rate-limit.
+      // keep last known balance on transient errors
     } finally {
       if (!silent) setLoadingBal(false);
     }
@@ -81,6 +78,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       } else {
         // Restore silently — do not re-prompt the user
         setPublicKey(savedKey);
+        setSelectedWalletId(FREIGHTER_ID);
         fetchBalance(savedKey);
         hydrateNetwork();
       }
@@ -89,23 +87,15 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     });
   }, [fetchBalance, hydrateNetwork]);
 
-  // ── Live balance polling ────────────────────────────────────────────────────
-  // Polls every 15 s when a wallet is connected so both the payer (recipient)
-  // and members (senders) always see an up-to-date balance without manual refresh.
-  // Also refreshes whenever the browser tab regains focus.
   useEffect(() => {
     if (!publicKey) return;
 
-    // Poll every 15 seconds — silent so balance number stays visible (no spinner flicker)
     const interval = setInterval(() => {
       fetchBalance(publicKey, true);
     }, 15_000);
 
-    // Also refresh silently when user returns to this tab
     const handleVisibility = () => {
-      if (document.visibilityState === "visible") {
-        fetchBalance(publicKey, true);
-      }
+      if (document.visibilityState === "visible") fetchBalance(publicKey, true);
     };
     document.addEventListener("visibilitychange", handleVisibility);
 
@@ -115,7 +105,6 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     };
   }, [publicKey, fetchBalance]);
 
-  // ── connect ─────────────────────────────────────────────────────────────────
 
   const connect = useCallback(async () => {
     setIsConnecting(true);
@@ -125,52 +114,75 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       const installed = await isFreighterInstalled();
       if (!installed) {
         throw new Error(
-          "Freighter wallet not detected. Please install the Freighter browser extension."
+          "No Stellar wallet detected. Please install the Freighter browser extension from freighter.app"
         );
       }
 
-      const pk  = await connectFreighter();
+      const kit = getWalletsKit();
+      let resolvedAddress = "";
+      let walletError: Error | null = null;
+
+      await kit.openModal({
+        modalTitle: "Connect Your Stellar Wallet",
+        notAvailableText: "Install extension",
+
+        onWalletSelected: async (wallet) => {
+          kit.setWallet(wallet.id);
+          const { address } = await kit.getAddress();
+          resolvedAddress = address;
+        },
+
+        onClosed: () => {
+          if (!resolvedAddress) walletError = new Error("Wallet selection cancelled.");
+        },
+      });
+
+      if (walletError || !resolvedAddress) return;
+
       const net = await getFreighterNetwork().catch(() => "TESTNET");
 
-      setPublicKey(pk);
+      setPublicKey(resolvedAddress);
       setNetwork(net);
-      localStorage.setItem(LS_PUBLIC_KEY, pk);
-      toastSuccess("Wallet connected", `${pk.slice(0, 6)}…${pk.slice(-4)} on ${net === "PUBLIC" ? "Mainnet" : "Testnet"}`);
+      setSelectedWalletId(FREIGHTER_ID);
+      localStorage.setItem(LS_PUBLIC_KEY, resolvedAddress);
+      toastSuccess(
+        "Wallet connected",
+        `${resolvedAddress.slice(0, 6)}…${resolvedAddress.slice(-4)} on ${net === "PUBLIC" ? "Mainnet" : "Testnet"}`
+      );
 
-      // Fetch balance in parallel (non-blocking for UI)
-      fetchBalance(pk);
+      fetchBalance(resolvedAddress);
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Failed to connect wallet.";
-      setError(msg);
-      toastError("Connection failed", msg);
+      const isCancelled =
+        msg.toLowerCase().includes("cancel") ||
+        msg.toLowerCase().includes("closed without");
+      if (!isCancelled) {
+        setError(msg);
+        toastError("Connection failed", msg);
+      }
     } finally {
       setIsConnecting(false);
     }
   }, [fetchBalance]);
 
-  // ── disconnect ──────────────────────────────────────────────────────────────
 
   const disconnect = useCallback(() => {
     setPublicKey(null);
     setBalance(null);
     setNetwork(null);
     setError(null);
+    setSelectedWalletId(null);
     toastInfo("Wallet disconnected");
     localStorage.removeItem(LS_PUBLIC_KEY);
   }, []);
 
-  // ── refreshBalance ──────────────────────────────────────────────────────────
 
   const refreshBalance = useCallback(async () => {
     if (!publicKey) return;
     await fetchBalance(publicKey);
   }, [publicKey, fetchBalance]);
 
-  // ── clearError ──────────────────────────────────────────────────────────────
-
   const clearError = useCallback(() => setError(null), []);
-
-  // ── Context value ───────────────────────────────────────────────────────────
 
   const value: WalletContextType = {
     publicKey,
@@ -181,6 +193,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     isHydrated,
     isLoadingBalance,
     error,
+    selectedWalletId,
     connect,
     disconnect,
     refreshBalance,
@@ -192,16 +205,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
   );
 }
 
-// ─── Hook ─────────────────────────────────────────────────────────────────────
-
-/**
- * Access the global wallet state and actions.
- * Must be used inside <WalletProvider />.
- */
 export function useWalletContext(): WalletContextType {
   const ctx = useContext(WalletContext);
-  if (!ctx) {
-    throw new Error("useWalletContext must be used within <WalletProvider />");
-  }
+  if (!ctx) throw new Error("useWalletContext must be used within <WalletProvider />");
   return ctx;
 }

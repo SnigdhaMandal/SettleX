@@ -1,15 +1,9 @@
-/**
- * TypeScript types for Stellar transaction results and Horizon API responses.
- */
-
-/** Result returned after successfully submitting a transaction to Horizon */
 export interface StellarSubmitResult {
   hash: string;
   ledger: number;
   successful: boolean;
 }
 
-/** Horizon operation result codes (subset of most common ones) */
 export type OperationResultCode =
   | "op_success"
   | "op_malformed"
@@ -19,9 +13,8 @@ export type OperationResultCode =
   | "op_line_full"
   | "op_not_authorized"
   | "op_insufficient_balance"
-  | string; // allow other codes
+  | string;
 
-/** Horizon transaction result codes */
 export type TransactionResultCode =
   | "tx_success"
   | "tx_failed"
@@ -37,13 +30,11 @@ export type TransactionResultCode =
   | "tx_internal_error"
   | string;
 
-/** Horizon error extras returned with a 400 response */
 export interface HorizonResultCodes {
   transaction: TransactionResultCode;
   operations?: OperationResultCode[];
 }
 
-/** Shape of a Horizon error response body */
 export interface HorizonErrorResponse {
   type: string;
   title: string;
@@ -55,7 +46,6 @@ export interface HorizonErrorResponse {
   };
 }
 
-/** XLM balance entry from Horizon account balances array */
 export interface StellarBalance {
   asset_type: "native" | "credit_alphanum4" | "credit_alphanum12";
   balance: string;

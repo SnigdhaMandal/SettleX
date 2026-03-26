@@ -3,21 +3,21 @@
 import { useCallback, useState } from "react";
 import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
 import { submitSignedTransaction } from "@/lib/stellar/submitTransaction";
+import { recordPaymentOnChain, checkIsPaid } from "@/lib/stellar/contract";
 import { signXDR } from "@/lib/freighter";
 import { useWallet } from "@/hooks/useWallet";
 import { useExpense } from "@/hooks/useExpense";
 import { useToast } from "@/components/ui/Toast";
-import { NETWORK_PASSPHRASE, STELLAR_EXPLORER } from "@/lib/utils/constants";
+import { NETWORK_PASSPHRASE, STELLAR_EXPLORER, CONTRACT_ID } from "@/lib/utils/constants";
 import type { SplitShare } from "@/types/expense";
-
-// ─── Types ────────────────────────────────────────────────────────────────────
 
 export type PaymentState =
   | { status: "idle" }
   | { status: "building" }
   | { status: "signing" }
   | { status: "submitting" }
-  | { status: "success"; hash: string; ledger: number }
+  | { status: "recording" }
+  | { status: "success"; hash: string; ledger: number; onChain: boolean }
   | { status: "error"; message: string };
 
 interface UsePaymentOpts {
@@ -27,11 +27,9 @@ interface UsePaymentOpts {
 interface PayShareParams {
   share: SplitShare;
   expenseTitle: string;
-  /** The payer's Stellar wallet — this is who RECEIVES the XLM. */
   payerWalletAddress: string;
+  tripId?: string;
 }
-
-// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function usePayment({ expenseId }: UsePaymentOpts) {
   const { publicKey, refreshBalance } = useWallet();
@@ -42,109 +40,111 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
   const reset = useCallback(() => setPaymentState({ status: "idle" }), []);
 
-  /**
-   * Full payment flow:
-   *   1. Build unsigned XDR (includes memo with expense context)
-   *   2. Prompt Freighter to sign
-   *   3. Submit signed XDR to Stellar Horizon
-   *   4. On success: mark share as paid in ExpenseContext + show toast
-   */
   const payShare = useCallback(
-    async ({ share, expenseTitle, payerWalletAddress }: PayShareParams) => {
+    async ({ share, expenseTitle, payerWalletAddress, tripId }: PayShareParams) => {
       if (!publicKey) {
         toastError("Wallet not connected", "Please connect your Freighter wallet first.");
         return;
       }
-
       if (!share.walletAddress) {
-        toastError(
-          "No wallet address",
-          `${share.name} doesn't have a Stellar address. Add one to pay them.`
-        );
+        toastError("No wallet address", `${share.name} doesn't have a Stellar address.`);
+        return;
+      }
+      if (!payerWalletAddress) {
+        toastError("Payer has no wallet", "The expense creator hasn't added their Stellar address.");
         return;
       }
 
-      if (!payerWalletAddress) {
-        toastError(
-          "Payer has no wallet",
-          "The expense creator hasn't added their Stellar address — can't send XLM to them."
-        );
-        return;
+      // Pre-flight: check if already settled on-chain before building the TX
+      if (CONTRACT_ID && share.walletAddress) {
+        const alreadyPaid = await checkIsPaid(publicKey, expenseId, share.walletAddress);
+        if (alreadyPaid.paid) {
+          toastError(
+            "Already settled on-chain",
+            "This payment was already recorded on Stellar. No action needed.",
+          );
+          return;
+        }
       }
 
       try {
-        // Step 1: Build transaction
         setPaymentState({ status: "building" });
-        const memoText = `${expenseTitle}|${share.name}`.slice(0, 24); // safe for 28-byte limit with prefix
+        const memoText = `${expenseTitle}|${share.name}`.slice(0, 24);
         const { xdr } = await buildPaymentTransaction({
-          sourcePublicKey: publicKey,
-          // destinationPublicKey MUST be the payer's wallet — they are the ones
-          // who fronted the money and need to receive reimbursement.
-          // share.walletAddress is the DEBTOR's wallet (the sender), NOT the recipient.
+          sourcePublicKey:      publicKey,
           destinationPublicKey: payerWalletAddress,
-          amount: share.amount,
+          amount:               share.amount,
           memoText,
         });
 
-        // Step 2: Sign with Freighter
         setPaymentState({ status: "signing" });
-        toastInfo("Waiting for Freighter…", "Review and confirm the transaction.");
+        toastInfo("Waiting for wallet signature…", "Review and confirm the transaction.");
         const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE);
 
-        // Step 3: Submit to Horizon
         setPaymentState({ status: "submitting" });
         const result = await submitSignedTransaction(signedXDR);
 
-        // Step 4: Update share state — await so we know it persisted
         await markSharePaid(expenseId, share.memberId, result.hash);
-        setPaymentState({ status: "success", hash: result.hash, ledger: result.ledger });
+
+        let onChain = false;
+        if (CONTRACT_ID && tripId) {
+          setPaymentState({ status: "recording" });
+          const contractResult = await recordPaymentOnChain({
+            memberPublicKey: publicKey,
+            tripId,
+            expenseId,
+            payerPublicKey: payerWalletAddress,
+            amountXlm:      share.amount,
+            txHash:         result.hash,
+            onStatus:       () => setPaymentState({ status: "recording" }),
+          });
+
+          if (contractResult.success) {
+            onChain = true;
+          } else {
+            console.warn("[SettleX] on-chain recording failed:", contractResult.error);
+            toastError(
+              "On-chain record failed",
+              "XLM was sent but contract recording failed. Your share is still marked paid.",
+            );
+          }
+        }
+
+        setPaymentState({ status: "success", hash: result.hash, ledger: result.ledger, onChain });
         toastSuccess(
           `Paid ${parseFloat(share.amount).toFixed(4)} XLM to ${share.name}`,
-          `TX: ${result.hash.slice(0, 12)}…`
+          onChain
+            ? `TX: ${result.hash.slice(0, 12)}… · Recorded on-chain ✓`
+            : `TX: ${result.hash.slice(0, 12)}…`,
         );
 
-        // Refresh the sender's balance after a short delay to allow
-        // Horizon to settle the ledger change before we query it.
-        // Testnet closes a ledger every ~5 s; 3 s is usually enough.
-        // A second refresh at 8 s catches any slow ledger closes.
-        setTimeout(() => { refreshBalance(); }, 3000);
-        setTimeout(() => { refreshBalance(); }, 8000);
+        setTimeout(() => refreshBalance(), 3000);
+        setTimeout(() => refreshBalance(), 8000);
       } catch (err) {
-        const message =
-          err instanceof Error ? err.message : "Payment failed. Please try again.";
+        const message    = err instanceof Error ? err.message : "Payment failed. Please try again.";
+        const isRejected = /reject|denied|cancel/i.test(message.toLowerCase());
+        const display    = isRejected ? "Transaction cancelled in wallet." : message;
 
-        // If user rejected in Freighter, show a softer message
-        const isRejected =
-          message.toLowerCase().includes("reject") ||
-          message.toLowerCase().includes("denied") ||
-          message.toLowerCase().includes("cancel");
-
-        const displayMsg = isRejected
-          ? "Transaction cancelled in Freighter."
-          : message;
-
-        setPaymentState({ status: "error", message: displayMsg });
-        toastError("Payment failed", displayMsg);
+        setPaymentState({ status: "error", message: display });
+        toastError("Payment failed", display);
       }
     },
-    [publicKey, expenseId, markSharePaid, refreshBalance, toastSuccess, toastError, toastInfo]
+    [publicKey, expenseId, markSharePaid, refreshBalance, toastSuccess, toastError, toastInfo],
   );
 
   return {
     paymentState,
     payShare,
     reset,
-    isIdle: paymentState.status === "idle",
-    isLoading:
-      paymentState.status === "building" ||
-      paymentState.status === "signing" ||
-      paymentState.status === "submitting",
+    isIdle:    paymentState.status === "idle",
+    isLoading: ["building", "signing", "submitting", "recording"].includes(paymentState.status),
     isSuccess: paymentState.status === "success",
-    isError: paymentState.status === "error",
-    txHash: paymentState.status === "success" ? paymentState.hash : null,
-    explorerUrl:
-      paymentState.status === "success"
-        ? `${STELLAR_EXPLORER}/tx/${paymentState.hash}`
-        : null,
+    isError:   paymentState.status === "error",
+    txHash:    paymentState.status === "success" ? paymentState.hash : null,
+    onChain:   paymentState.status === "success" ? paymentState.onChain : false,
+    explorerUrl: paymentState.status === "success"
+      ? `${STELLAR_EXPLORER}/tx/${paymentState.hash}`
+      : null,
   };
 }
+

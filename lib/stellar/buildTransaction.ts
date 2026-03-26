@@ -1,6 +1,5 @@
 /**
  * Build an unsigned Stellar payment transaction (XDR).
- * The returned XDR must be signed by Freighter before submission.
  */
 import {
   TransactionBuilder,
@@ -21,9 +20,7 @@ import {
 export interface BuildTxParams {
   sourcePublicKey: string;
   destinationPublicKey: string;
-  /** XLM amount as a string with up to 7 decimal places e.g. "300.0000000" */
   amount: string;
-  /** Human-readable memo e.g. "Dinner – Aman" — truncated to 28 bytes */
   memoText?: string;
 }
 
@@ -32,12 +29,10 @@ export interface BuildTxResult {
   memo: string;
 }
 
-/** Encode a string as UTF-8 and trim to maxBytes without splitting chars */
 function trimToMemoBytes(text: string, maxBytes: number = MEMO_MAX_BYTES): string {
   const encoder = new TextEncoder();
   const bytes = encoder.encode(text);
   if (bytes.length <= maxBytes) return text;
-  // Binary-search the longest prefix that fits
   let lo = 0, hi = text.length;
   while (lo < hi) {
     const mid = Math.ceil((lo + hi) / 2);
@@ -53,9 +48,6 @@ export async function buildPaymentTransaction({
   amount,
   memoText,
 }: BuildTxParams): Promise<BuildTxResult> {
-  // Load source account for sequence number using a direct no-cache fetch
-  // so we always get the latest sequence number and never get a stale one
-  // from the SDK's internal HTTP cache (which can cause tx_bad_seq errors).
   const acctRes = await fetch(
     `${HORIZON_URL}/accounts/${sourcePublicKey}?_ts=${Date.now()}`,
     { cache: "no-store", headers: { "Cache-Control": "no-cache" } }
@@ -68,10 +60,7 @@ export async function buildPaymentTransaction({
   const acctData = await acctRes.json() as { sequence: string };
   const account = new Account(sourcePublicKey, acctData.sequence);
 
-  // Build memo — enforce Stellar's 28-byte limit
-  const rawMemo = memoText
-    ? `${MEMO_PREFIX}|${memoText}`
-    : MEMO_PREFIX;
+  const rawMemo = memoText ? `${MEMO_PREFIX}|${memoText}` : MEMO_PREFIX;
   const safeMemo = trimToMemoBytes(rawMemo);
 
   const tx = new TransactionBuilder(account, {
@@ -81,7 +70,7 @@ export async function buildPaymentTransaction({
     .addOperation(
       Operation.payment({
         destination: destinationPublicKey,
-        asset: Asset.native(), // XLM
+        asset: Asset.native(),
         amount,
       })
     )

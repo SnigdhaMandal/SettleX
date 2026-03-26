@@ -38,6 +38,7 @@ Key differentiators:
 | ---------------------------------------------------------- | ------- |
 | Wallet connect via Freighter                               | ✅ Live |
 | Create & split expenses (equal, percentage, custom weight) | ✅ Live |
+| **Real-time sync across all users (Supabase)**             | ✅ Live |
 | Pay shares with XLM via Freighter                          | ✅ Live |
 | SEP-0007 QR code generation                                | ✅ Live |
 | Transaction hash receipt                                   | ✅ Live |
@@ -49,16 +50,17 @@ Key differentiators:
 
 ## Tech Stack
 
-| Layer          | Technology                          |
-| -------------- | ----------------------------------- |
-| Framework      | Next.js 14 (App Router, TypeScript) |
-| Styling        | Tailwind CSS 3.4, Framer Motion     |
-| Blockchain SDK | `@stellar/stellar-sdk` v14          |
-| Wallet         | `@stellar/freighter-api` v6         |
-| Network        | Stellar Testnet (Horizon API)       |
-| QR codes       | `qrcode.react`, `qrcode`            |
-| State          | React Context + localStorage        |
-| UI primitives  | Radix UI, Lucide React              |
+| Layer          | Technology                              |
+| -------------- | --------------------------------------- |
+| Framework      | Next.js 14 (App Router, TypeScript)     |
+| Styling        | Tailwind CSS 3.4, Framer Motion         |
+| Blockchain SDK | `@stellar/stellar-sdk` v14              |
+| Wallet         | `@stellar/freighter-api` v6             |
+| Network        | Stellar Testnet (Horizon API)           |
+| Database       | Supabase (PostgreSQL + Realtime)        |
+| QR codes       | `qrcode.react`, `qrcode`                |
+| State          | React Context + Supabase + localStorage |
+| UI primitives  | Radix UI, Lucide React                  |
 
 ---
 
@@ -110,15 +112,29 @@ cd settlex
 npm install
 ```
 
-### 3. Configure environment variables
+### 3. Set up Supabase (Required for real-time sync)
+
+**New Feature**: SettleX now syncs expenses in real-time across all users!
+
+Follow the complete setup guide: **[docs/QUICKSTART.md](docs/QUICKSTART.md)**
+
+Quick summary:
+
+1. Create a free Supabase project at [supabase.com](https://supabase.com)
+2. Run the SQL schema from [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)
+3. Copy your project URL and anon key to `.env.local`
+
+### 4. Configure environment variables
 
 ```bash
 cp .env.local.example .env.local
 ```
 
-Edit `.env.local` — see [Environment Variables](#environment-variables) below.
+Edit `.env.local` with your Supabase credentials:
 
-### 4. Run the development server
+See [Environment Variables](#environment-variables) below for details.
+
+### 5. Run the development server
 
 ```bash
 npm run dev
@@ -126,7 +142,7 @@ npm run dev
 
 Open [http://localhost:3000](http://localhost:3000) in your browser.
 
-### 5. Build for production
+### 6. Build for production
 
 ```bash
 npm run build
@@ -141,14 +157,20 @@ Create a `.env.local` file in the project root:
 
 ```env
 # Stellar Network
-NEXT_PUBLIC_STELLAR_NETWORK=testnet
+NEXT_PUBLIC_STELLAR_NETWORK=TESTNET
 NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org
+NEXT_PUBLIC_STELLAR_EXPLORER=https://stellar.expert/explorer/testnet
+
+# Supabase (Get these from your Supabase project dashboard)
+NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
+NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 
 # App
-NEXT_PUBLIC_APP_URL=http://localhost:3000
+NEXT_PUBLIC_APP_NAME=SettleX
+NEXT_PUBLIC_APP_VERSION=1.0.0
 ```
 
-> All variables are prefixed with `NEXT_PUBLIC_` because they are read client-side. No secret keys are stored — the app is fully non-custodial.
+> All variables are prefixed with `NEXT_PUBLIC_` because they are read client-side. The Supabase anon key is safe to expose — it only allows public access as configured in your RLS policies.
 
 ---
 

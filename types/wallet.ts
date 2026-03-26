@@ -4,11 +4,10 @@ export interface WalletState {
   isConnecting: boolean;
   isConnected: boolean;
   isLoadingBalance: boolean;
-  /** True once the one-time localStorage auto-reconnect check has finished.
-   *  WalletGuard waits for this before deciding to redirect. */
   isHydrated: boolean;
   network: string | null;
   error: string | null;
+  selectedWalletId: string | null;
 }
 
 export interface WalletActions {
@@ -19,3 +18,9 @@ export interface WalletActions {
 }
 
 export type WalletContextType = WalletState & WalletActions;
+
+export const WALLET_IDS = {
+  FREIGHTER: "freighter",
+} as const;
+
+export type WalletId = (typeof WALLET_IDS)[keyof typeof WALLET_IDS];

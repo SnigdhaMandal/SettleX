@@ -19,6 +19,7 @@ import {
 import { useTrip } from "@/hooks/useTrip";
 import { useExpense } from "@/hooks/useExpense";
 import { usePayment } from "@/hooks/usePayment";
+import { useContractEvents } from "@/hooks/useContractEvents";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Modal } from "@/components/ui/Modal";
@@ -171,6 +172,8 @@ export default function TripDetailPage() {
   const [showExpenseForm, setShowExpenseForm] = useState(false);
 
   const trip = getTrip(params.id);
+
+  const { events: onChainEvents } = useContractEvents(trip?.id);
 
   // ── Auto-settle trip when ALL linked expenses are paid ─────────────────────
   // Runs whenever any expense changes (e.g. a share gets marked paid).
@@ -423,7 +426,7 @@ export default function TripDetailPage() {
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.15 }}
               >
-                <SettlementSummary trip={trip} expenses={tripExpenses} />
+                <SettlementSummary trip={trip} expenses={tripExpenses} onChainEvents={onChainEvents} />
               </motion.div>
             )}
           </AnimatePresence>
