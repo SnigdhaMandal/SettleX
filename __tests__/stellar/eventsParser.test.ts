@@ -1,4 +1,3 @@
-import { describe, it, expect } from "@jest/globals";
 import { nativeToScVal, xdr } from "@stellar/stellar-sdk";
 import { parsePaymentEvent } from "@/lib/stellar/events";
 

@@ -1,12 +1,12 @@
 /** @jest-environment jsdom */
 
-import { beforeEach, describe, expect, it, jest } from "@jest/globals";
-import { act, renderHook, waitFor } from "@testing-library/react";
 import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
 import { submitSignedTransaction } from "@/lib/stellar/submitTransaction";
 import { checkIsPaid, precheckPoolBalance, recordPaymentOnChain } from "@/lib/stellar/contract";
 import { signXDR } from "@/lib/freighter";
 import type { SplitShare } from "@/types/expense";
+
+const { act, renderHook, waitFor } = require("@testing-library/react");
 
 jest.mock("@/lib/stellar/buildTransaction");
 jest.mock("@/lib/stellar/submitTransaction");

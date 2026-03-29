@@ -1,4 +1,3 @@
-import { describe, it, expect } from "@jest/globals";
 import { decodeContractError } from "@/lib/stellar/contract";
 
 describe("decodeContractError", () => {
