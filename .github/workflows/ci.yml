@@ -43,8 +43,8 @@ jobs:
       - name: Lint
         run: npm run lint
 
-      - name: Test
-        run: npm test -- --runInBand
+      - name: Test with coverage gate
+        run: npm run test:coverage -- --runInBand
 
       - name: Build
         run: npm run build

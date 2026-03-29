@@ -10,6 +10,7 @@ import { cn } from "@/lib/utils";
 interface PaymentStatusProps {
   state: PaymentState;
   onReset?: () => void;
+  onRetryOnChain?: () => void;
   className?: string;
 }
 
@@ -20,7 +21,14 @@ const STATUS_LABELS: Record<string, string> = {
   recording:  "Recording payment on-chain…",
 };
 
-export function PaymentStatus({ state, onReset, className }: PaymentStatusProps) {
+const RECORDING_STEP_LABELS: Record<string, string> = {
+  simulating: "Simulating contract call…",
+  signing: "Preparing signed contract transaction…",
+  sending: "Sending contract transaction…",
+  confirming: "Confirming on-chain settlement…",
+};
+
+export function PaymentStatus({ state, onReset, onRetryOnChain, className }: PaymentStatusProps) {
   const isLoadingState =
     state.status === "building" ||
     state.status === "signing" ||
@@ -52,11 +60,13 @@ export function PaymentStatus({ state, onReset, className }: PaymentStatusProps)
               )}
               <div>
                 <p className="text-sm font-medium text-[#555]">
-                  {STATUS_LABELS[state.status]}
+                  {state.status === "recording"
+                    ? RECORDING_STEP_LABELS[state.step] ?? STATUS_LABELS[state.status]
+                    : STATUS_LABELS[state.status]}
                 </p>
                 {state.status === "recording" && (
                   <p className="text-[11px] text-[#AAA] mt-0.5">
-                    Storing settlement proof in the Soroban contract…
+                    Storing settlement proof in the Soroban contract pool flow…
                   </p>
                 )}
               </div>
@@ -88,6 +98,45 @@ export function PaymentStatus({ state, onReset, className }: PaymentStatusProps)
                   Dismiss
                 </button>
               )}
+            </div>
+          )}
+
+          {/* Partial success: XLM sent, contract recording pending */}
+          {state.status === "partial_success" && (
+            <div className="space-y-2">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CheckCircle2 size={16} className="text-[#7A5B00] shrink-0" />
+                <p className="text-sm font-bold text-[#7A5B00]">Payment sent, contract record pending</p>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wide px-2 py-0.5 rounded-md bg-amber-100 text-amber-700">
+                  Retry available
+                </span>
+              </div>
+
+              <p className="text-xs text-amber-700">{state.message}</p>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-[#888]">TX:</span>
+                <TransactionHash hash={state.hash} compact />
+              </div>
+
+              <div className="flex items-center gap-2 flex-wrap mt-1">
+                {onRetryOnChain && (
+                  <button
+                    onClick={onRetryOnChain}
+                    className="text-xs font-semibold px-3 py-1 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors"
+                  >
+                    Retry on-chain record
+                  </button>
+                )}
+                {onReset && (
+                  <button
+                    onClick={onReset}
+                    className="text-xs text-[#AAA] hover:text-[#555] transition-colors"
+                  >
+                    Dismiss
+                  </button>
+                )}
+              </div>
             </div>
           )}
 

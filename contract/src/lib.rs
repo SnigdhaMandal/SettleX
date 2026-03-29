@@ -17,6 +17,11 @@ pub enum ContractError {
     EmptyId            = 3,
     AlreadyInitialized = 4,
     NotInitialized     = 5,
+    InvalidActor       = 6,
+    IdTooLong          = 7,
+    AmountTooLarge     = 8,
+    VersionMismatch    = 9,
+    TxHashTooLong      = 10,
 }
 
 #[contracttype]
@@ -31,16 +36,42 @@ pub struct PaymentRecord {
 }
 
 #[contracttype]
+#[derive(Clone)]
+pub struct PaymentEventV1 {
+    pub version:     u32,
+    pub expense_id:  String,
+    pub payer:       Address,
+    pub member:      Address,
+    pub amount:      i128,
+    pub tx_hash:     String,
+    pub timestamp:   u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PoolConfigEventV1 {
+    pub version:      u32,
+    pub pool_contract: Address,
+    pub updated_by:   Address,
+    pub timestamp:    u64,
+}
+
+#[contracttype]
 pub enum DataKey {
     TripPayments(String),
     ExpensePaid(String, Address),
     Admin,
     PoolContract,
+    Version,
 }
 
 const LEDGERS_PER_DAY:        u32 = 17_280;
 const STORAGE_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 30;
 const STORAGE_BUMP_AMOUNT:    u32 = LEDGERS_PER_DAY * 365;
+const CONTRACT_VERSION:       u32 = 1;
+const MAX_ID_LEN:             u32 = 64;
+const MAX_TX_HASH_LEN:        u32 = 128;
+const MAX_AMOUNT_STROOPS:     i128 = 10_000_000_000_000_000;
 
 #[contract]
 pub struct SettleXContract;
@@ -53,27 +84,71 @@ impl SettleXContract {
             panic_with_error!(&env, ContractError::AlreadyInitialized);
         }
 
+        if admin == pool_contract {
+            panic_with_error!(&env, ContractError::InvalidActor);
+        }
+
         admin.require_auth();
+        env.storage().instance().set(&DataKey::Version, &CONTRACT_VERSION);
         env.storage().instance().set(&DataKey::Admin, &admin);
         env.storage().instance().set(&DataKey::PoolContract, &pool_contract);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        env.events().publish(symbol_short!("stx_ini"), CONTRACT_VERSION);
     }
 
     pub fn set_pool_contract(env: Env, pool_contract: Address) {
+        let version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+        if version != CONTRACT_VERSION {
+            panic_with_error!(&env, ContractError::VersionMismatch);
+        }
+
         let admin: Address = env
             .storage()
             .instance()
             .get(&DataKey::Admin)
             .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
 
+        if pool_contract == admin {
+            panic_with_error!(&env, ContractError::InvalidActor);
+        }
+
         admin.require_auth();
         env.storage().instance().set(&DataKey::PoolContract, &pool_contract);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        env.events().publish(
+            symbol_short!("pool_cfg"),
+            PoolConfigEventV1 {
+                version: CONTRACT_VERSION,
+                pool_contract,
+                updated_by: admin,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     pub fn get_pool_contract(env: Env) -> Address {
-        env.storage()
+        let version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+        if version != CONTRACT_VERSION {
+            panic_with_error!(&env, ContractError::VersionMismatch);
+        }
+
+        let pool = env.storage()
             .instance()
             .get(&DataKey::PoolContract)
-            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+        pool
     }
 
     pub fn record_payment(
@@ -90,8 +165,29 @@ impl SettleXContract {
         if amount <= 0 {
             panic_with_error!(&env, ContractError::InvalidAmount);
         }
+        if amount > MAX_AMOUNT_STROOPS {
+            panic_with_error!(&env, ContractError::AmountTooLarge);
+        }
+        if payer == member {
+            panic_with_error!(&env, ContractError::InvalidActor);
+        }
         if trip_id.len() == 0 || expense_id.len() == 0 || tx_hash.len() == 0 {
             panic_with_error!(&env, ContractError::EmptyId);
+        }
+        if trip_id.len() > MAX_ID_LEN || expense_id.len() > MAX_ID_LEN {
+            panic_with_error!(&env, ContractError::IdTooLong);
+        }
+        if tx_hash.len() > MAX_TX_HASH_LEN {
+            panic_with_error!(&env, ContractError::TxHashTooLong);
+        }
+
+        let version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
+        if version != CONTRACT_VERSION {
+            panic_with_error!(&env, ContractError::VersionMismatch);
         }
 
         let paid_key = DataKey::ExpensePaid(expense_id.clone(), member.clone());
@@ -106,10 +202,10 @@ impl SettleXContract {
 
         let record = PaymentRecord {
             expense_id: expense_id.clone(),
-            payer,
+            payer: payer.clone(),
             member:    member.clone(),
             amount,
-            tx_hash,
+            tx_hash: tx_hash.clone(),
             timestamp: env.ledger().timestamp(),
         };
 
@@ -130,9 +226,19 @@ impl SettleXContract {
             .persistent()
             .extend_ttl(&paid_key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
         env.events().publish(
             (symbol_short!("pmt_rec"), trip_id),
-            (expense_id, member, amount),
+            PaymentEventV1 {
+                version: CONTRACT_VERSION,
+                expense_id,
+                payer,
+                member,
+                amount,
+                tx_hash,
+                timestamp: env.ledger().timestamp(),
+            },
         );
     }
 
@@ -202,6 +308,7 @@ mod test {
         let rec = payments.get(0).unwrap();
         assert_eq!(rec.amount,     10_000_000_i128);
         assert_eq!(rec.expense_id, expense_id);
+        assert_eq!(pool_client.balance_of(&member), 0_i128);
     }
 
     #[test]
@@ -339,5 +446,34 @@ mod test {
 
         // No deposit for member, inter-contract withdraw must fail.
         client.record_payment(&trip_id, &expense_id, &payer, &member, &1_000_000_i128, &tx_hash);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_payer_cannot_equal_member() {
+        setup!(env, client, pool_client);
+
+        let trip_id = String::from_str(&env, "trip-role");
+        let expense_id = String::from_str(&env, "exp-role");
+        let actor = Address::generate(&env);
+        let tx_hash = String::from_str(&env, "hash-role");
+
+        pool_client.deposit(&actor, &1_000_000_i128);
+        client.record_payment(&trip_id, &expense_id, &actor, &actor, &1_000_000_i128, &tx_hash);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_amount_too_large_rejected() {
+        setup!(env, client, pool_client);
+
+        let trip_id = String::from_str(&env, "trip-big");
+        let expense_id = String::from_str(&env, "exp-big");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+        let tx_hash = String::from_str(&env, "hash-big");
+
+        pool_client.deposit(&member, &(MAX_AMOUNT_STROOPS + 1));
+        client.record_payment(&trip_id, &expense_id, &payer, &member, &(MAX_AMOUNT_STROOPS + 1), &tx_hash);
     }
 }

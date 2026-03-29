@@ -13,6 +13,9 @@ pub enum PoolError {
     InvalidAmount = 4,
     InsufficientBalance = 5,
     BalanceOverflow = 6,
+    VersionMismatch = 7,
+    InvalidActor = 8,
+    AmountTooLarge = 9,
 }
 
 #[contracttype]
@@ -24,13 +27,35 @@ pub struct PoolConfig {
 
 #[contracttype]
 pub enum PoolDataKey {
+    Version,
     Config,
     Balance(Address),
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PoolConfigEventV1 {
+    pub version: u32,
+    pub settlement_contract: Address,
+    pub updated_by: Address,
+    pub timestamp: u64,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PoolBalanceEventV1 {
+    pub version: u32,
+    pub member: Address,
+    pub amount: i128,
+    pub balance_after: i128,
+    pub timestamp: u64,
 }
 
 const LEDGERS_PER_DAY: u32 = 17_280;
 const STORAGE_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 30;
 const STORAGE_BUMP_AMOUNT: u32 = LEDGERS_PER_DAY * 365;
+const CONTRACT_VERSION: u32 = 1;
+const MAX_AMOUNT_STROOPS: i128 = 10_000_000_000_000_000;
 
 #[contract]
 pub struct SettlementPoolContract;
@@ -42,6 +67,10 @@ impl SettlementPoolContract {
             panic_with_error!(&env, PoolError::AlreadyInitialized);
         }
 
+        if admin == settlement_contract {
+            panic_with_error!(&env, PoolError::InvalidActor);
+        }
+
         admin.require_auth();
 
         let cfg = PoolConfig {
@@ -49,13 +78,31 @@ impl SettlementPoolContract {
             settlement_contract,
         };
 
+        env.storage().instance().set(&PoolDataKey::Version, &CONTRACT_VERSION);
         env.storage().instance().set(&PoolDataKey::Config, &cfg);
         env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
-        env.events().publish(symbol_short!("pool_ini"), true);
+        env.events().publish(
+            symbol_short!("pool_ini"),
+            PoolConfigEventV1 {
+                version: CONTRACT_VERSION,
+                settlement_contract,
+                updated_by: admin,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     pub fn get_config(env: Env) -> PoolConfig {
+        let version: u32 = env
+            .storage()
+            .instance()
+            .get(&PoolDataKey::Version)
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::NotInitialized));
+        if version != CONTRACT_VERSION {
+            panic_with_error!(&env, PoolError::VersionMismatch);
+        }
+
         let cfg = env.storage()
             .instance()
             .get(&PoolDataKey::Config)
@@ -69,16 +116,31 @@ impl SettlementPoolContract {
         let mut cfg = Self::get_config(env.clone());
         cfg.admin.require_auth();
 
+        if new_contract == cfg.admin {
+            panic_with_error!(&env, PoolError::InvalidActor);
+        }
+
         cfg.settlement_contract = new_contract;
         env.storage().instance().set(&PoolDataKey::Config, &cfg);
         env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
-        env.events().publish(symbol_short!("pool_cfg"), cfg.settlement_contract);
+        env.events().publish(
+            symbol_short!("pool_cfg"),
+            PoolConfigEventV1 {
+                version: CONTRACT_VERSION,
+                settlement_contract: cfg.settlement_contract,
+                updated_by: cfg.admin,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     pub fn deposit(env: Env, from: Address, amount: i128) {
         if amount <= 0 {
             panic_with_error!(&env, PoolError::InvalidAmount);
+        }
+        if amount > MAX_AMOUNT_STROOPS {
+            panic_with_error!(&env, PoolError::AmountTooLarge);
         }
 
         // Ensure pool is initialized before accepting funds.
@@ -96,13 +158,24 @@ impl SettlementPoolContract {
             .persistent()
             .extend_ttl(&key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
-        env.events()
-            .publish((symbol_short!("pool_dep"), from), amount);
+        env.events().publish(
+            (symbol_short!("pool_dep"), from.clone()),
+            PoolBalanceEventV1 {
+                version: CONTRACT_VERSION,
+                member: from,
+                amount,
+                balance_after: next,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     pub fn withdraw(env: Env, from: Address, amount: i128) {
         if amount <= 0 {
             panic_with_error!(&env, PoolError::InvalidAmount);
+        }
+        if amount > MAX_AMOUNT_STROOPS {
+            panic_with_error!(&env, PoolError::AmountTooLarge);
         }
 
         // Ensure pool is initialized before allowing balance operations.
@@ -117,14 +190,24 @@ impl SettlementPoolContract {
             panic_with_error!(&env, PoolError::InsufficientBalance);
         }
 
-        let next = current - amount;
+        let next = current
+            .checked_sub(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::BalanceOverflow));
         env.storage().persistent().set(&key, &next);
         env.storage()
             .persistent()
             .extend_ttl(&key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
-        env.events()
-            .publish((symbol_short!("pool_wdr"), from), amount);
+        env.events().publish(
+            (symbol_short!("pool_wdr"), from.clone()),
+            PoolBalanceEventV1 {
+                version: CONTRACT_VERSION,
+                member: from,
+                amount,
+                balance_after: next,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
     }
 
     pub fn balance_of(env: Env, member: Address) -> i128 {
@@ -226,6 +309,28 @@ mod test {
 
         let cfg = client.get_config();
         assert_eq!(cfg.settlement_contract, next_contract);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_init_rejects_same_admin_and_settlement() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettlementPoolContractClient::new(&env, &contract_id);
+
+        let admin = Address::generate(&env);
+        client.init(&admin, &admin);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_deposit_amount_too_large_rejected() {
+        setup_pool!(env, client, admin, settlement_contract);
+        let member = Address::generate(&env);
+
+        client.init(&admin, &settlement_contract);
+        client.deposit(&member, &(MAX_AMOUNT_STROOPS + 1));
     }
 
     #[test]

@@ -25,7 +25,7 @@ const SOROBAN_BASE_FEE  = "1000";
 const MAX_POLL_ATTEMPTS  = 20;
 const POLL_INTERVAL_MS   = 2500;
 
-function decodeContractError(raw: string): string {
+export function decodeContractError(raw: string): string {
   const match = raw.match(/Error\(Contract,\s*#(\d+)\)/);
   if (match) {
     const code = Number(match[1]);
@@ -36,6 +36,20 @@ function decodeContractError(raw: string): string {
         return "This expense was already settled on-chain. No double payment needed.";
       case ContractErrorCode.EmptyId:
         return "Trip ID or expense ID is missing — cannot record payment.";
+      case ContractErrorCode.AlreadyInitialized:
+        return "Contract is already initialized.";
+      case ContractErrorCode.NotInitialized:
+        return "Contract is not initialized yet.";
+      case ContractErrorCode.InvalidActor:
+        return "Invalid actor for this operation.";
+      case ContractErrorCode.IdTooLong:
+        return "Trip ID or expense ID is too long.";
+      case ContractErrorCode.AmountTooLarge:
+        return "Amount is above the allowed limit.";
+      case ContractErrorCode.VersionMismatch:
+        return "Contract storage version mismatch.";
+      case ContractErrorCode.TxHashTooLong:
+        return "Transaction hash is too long.";
       default:
         return `Contract error #${code}.`;
     }

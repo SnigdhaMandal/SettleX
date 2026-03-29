@@ -23,6 +23,13 @@ export enum ContractErrorCode {
   InvalidAmount = 1,
   AlreadyPaid   = 2,
   EmptyId       = 3,
+  AlreadyInitialized = 4,
+  NotInitialized = 5,
+  InvalidActor = 6,
+  IdTooLong = 7,
+  AmountTooLarge = 8,
+  VersionMismatch = 9,
+  TxHashTooLong = 10,
 }
 
 export interface ContractPaymentEvent {
