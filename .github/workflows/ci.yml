@@ -19,6 +19,10 @@ jobs:
     name: Lint, Test, Build
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      # Public placeholders for CI only. Real values are injected in deployment environments.
+      NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
+      NEXT_PUBLIC_SUPABASE_ANON_KEY: ci-placeholder-key
 
     steps:
       - name: Checkout
