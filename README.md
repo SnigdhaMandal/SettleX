@@ -10,10 +10,10 @@
 </p>
 
 <p align="center">
-  <a href="https://stellar.expert/explorer/testnet/contract/CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO">
+  <a href="https://stellar.expert/explorer/testnet/contract/CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI">
     <img src="https://img.shields.io/badge/Contract-Testnet%20Deployed-4CAF50?style=flat-square&logo=stellar" alt="Contract Deployed" />
   </a>
-  <a href="https://stellar.expert/explorer/testnet/tx/4a8587782f9942bd4cfde12759283b1872463368abb703e5caf92891d65b060c">
+  <a href="https://stellar.expert/explorer/testnet/tx/04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967">
     <img src="https://img.shields.io/badge/Sample%20Tx-Verified-blue?style=flat-square&logo=stellar" alt="Sample Transaction" />
   </a>
   <a href="https://github.com/soumen0818/SettleX/actions/workflows/ci.yml">
@@ -198,21 +198,24 @@ SettleX deploys a **Soroban smart contract** on Stellar Testnet as an immutable,
 
 | Contract Role | Contract ID | Explorer |
 | ------------- | ----------- | -------- |
-| Settlement contract | `CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO` | [View](https://stellar.expert/explorer/testnet/contract/CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO) |
-| Pool contract | `CCLMRHFBY6NUYEOQKELODTZQXAUUQ7DKEC4YDACGR7BCGS4WENCNZPVG` | [View](https://stellar.expert/explorer/testnet/contract/CCLMRHFBY6NUYEOQKELODTZQXAUUQ7DKEC4YDACGR7BCGS4WENCNZPVG) |
+| Settlement contract | `CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI` | [View](https://stellar.expert/explorer/testnet/contract/CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI) |
+| Pool contract | `CB4P4EXLGS56IXVNU3PLJO2BHF5BEEPBBYJAHXEPZDSD2OISQIGO53JA` | [View](https://stellar.expert/explorer/testnet/contract/CB4P4EXLGS56IXVNU3PLJO2BHF5BEEPBBYJAHXEPZDSD2OISQIGO53JA) |
 
 Network: Stellar Testnet  
 Language: Rust (`soroban-sdk` v21.7.6)
 
 ### Verified On-Chain Transactions
 
-- Settlement deploy tx: [54586ae5a847f5eabb108c0978df78fe92fd9326fa1f8b60a3b606f57684df3e](https://stellar.expert/explorer/testnet/tx/54586ae5a847f5eabb108c0978df78fe92fd9326fa1f8b60a3b606f57684df3e)
-- Pool deploy tx: [fc1b99a4abfb95869b893c7e0e00c025d14a1d4550cbd65edf70dc89c32fc9dc](https://stellar.expert/explorer/testnet/tx/fc1b99a4abfb95869b893c7e0e00c025d14a1d4550cbd65edf70dc89c32fc9dc)
-- Pool init tx (`pool_ini`): [dfe3da0405e2341ab0c96e1a858ce08dc98dfb641647c1c07e8e5d70b717c53e](https://stellar.expert/explorer/testnet/tx/dfe3da0405e2341ab0c96e1a858ce08dc98dfb641647c1c07e8e5d70b717c53e)
-- Settlement init tx (`stx_ini`): [815891dff7fada91d5543b5e26bd2587a2ab4a2c14c39fb5dab569de64d354c3](https://stellar.expert/explorer/testnet/tx/815891dff7fada91d5543b5e26bd2587a2ab4a2c14c39fb5dab569de64d354c3)
-- Inter-contract settlement proof tx (`record_payment` + internal pool `withdraw`): [4a8587782f9942bd4cfde12759283b1872463368abb703e5caf92891d65b060c](https://stellar.expert/explorer/testnet/tx/4a8587782f9942bd4cfde12759283b1872463368abb703e5caf92891d65b060c)
+- Settlement deploy tx: [826092e11281bd8fe3c8997ef0a4886b1bd3728069c6855ec4e3866f0a8f9d06](https://stellar.expert/explorer/testnet/tx/826092e11281bd8fe3c8997ef0a4886b1bd3728069c6855ec4e3866f0a8f9d06)
+- Pool deploy tx: [fa245da3ce0a478a9146cccdfa0b1b7f918985c0c138dec3f061f104e5b8f39e](https://stellar.expert/explorer/testnet/tx/fa245da3ce0a478a9146cccdfa0b1b7f918985c0c138dec3f061f104e5b8f39e)
+- Pool init tx (`pool_ini`): [a04a0a2f79e06448156b52ebd07060281cab5bee323889e92c584e0aaf50546d](https://stellar.expert/explorer/testnet/tx/a04a0a2f79e06448156b52ebd07060281cab5bee323889e92c584e0aaf50546d)
+- Settlement init tx (`stx_ini`): [f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e](https://stellar.expert/explorer/testnet/tx/f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e)
+- Inter-contract settlement proof tx (`record_payment` + internal pool `withdraw`): [04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967](https://stellar.expert/explorer/testnet/tx/04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967)
 
 The final proof transaction above is verifiable evidence of the inter-contract path: settlement `record_payment` triggered pool `withdraw` in the same on-chain execution.
+
+Security hardening note:
+- Pool credits are now admin-managed in the pool contract to prevent untrusted self-crediting.
 
 ---
 
@@ -334,7 +337,7 @@ NEXT_PUBLIC_STELLAR_EXPLORER=https://stellar.expert/explorer/testnet
 
 # Soroban Smart Contract (deployed — no changes needed)
 NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
-NEXT_PUBLIC_CONTRACT_ID=CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO
+NEXT_PUBLIC_CONTRACT_ID=CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI
 
 # Supabase (from Project Settings → API in your Supabase dashboard)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co

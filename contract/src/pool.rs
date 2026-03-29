@@ -135,7 +135,7 @@ impl SettlementPoolContract {
         );
     }
 
-    pub fn deposit(env: Env, from: Address, amount: i128) {
+    pub fn deposit(env: Env, member: Address, amount: i128) {
         if amount <= 0 {
             panic_with_error!(&env, PoolError::InvalidAmount);
         }
@@ -143,12 +143,11 @@ impl SettlementPoolContract {
             panic_with_error!(&env, PoolError::AmountTooLarge);
         }
 
-        // Ensure pool is initialized before accepting funds.
-        let _cfg = Self::get_config(env.clone());
+        // Pool credits are admin-managed to avoid untrusted self-minting.
+        let cfg = Self::get_config(env.clone());
+        cfg.admin.require_auth();
 
-        from.require_auth();
-
-        let key = PoolDataKey::Balance(from.clone());
+        let key = PoolDataKey::Balance(member.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0_i128);
         let next = current
             .checked_add(amount)
@@ -159,10 +158,10 @@ impl SettlementPoolContract {
             .extend_ttl(&key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events().publish(
-            (symbol_short!("pool_dep"), from.clone()),
+            (symbol_short!("pool_dep"), member.clone()),
             PoolBalanceEventV1 {
                 version: CONTRACT_VERSION,
-                member: from,
+                member,
                 amount,
                 balance_after: next,
                 timestamp: env.ledger().timestamp(),

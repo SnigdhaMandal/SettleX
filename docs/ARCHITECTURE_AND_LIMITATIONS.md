@@ -24,6 +24,8 @@ SettleX uses:
 - CI merge protection enforcement is a GitHub repository setting and must be enabled manually in repo settings.
 - Wallet UX depends on extension behavior and user approval flow.
 - Some screenshots in README are desktop captures; mobile screenshots should be added for evaluator clarity.
+- Pool balances are internal contract accounting credits, not native XLM/token custody transfers on-chain.
+- `record_payment` stores provided `tx_hash` metadata and relies on app flow integrity; it does not cryptographically verify Horizon payment details inside the contract.
 
 ## Operational Constraints
 
@@ -36,3 +38,5 @@ SettleX uses:
 - Add automated e2e tests (Playwright) with mobile viewport assertions.
 - Add a script to validate README proof links are live.
 - Add an automated checklist CI job that verifies required docs/sections exist.
+- Introduce token/native-asset backed pool settlement model (transfer in/out) for stronger economic guarantees.
+- Add off-chain verifier service (or on-chain protocol changes) to bind `tx_hash` to payer/member/amount claims.
