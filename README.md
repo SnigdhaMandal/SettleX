@@ -60,19 +60,6 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 
 ## Features
 
-<<<<<<< HEAD
-| Feature                                                    | Status  |
-| ---------------------------------------------------------- | ------- |
-| Wallet connect via Freighter                               | ✅ Live |
-| Create & split expenses (equal, percentage, custom weight) | ✅ Live |
-| **Real-time sync across all users (Supabase)**             | ✅ Live |
-| Pay shares with XLM via Freighter                          | ✅ Live |
-| SEP-0007 QR code generation                                | ✅ Live |
-| Transaction hash receipt                                   | ✅ Live |
-| Trip mode (group expenses + settle up)                     | ✅ Live |
-| Net balance calculator per trip                            | ✅ Live |
-| Mobile-responsive UI                                       | ✅ Live |
-=======
 | Feature                                                      | Status |
 | ------------------------------------------------------------ | ------ |
 | Multi-wallet connect (Freighter, xBull, Lobstr)              | Live   |
@@ -86,25 +73,11 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 | Live cross-user sync via Supabase Realtime                   | Live   |
 | Net-balance algorithm (minimises transactions needed)        | Live   |
 | Mobile-responsive UI                                         | Live   |
->>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ---
 
 ## Tech Stack
 
-<<<<<<< HEAD
-| Layer          | Technology                              |
-| -------------- | --------------------------------------- |
-| Framework      | Next.js 14 (App Router, TypeScript)     |
-| Styling        | Tailwind CSS 3.4, Framer Motion         |
-| Blockchain SDK | `@stellar/stellar-sdk` v14              |
-| Wallet         | `@stellar/freighter-api` v6             |
-| Network        | Stellar Testnet (Horizon API)           |
-| Database       | Supabase (PostgreSQL + Realtime)        |
-| QR codes       | `qrcode.react`, `qrcode`                |
-| State          | React Context + Supabase + localStorage |
-| UI primitives  | Radix UI, Lucide React                  |
-=======
 | Layer            | Technology                                     |
 | ---------------- | ---------------------------------------------- |
 | Framework        | Next.js 14 (App Router, TypeScript)            |
@@ -164,7 +137,6 @@ Define members, set amounts, and choose the split mode (equal / percentage / cus
 All three test suites passing with Jest + ts-jest.
 
 ![Test Output](public/test_pass.png)
->>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ---
 
@@ -279,19 +251,6 @@ cd SettleX
 npm install
 ```
 
-<<<<<<< HEAD
-### 3. Set up Supabase (Required for real-time sync)
-
-**New Feature**: SettleX now syncs expenses in real-time across all users!
-
-Follow the complete setup guide: **[docs/QUICKSTART.md](docs/QUICKSTART.md)**
-
-Quick summary:
-
-1. Create a free Supabase project at [supabase.com](https://supabase.com)
-2. Run the SQL schema from [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)
-3. Copy your project URL and anon key to `.env.local`
-=======
 ### 3. Create a Supabase project
 
 SettleX uses Supabase for real-time cross-user sync. Without it, data only persists locally in the current browser session.
@@ -299,7 +258,6 @@ SettleX uses Supabase for real-time cross-user sync. Without it, data only persi
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the SQL Editor, run the full schema from [`supabase-setup.sql`](supabase-setup.sql) (or follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) for a walkthrough).
 3. Copy your **Project URL** and **anon key** from Project Settings → API.
->>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ### 4. Configure environment variables
 
@@ -307,17 +265,9 @@ SettleX uses Supabase for real-time cross-user sync. Without it, data only persi
 cp .env.local.example .env.local
 ```
 
-<<<<<<< HEAD
-Edit `.env.local` with your Supabase credentials:
-
-See [Environment Variables](#environment-variables) below for details.
-
-### 5. Run the development server
-=======
 Fill in your Supabase credentials. The contract ID and RPC URL are pre-filled with the deployed testnet values. See [Environment Variables](#environment-variables) for the full reference.
 
 ### 5. Start the development server
->>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ```bash
 npm run dev
@@ -344,15 +294,11 @@ NEXT_PUBLIC_STELLAR_NETWORK=TESTNET
 NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org
 NEXT_PUBLIC_STELLAR_EXPLORER=https://stellar.expert/explorer/testnet
 
-<<<<<<< HEAD
-# Supabase (Get these from your Supabase project dashboard)
-=======
 # Soroban Smart Contract (deployed — no changes needed)
 NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
 NEXT_PUBLIC_CONTRACT_ID=CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74
 
 # Supabase (from Project Settings → API in your Supabase dashboard)
->>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 
@@ -361,9 +307,6 @@ NEXT_PUBLIC_APP_NAME=SettleX
 NEXT_PUBLIC_APP_VERSION=1.0.0
 ```
 
-<<<<<<< HEAD
-> All variables are prefixed with `NEXT_PUBLIC_` because they are read client-side. The Supabase anon key is safe to expose — it only allows public access as configured in your RLS policies.
-=======
 > All variables carry the `NEXT_PUBLIC_` prefix because they are read client-side. The Supabase anon key is safe to expose — access is governed by Row Level Security (RLS) policies in your database.
 
 ---
@@ -398,7 +341,6 @@ cargo test
 ```
 
 8 tests: `record_and_query`, `multiple_members`, `multiple_expenses_same_trip`, `duplicate_payment_rejected`, `zero_amount_rejected`, `negative_amount_rejected`, `is_paid_unknown_returns_false`, `get_payments_unknown_trip_is_empty`.
->>>>>>> 158e44f86c7c10465f3a024db970a27999406e14
 
 ---
 
