@@ -1,5 +1,7 @@
 ﻿#![no_std]
 
+pub mod pool;
+
 use soroban_sdk::{
     contract, contractimpl, contracterror, contracttype, panic_with_error, symbol_short,
     Address, Env, String, Vec,
