@@ -46,7 +46,7 @@ function TripExpenseCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [payingShareId, setPayingShareId] = useState<string | null>(null);
-  const { payShare, paymentState, reset } = usePayment({ expenseId: expense.id });
+  const { payShare, paymentState, reset, retryOnChainRecord } = usePayment({ expenseId: expense.id });
 
   const paidCount = expense.shares.filter((s) => s.paid).length;
   const total = parseFloat(expense.totalAmount);
@@ -146,7 +146,11 @@ function TripExpenseCard({
               />
               {paymentState.status !== "idle" && (
                 <div className="mt-3">
-                  <PaymentStatus state={paymentState} onReset={reset} />
+                  <PaymentStatus
+                    state={paymentState}
+                    onReset={reset}
+                    onRetryOnChain={retryOnChainRecord}
+                  />
                 </div>
               )}
               <div className="mt-3 pt-3 border-t border-[#F5F5F5]">

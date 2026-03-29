@@ -11,13 +11,16 @@ import { useToast } from "@/components/ui/Toast";
 import { NETWORK_PASSPHRASE, STELLAR_EXPLORER, CONTRACT_ID } from "@/lib/utils/constants";
 import type { SplitShare } from "@/types/expense";
 
+type OnChainStep = "simulating" | "signing" | "sending" | "confirming";
+
 export type PaymentState =
   | { status: "idle" }
   | { status: "building" }
   | { status: "signing" }
   | { status: "submitting" }
-  | { status: "recording" }
+  | { status: "recording"; step: OnChainStep }
   | { status: "success"; hash: string; ledger: number; onChain: boolean }
+  | { status: "partial_success"; hash: string; ledger: number; onChain: boolean; message: string }
   | { status: "error"; message: string };
 
 interface UsePaymentOpts {
@@ -31,14 +34,59 @@ interface PayShareParams {
   tripId?: string;
 }
 
+interface PendingOnChainRecord {
+  memberPublicKey: string;
+  tripId: string;
+  expenseId: string;
+  payerPublicKey: string;
+  amountXlm: string;
+  txHash: string;
+  ledger: number;
+}
+
 export function usePayment({ expenseId }: UsePaymentOpts) {
   const { publicKey, refreshBalance } = useWallet();
   const { markSharePaid } = useExpense();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
 
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: "idle" });
+  const [pendingOnChain, setPendingOnChain] = useState<PendingOnChainRecord | null>(null);
 
-  const reset = useCallback(() => setPaymentState({ status: "idle" }), []);
+  const reset = useCallback(() => {
+    setPaymentState({ status: "idle" });
+    setPendingOnChain(null);
+  }, []);
+
+  const retryOnChainRecord = useCallback(async () => {
+    if (!pendingOnChain) return;
+
+    const contractResult = await recordPaymentOnChain({
+      ...pendingOnChain,
+      onStatus: (step) => setPaymentState({ status: "recording", step }),
+    });
+
+    if (!contractResult.success) {
+      const msg = contractResult.error ?? "On-chain retry failed.";
+      setPaymentState({
+        status: "partial_success",
+        hash: pendingOnChain.txHash,
+        ledger: pendingOnChain.ledger,
+        onChain: false,
+        message: msg,
+      });
+      toastError("On-chain retry failed", msg);
+      return;
+    }
+
+    setPendingOnChain(null);
+    setPaymentState({
+      status: "success",
+      hash: pendingOnChain.txHash,
+      ledger: contractResult.ledger ?? pendingOnChain.ledger,
+      onChain: true,
+    });
+    toastSuccess("On-chain record recovered", "Payment is now confirmed in the contract.");
+  }, [pendingOnChain, toastError, toastSuccess]);
 
   const payShare = useCallback(
     async ({ share, expenseTitle, payerWalletAddress, tripId }: PayShareParams) => {
@@ -84,11 +132,10 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         setPaymentState({ status: "submitting" });
         const result = await submitSignedTransaction(signedXDR);
 
-        await markSharePaid(expenseId, share.memberId, result.hash);
-
         let onChain = false;
+        let onChainError: string | null = null;
         if (CONTRACT_ID && tripId) {
-          setPaymentState({ status: "recording" });
+          setPaymentState({ status: "recording", step: "simulating" });
           const contractResult = await recordPaymentOnChain({
             memberPublicKey: publicKey,
             tripId,
@@ -96,18 +143,44 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
             payerPublicKey: payerWalletAddress,
             amountXlm:      share.amount,
             txHash:         result.hash,
-            onStatus:       () => setPaymentState({ status: "recording" }),
+            onStatus:       (step) => setPaymentState({ status: "recording", step }),
           });
 
           if (contractResult.success) {
             onChain = true;
           } else {
-            console.warn("[SettleX] on-chain recording failed:", contractResult.error);
-            toastError(
-              "On-chain record failed",
-              "XLM was sent but contract recording failed. Your share is still marked paid.",
-            );
+            onChainError = contractResult.error ?? "On-chain recording failed.";
+            console.warn("[SettleX] on-chain recording failed:", onChainError);
+            setPendingOnChain({
+              memberPublicKey: publicKey,
+              tripId,
+              expenseId,
+              payerPublicKey: payerWalletAddress,
+              amountXlm: share.amount,
+              txHash: result.hash,
+              ledger: result.ledger,
+            });
           }
+        }
+
+        // Always sync local state after successful XLM transfer so UI reflects financial reality.
+        await markSharePaid(expenseId, share.memberId, result.hash);
+
+        if (onChainError) {
+          setPaymentState({
+            status: "partial_success",
+            hash: result.hash,
+            ledger: result.ledger,
+            onChain: false,
+            message: onChainError,
+          });
+          toastInfo(
+            "Payment sent, on-chain record pending",
+            "XLM transfer succeeded. Use retry after fixing contract prerequisites (e.g. pool balance).",
+          );
+          setTimeout(() => refreshBalance(), 3000);
+          setTimeout(() => refreshBalance(), 8000);
+          return;
         }
 
         setPaymentState({ status: "success", hash: result.hash, ledger: result.ledger, onChain });
@@ -136,13 +209,14 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     paymentState,
     payShare,
     reset,
+    retryOnChainRecord,
     isIdle:    paymentState.status === "idle",
     isLoading: ["building", "signing", "submitting", "recording"].includes(paymentState.status),
     isSuccess: paymentState.status === "success",
     isError:   paymentState.status === "error",
-    txHash:    paymentState.status === "success" ? paymentState.hash : null,
-    onChain:   paymentState.status === "success" ? paymentState.onChain : false,
-    explorerUrl: paymentState.status === "success"
+    txHash:    paymentState.status === "success" || paymentState.status === "partial_success" ? paymentState.hash : null,
+    onChain:   paymentState.status === "success" || paymentState.status === "partial_success" ? paymentState.onChain : false,
+    explorerUrl: paymentState.status === "success" || paymentState.status === "partial_success"
       ? `${STELLAR_EXPLORER}/tx/${paymentState.hash}`
       : null,
   };

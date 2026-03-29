@@ -44,7 +44,7 @@ function ExpenseCard({
     !!currentUserPublicKey &&
     !!payerMember?.walletAddress &&
     payerMember.walletAddress === currentUserPublicKey;
-  const { payShare, paymentState, reset } = usePayment({ expenseId: expense.id });
+  const { payShare, paymentState, reset, retryOnChainRecord } = usePayment({ expenseId: expense.id });
 
   const handlePay = async (share: SplitShare) => {
     setPayingShareId(share.memberId);
@@ -154,7 +154,11 @@ function ExpenseCard({
 
               {paymentState.status !== "idle" && (
                 <div className="mt-3">
-                  <PaymentStatus state={paymentState} onReset={reset} />
+                  <PaymentStatus
+                    state={paymentState}
+                    onReset={reset}
+                    onRetryOnChain={retryOnChainRecord}
+                  />
                 </div>
               )}
 
