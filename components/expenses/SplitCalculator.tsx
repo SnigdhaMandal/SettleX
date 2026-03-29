@@ -55,10 +55,10 @@ export function SplitCalculator({
   return (
     <div className="space-y-3">
       {/* Summary bar */}
-      <div className="flex items-center justify-between px-4 py-3 bg-[#F8F8F8] rounded-xl border border-[#E5E5E5]">
-        <div className="flex items-center gap-2 text-sm text-[#555]">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 bg-[#F8F8F8] rounded-xl border border-[#E5E5E5]">
+        <div className="flex items-start sm:items-center gap-2 text-sm text-[#555] min-w-0">
           <Calculator size={14} />
-          <span>
+          <span className="leading-relaxed">
             <strong className="text-[#0F0F14]">{payerName}</strong> paid{" "}
             <strong className="text-[#0F0F14]">
               {total.toFixed(4)} XLM

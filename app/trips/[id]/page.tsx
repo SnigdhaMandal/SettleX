@@ -78,7 +78,7 @@ function TripExpenseCard({
     >
       {/* Header row — click to expand */}
       <button
-        className="w-full flex items-center justify-between gap-3 p-4 text-left"
+        className="w-full flex items-start sm:items-center justify-between gap-3 p-4 text-left"
         onClick={() => setExpanded((v) => !v)}
       >
         <div className="flex items-center gap-3 min-w-0">
@@ -87,7 +87,7 @@ function TripExpenseCard({
           </div>
           <div className="min-w-0">
             <p className="text-sm font-bold text-[#0F0F14] truncate">{expense.title}</p>
-            <p className="text-xs text-[#AAA]">
+            <p className="text-xs text-[#AAA] leading-relaxed">
               {total.toFixed(4)} XLM &middot; {expense.members.length} members &middot; {createdAt}
             </p>
           </div>
@@ -229,21 +229,21 @@ export default function TripDetailPage() {
     <AuthGuard>
       <div className="min-h-screen bg-[#F6F6F6]">
         {/* Nav */}
-        <nav className="sticky top-0 z-40 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-[#E5E5E5] bg-white/90 backdrop-blur-xl">
-          <div className="flex items-center gap-3">
+        <nav className="sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 py-3 border-b border-[#E5E5E5] bg-white/90 backdrop-blur-xl">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Link
               href="/trips"
-              className="flex items-center gap-1.5 text-sm text-[#888] hover:text-[#0F0F14] transition-colors"
+              className="flex items-center gap-1.5 text-sm text-[#888] hover:text-[#0F0F14] transition-colors shrink-0"
             >
               <ArrowLeft size={14} />
-              Trips
+              <span className="hidden sm:inline">Trips</span>
             </Link>
-            <span className="text-[#E5E5E5]">/</span>
-            <span className="text-sm font-bold text-[#0F0F14] max-w-[140px] truncate">
+            <span className="text-[#E5E5E5] hidden sm:inline">/</span>
+            <span className="text-sm font-bold text-[#0F0F14] max-w-[120px] sm:max-w-[220px] truncate">
               {trip.name}
             </span>
           </div>
-          <ConnectWalletButton />
+          <ConnectWalletButton className="shrink-0" />
         </nav>
 
         <main className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
@@ -363,7 +363,7 @@ export default function TripDetailPage() {
               <button
                 key={tab}
                 onClick={() => setActiveTab(tab)}
-                className={`flex-1 flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-semibold transition-all ${
+                className={`flex-1 flex items-center justify-center gap-1 sm:gap-1.5 py-2.5 rounded-lg text-xs sm:text-sm font-semibold transition-all ${
                   activeTab === tab
                     ? "bg-white text-[#0F0F14] shadow-sm"
                     : "text-[#888] hover:text-[#0F0F14]"
@@ -400,7 +400,7 @@ export default function TripDetailPage() {
                   </h2>
                   <button
                     onClick={() => setShowExpenseForm(true)}
-                    className="flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-xl bg-[#0F0F14] text-[#B9FF66] hover:bg-[#1A1A22] transition-all"
+                    className="flex items-center gap-1.5 text-xs font-bold px-3 py-2 rounded-xl bg-[#0F0F14] text-[#B9FF66] hover:bg-[#1A1A22] transition-all"
                   >
                     <Plus size={12} />
                     Add Expense

@@ -88,24 +88,24 @@ export default function TripsPage() {
     <AuthGuard>
       <div className="min-h-screen bg-[#F6F6F6]">
         {/* Nav */}
-        <nav className="sticky top-0 z-40 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-[#E5E5E5] bg-white/90 backdrop-blur-xl">
-          <div className="flex items-center gap-3">
+        <nav className="sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 py-3 border-b border-[#E5E5E5] bg-white/90 backdrop-blur-xl">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Link
               href="/dashboard"
-              className="flex items-center gap-1.5 text-sm text-[#888] hover:text-[#0F0F14] transition-colors"
+              className="flex items-center gap-1.5 text-sm text-[#888] hover:text-[#0F0F14] transition-colors shrink-0"
             >
               <ArrowLeft size={14} />
-              Dashboard
+              <span className="hidden sm:inline">Dashboard</span>
             </Link>
-            <span className="text-[#E5E5E5]">/</span>
-            <span className="text-sm font-bold text-[#0F0F14]">Trips</span>
+            <span className="text-[#E5E5E5] hidden sm:inline">/</span>
+            <span className="text-sm font-bold text-[#0F0F14] truncate">Trips</span>
           </div>
-          <ConnectWalletButton />
+          <ConnectWalletButton className="shrink-0" />
         </nav>
 
         <main className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
           {/* Header */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between gap-3 mb-6">
             <div>
               <div className="flex items-center gap-2 mb-1">
                 <Map size={16} className="text-[#B9FF66]" />
@@ -121,7 +121,7 @@ export default function TripsPage() {
             {trips.length > 0 && (
               <button
                 onClick={() => setShowForm(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0F0F14] text-[#B9FF66] text-sm font-bold hover:bg-[#1A1A22] transition-all"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0F0F14] text-[#B9FF66] text-sm font-bold hover:bg-[#1A1A22] transition-all shrink-0"
               >
                 <Plus size={14} />
                 New

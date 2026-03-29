@@ -32,5 +32,3 @@ Thumbs.db
 *.tsbuildinfo
 next-env.d.ts
 
-# Docs (internal)
-docs/

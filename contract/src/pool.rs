@@ -62,7 +62,7 @@ pub struct SettlementPoolContract;
 
 #[contractimpl]
 impl SettlementPoolContract {
-    pub fn init(env: Env, admin: Address, settlement_contract: Address) {
+    pub fn init_pool(env: Env, admin: Address, settlement_contract: Address) {
         if env.storage().instance().has(&PoolDataKey::Config) {
             panic_with_error!(&env, PoolError::AlreadyInitialized);
         }
@@ -74,8 +74,8 @@ impl SettlementPoolContract {
         admin.require_auth();
 
         let cfg = PoolConfig {
-            admin,
-            settlement_contract,
+            admin: admin.clone(),
+            settlement_contract: settlement_contract.clone(),
         };
 
         env.storage().instance().set(&PoolDataKey::Version, &CONTRACT_VERSION);
@@ -83,7 +83,7 @@ impl SettlementPoolContract {
         env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events().publish(
-            symbol_short!("pool_ini"),
+            (symbol_short!("pool_ini"),),
             PoolConfigEventV1 {
                 version: CONTRACT_VERSION,
                 settlement_contract,
@@ -125,7 +125,7 @@ impl SettlementPoolContract {
         env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events().publish(
-            symbol_short!("pool_cfg"),
+            (symbol_short!("pool_cfg"),),
             PoolConfigEventV1 {
                 version: CONTRACT_VERSION,
                 settlement_contract: cfg.settlement_contract,
@@ -247,7 +247,7 @@ mod test {
     fn test_init_and_get_config() {
         setup_pool!(env, client, admin, settlement_contract);
 
-        client.init(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
         let cfg = client.get_config();
 
         assert_eq!(cfg.admin, admin);
@@ -259,8 +259,8 @@ mod test {
     fn test_double_init_rejected() {
         setup_pool!(env, client, admin, settlement_contract);
 
-        client.init(&admin, &settlement_contract);
-        client.init(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
     }
 
     #[test]
@@ -268,7 +268,7 @@ mod test {
         setup_pool!(env, client, admin, settlement_contract);
 
         let member = Address::generate(&env);
-        client.init(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
 
         client.deposit(&member, &1_500_000_i128);
         assert_eq!(client.balance_of(&member), 1_500_000_i128);
@@ -279,7 +279,7 @@ mod test {
         setup_pool!(env, client, admin, settlement_contract);
 
         let member = Address::generate(&env);
-        client.init(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
 
         client.deposit(&member, &2_000_000_i128);
         client.withdraw(&member, &700_000_i128);
@@ -293,7 +293,7 @@ mod test {
         setup_pool!(env, client, admin, settlement_contract);
 
         let member = Address::generate(&env);
-        client.init(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
 
         client.deposit(&member, &100_000_i128);
         client.withdraw(&member, &200_000_i128);
@@ -304,7 +304,7 @@ mod test {
         setup_pool!(env, client, admin, settlement_contract);
 
         let next_contract = Address::generate(&env);
-        client.init(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
         client.set_settlement_contract(&next_contract);
 
         let cfg = client.get_config();
@@ -320,7 +320,7 @@ mod test {
         let client = SettlementPoolContractClient::new(&env, &contract_id);
 
         let admin = Address::generate(&env);
-        client.init(&admin, &admin);
+        client.init_pool(&admin, &admin);
     }
 
     #[test]
@@ -329,7 +329,7 @@ mod test {
         setup_pool!(env, client, admin, settlement_contract);
         let member = Address::generate(&env);
 
-        client.init(&admin, &settlement_contract);
+        client.init_pool(&admin, &settlement_contract);
         client.deposit(&member, &(MAX_AMOUNT_STROOPS + 1));
     }
 

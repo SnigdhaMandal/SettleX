@@ -74,7 +74,7 @@ function ExpenseCard({
     >
       {/* Header row */}
       <button
-        className="w-full flex items-center justify-between gap-3 p-4 text-left"
+        className="w-full flex items-start sm:items-center justify-between gap-3 p-4 text-left"
         onClick={() => setExpanded((v) => !v)}
       >
         <div className="flex items-center gap-3 min-w-0">
@@ -85,7 +85,7 @@ function ExpenseCard({
             <p className="text-sm font-bold text-[#0F0F14] truncate">
               {expense.title}
             </p>
-            <p className="text-xs text-[#AAA]">
+            <p className="text-xs text-[#AAA] leading-relaxed">
               {total.toFixed(4)} XLM &middot; {expense.members.length} members
               &middot; {createdAt}
             </p>
@@ -165,7 +165,7 @@ function ExpenseCard({
               <div className="mt-3 pt-3 border-t border-[#F5F5F5]">
                 {confirmDelete ? (
                   /* ── Confirmation strip ── */
-                  <div className="flex items-center justify-between gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-3 py-2 rounded-xl bg-red-50 border border-red-200">
                     <p className="text-xs text-red-600 font-medium">
                       Delete &ldquo;{expense.title}&rdquo;? This cannot be undone.
                     </p>
@@ -187,7 +187,7 @@ function ExpenseCard({
                   </div>
                 ) : (
                   <div className="flex items-center justify-between">
-                    <span className="text-[10px] uppercase tracking-wider font-semibold text-[#CCC]">
+                    <span className="text-[10px] uppercase tracking-wider font-semibold text-[#CCC] break-words">
                       Split: {expense.splitMode}
                     </span>
                     {isOwner ? (
@@ -255,21 +255,21 @@ export default function ExpensesPage() {
     <AuthGuard>
       <div className="min-h-screen bg-[#F6F6F6]">
         {/* Nav */}
-        <nav className="sticky top-0 z-40 flex items-center justify-between px-4 sm:px-6 py-3 border-b border-[#E5E5E5] bg-white/90 backdrop-blur-xl">
-          <div className="flex items-center gap-3">
-            <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-[#888] hover:text-[#0F0F14] transition-colors">
+        <nav className="sticky top-0 z-40 flex items-center justify-between gap-2 px-4 sm:px-6 py-3 border-b border-[#E5E5E5] bg-white/90 backdrop-blur-xl">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
+            <Link href="/dashboard" className="flex items-center gap-1.5 text-sm text-[#888] hover:text-[#0F0F14] transition-colors shrink-0">
               <ArrowLeft size={14} />
-              Dashboard
+              <span className="hidden sm:inline">Dashboard</span>
             </Link>
-            <span className="text-[#E5E5E5]">/</span>
-            <span className="text-sm font-bold text-[#0F0F14]">Expenses</span>
+            <span className="text-[#E5E5E5] hidden sm:inline">/</span>
+            <span className="text-sm font-bold text-[#0F0F14] truncate">Expenses</span>
           </div>
-          <ConnectWalletButton />
+          <ConnectWalletButton className="shrink-0" />
         </nav>
 
         <main className="max-w-2xl mx-auto px-4 sm:px-6 py-8">
           {/* Page header */}
-          <div className="flex items-center justify-between mb-6">
+          <div className="flex items-center justify-between gap-3 mb-6">
             <div>
               <h1 className="text-xl font-black text-[#0F0F14]">Expenses</h1>
               <p className="text-sm text-[#888] mt-0.5">
@@ -282,7 +282,7 @@ export default function ExpensesPage() {
             {expenses.length > 0 && (
               <button
                 onClick={() => setShowForm(true)}
-                className="inline-flex items-center gap-2 px-4 py-2 rounded-xl bg-[#0F0F14] text-[#B9FF66] text-sm font-bold hover:bg-[#1A1A22] transition-all"
+                className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-[#0F0F14] text-[#B9FF66] text-sm font-bold hover:bg-[#1A1A22] transition-all shrink-0"
               >
                 <Plus size={14} />
                 New

@@ -3,7 +3,7 @@
 import { useCallback, useState } from "react";
 import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
 import { submitSignedTransaction } from "@/lib/stellar/submitTransaction";
-import { recordPaymentOnChain, checkIsPaid } from "@/lib/stellar/contract";
+import { recordPaymentOnChain, checkIsPaid, precheckPoolBalance } from "@/lib/stellar/contract";
 import { signXDR } from "@/lib/freighter";
 import { useWallet } from "@/hooks/useWallet";
 import { useExpense } from "@/hooks/useExpense";
@@ -59,6 +59,24 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
   const retryOnChainRecord = useCallback(async () => {
     if (!pendingOnChain) return;
+
+    const poolCheck = await precheckPoolBalance(
+      pendingOnChain.memberPublicKey,
+      pendingOnChain.memberPublicKey,
+      pendingOnChain.amountXlm,
+    );
+    if (!poolCheck.ok) {
+      const msg = poolCheck.error ?? "Pool balance precheck failed.";
+      setPaymentState({
+        status: "partial_success",
+        hash: pendingOnChain.txHash,
+        ledger: pendingOnChain.ledger,
+        onChain: false,
+        message: msg,
+      });
+      toastError("On-chain retry blocked", msg);
+      return;
+    }
 
     const contractResult = await recordPaymentOnChain({
       ...pendingOnChain,
@@ -135,6 +153,21 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         let onChain = false;
         let onChainError: string | null = null;
         if (CONTRACT_ID && tripId) {
+          const poolCheck = await precheckPoolBalance(publicKey, publicKey, share.amount);
+          if (!poolCheck.ok) {
+            onChainError =
+              poolCheck.error ??
+              "Pool balance is too low to record this payment on-chain.";
+            setPendingOnChain({
+              memberPublicKey: publicKey,
+              tripId,
+              expenseId,
+              payerPublicKey: payerWalletAddress,
+              amountXlm: share.amount,
+              txHash: result.hash,
+              ledger: result.ledger,
+            });
+          } else {
           setPaymentState({ status: "recording", step: "simulating" });
           const contractResult = await recordPaymentOnChain({
             memberPublicKey: publicKey,
@@ -150,7 +183,6 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
             onChain = true;
           } else {
             onChainError = contractResult.error ?? "On-chain recording failed.";
-            console.warn("[SettleX] on-chain recording failed:", onChainError);
             setPendingOnChain({
               memberPublicKey: publicKey,
               tripId,
@@ -160,6 +192,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
               txHash: result.hash,
               ledger: result.ledger,
             });
+          }
           }
         }
 

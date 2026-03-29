@@ -48,3 +48,19 @@ jobs:
 
       - name: Build
         run: npm run build
+
+  rust-contract:
+    name: Rust Contract Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Run contract tests
+        working-directory: contract
+        run: cargo test

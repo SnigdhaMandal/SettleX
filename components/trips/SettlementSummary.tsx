@@ -123,18 +123,18 @@ function NetPaymentRow({
       animate={{ opacity: 1, x: 0 }}
       transition={{ delay: index * 0.06 }}
       className={cn(
-        "flex flex-col gap-1.5 p-3.5 rounded-xl border transition-all",
+        "flex flex-col gap-2 p-3.5 rounded-xl border transition-all",
         settled ? "bg-[#F0FFDB] border-[#B9FF66]/40" : "bg-white border-[#E5E5E5]",
       )}
     >
-      <div className="flex items-center justify-between gap-3">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
         <div className="flex items-center gap-2 min-w-0 text-sm font-semibold text-[#0F0F14]">
           <span className="truncate">{payment.from}</span>
           <ArrowRight size={13} className="text-[#B9FF66] shrink-0" />
           <span className="truncate">{payment.to}</span>
         </div>
 
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center justify-between sm:justify-end gap-2">
           <span className="text-sm font-bold">
             {parseFloat(payment.amount).toFixed(4)}{" "}
             <span className="text-[10px] font-normal text-[#888]">XLM</span>

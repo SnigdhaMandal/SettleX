@@ -13,6 +13,7 @@ const config = {
         tsconfig: {
           module: "commonjs",
           esModuleInterop: true,
+          jsx: "react-jsx",
         },
       },
     ],
@@ -21,6 +22,7 @@ const config = {
     "**/__tests__/**/*.test.ts",
     "**/__tests__/**/*.test.tsx",
   ],
+  setupFiles: ["<rootDir>/jest.setup.ts"],
   collectCoverageFrom: [
     "lib/**/*.ts",
     "!lib/stellar/soroban.ts",

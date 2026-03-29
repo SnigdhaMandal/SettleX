@@ -227,7 +227,7 @@ export function ConnectWalletButton({
         target="_blank"
         rel="noopener noreferrer"
         className={cn(
-          "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold",
+          "inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold",
           "bg-amber-50 border border-amber-200 text-amber-700 hover:bg-amber-100 transition-colors",
           className
         )}
@@ -271,7 +271,7 @@ export function ConnectWalletButton({
         <button
           onClick={() => setDropdownOpen((prev) => !prev)}
           className={cn(
-            "inline-flex items-center gap-2 pl-1 pr-3 py-1 rounded-xl border transition-all duration-200",
+            "inline-flex items-center gap-2 pl-1 pr-2 sm:pr-3 py-1.5 rounded-xl border transition-all duration-200 max-w-[180px] sm:max-w-none",
             "bg-white border-[#E5E5E5] hover:border-[#B9FF66]/60 hover:shadow-[0_2px_12px_-2px_rgba(185,255,102,0.3)]"
           )}
         >
@@ -281,12 +281,14 @@ export function ConnectWalletButton({
           </div>
 
           {/* Address */}
-          <div className="text-left">
+          <div className="hidden sm:block text-left">
             <p className="text-[11px] text-[#AAA] leading-none mb-0.5">Connected</p>
             <p className="text-xs font-mono font-semibold text-[#0F0F14] leading-none">
               {formatAddress(publicKey, 5)}
             </p>
           </div>
+
+          <span className="sm:hidden inline-flex items-center w-2 h-2 rounded-full bg-[#2D6600]" />
 
           {/* Balance pill */}
           {!isLoadingBalance && balance && (
@@ -301,7 +303,7 @@ export function ConnectWalletButton({
           <ChevronDown
             size={13}
             className={cn(
-              "text-[#AAA] transition-transform duration-200",
+              "text-[#AAA] transition-transform duration-200 shrink-0",
               dropdownOpen && "rotate-180"
             )}
           />
@@ -347,7 +349,7 @@ export function ConnectWalletButton({
       onClick={connect}
       disabled={isConnecting}
       className={cn(
-        "inline-flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-semibold transition-all duration-200",
+        "inline-flex items-center gap-2 px-3 sm:px-4 py-2.5 rounded-xl text-xs sm:text-sm font-semibold transition-all duration-200",
         "bg-[#B9FF66] text-[#0F0F14] hover:shadow-[0_4px_16px_-4px_rgba(185,255,102,0.6)] active:scale-95",
         "disabled:opacity-60 disabled:cursor-not-allowed disabled:active:scale-100",
         className

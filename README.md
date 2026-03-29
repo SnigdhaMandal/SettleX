@@ -10,11 +10,14 @@
 </p>
 
 <p align="center">
-  <a href="https://stellar.expert/explorer/testnet/contract/CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74">
+  <a href="https://stellar.expert/explorer/testnet/contract/CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO">
     <img src="https://img.shields.io/badge/Contract-Testnet%20Deployed-4CAF50?style=flat-square&logo=stellar" alt="Contract Deployed" />
   </a>
-  <a href="https://stellar.expert/explorer/testnet/tx/588b55a12910227e3d7aa849f70efebde6ab2f0ca75e95389a67e33f9dd930ff">
+  <a href="https://stellar.expert/explorer/testnet/tx/4a8587782f9942bd4cfde12759283b1872463368abb703e5caf92891d65b060c">
     <img src="https://img.shields.io/badge/Sample%20Tx-Verified-blue?style=flat-square&logo=stellar" alt="Sample Transaction" />
+  </a>
+  <a href="https://github.com/soumen0818/SettleX/actions/workflows/ci.yml">
+    <img src="https://github.com/soumen0818/SettleX/actions/workflows/ci.yml/badge.svg" alt="CI Pipeline" />
   </a>
   <img src="https://img.shields.io/badge/Network-Stellar%20Testnet-7B68EE?style=flat-square" alt="Stellar Testnet" />
   <img src="https://img.shields.io/badge/Tests-45%20Passing-brightgreen?style=flat-square" alt="45 Tests Passing" />
@@ -35,11 +38,13 @@
 - [Screenshots](#screenshots)
 - [How It Works](#how-it-works)
 - [Smart Contract](#smart-contract)
+- [Submission Checklist Evidence](#submission-checklist-evidence)
 - [Setup Instructions](#setup-instructions)
 - [Environment Variables](#environment-variables)
 - [Testing](#testing)
 - [Project Structure](#project-structure)
 - [Testnet Notes](#testnet-notes)
+- [Final Documentation Package](#final-documentation-package)
 
 ---
 
@@ -140,6 +145,14 @@ All three test suites passing with Jest + ts-jest.
 
 ---
 
+### Deployment Proof (CLI)
+
+Fresh testnet deployment output and contract ID confirmation.
+
+![Deployment Proof](public/deployment.png)
+
+---
+
 ## How It Works
 
 ```
@@ -181,22 +194,47 @@ useContractEvents polls every 10s -> syncs state for all participants
 
 SettleX deploys a **Soroban smart contract** on Stellar Testnet as an immutable, tamper-proof ledger of all settled payments.
 
-### Deployed Contract
+### Deployed Contracts (Phase 8 Proof)
 
-| Field       | Value                                                                                                                                  |
-| ----------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Contract ID | `CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74`                                                                             |
-| Network     | Stellar Testnet                                                                                                                        |
-| Language    | Rust (`soroban-sdk` v21.7.6)                                                                                                           |
-| Explorer    | [stellar.expert → contract](https://stellar.expert/explorer/testnet/contract/CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74) |
+| Contract Role | Contract ID | Explorer |
+| ------------- | ----------- | -------- |
+| Settlement contract | `CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO` | [View](https://stellar.expert/explorer/testnet/contract/CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO) |
+| Pool contract | `CCLMRHFBY6NUYEOQKELODTZQXAUUQ7DKEC4YDACGR7BCGS4WENCNZPVG` | [View](https://stellar.expert/explorer/testnet/contract/CCLMRHFBY6NUYEOQKELODTZQXAUUQ7DKEC4YDACGR7BCGS4WENCNZPVG) |
 
-### Verified Contract Call Transaction
+Network: Stellar Testnet  
+Language: Rust (`soroban-sdk` v21.7.6)
 
-**Transaction hash:** `588b55a12910227e3d7aa849f70efebde6ab2f0ca75e95389a67e33f9dd930ff`
+### Verified On-Chain Transactions
 
-[View on Stellar Explorer](https://stellar.expert/explorer/testnet/tx/588b55a12910227e3d7aa849f70efebde6ab2f0ca75e95389a67e33f9dd930ff)
+- Settlement deploy tx: [54586ae5a847f5eabb108c0978df78fe92fd9326fa1f8b60a3b606f57684df3e](https://stellar.expert/explorer/testnet/tx/54586ae5a847f5eabb108c0978df78fe92fd9326fa1f8b60a3b606f57684df3e)
+- Pool deploy tx: [fc1b99a4abfb95869b893c7e0e00c025d14a1d4550cbd65edf70dc89c32fc9dc](https://stellar.expert/explorer/testnet/tx/fc1b99a4abfb95869b893c7e0e00c025d14a1d4550cbd65edf70dc89c32fc9dc)
+- Pool init tx (`pool_ini`): [dfe3da0405e2341ab0c96e1a858ce08dc98dfb641647c1c07e8e5d70b717c53e](https://stellar.expert/explorer/testnet/tx/dfe3da0405e2341ab0c96e1a858ce08dc98dfb641647c1c07e8e5d70b717c53e)
+- Settlement init tx (`stx_ini`): [815891dff7fada91d5543b5e26bd2587a2ab4a2c14c39fb5dab569de64d354c3](https://stellar.expert/explorer/testnet/tx/815891dff7fada91d5543b5e26bd2587a2ab4a2c14c39fb5dab569de64d354c3)
+- Inter-contract settlement proof tx (`record_payment` + internal pool `withdraw`): [4a8587782f9942bd4cfde12759283b1872463368abb703e5caf92891d65b060c](https://stellar.expert/explorer/testnet/tx/4a8587782f9942bd4cfde12759283b1872463368abb703e5caf92891d65b060c)
 
-This transaction is a live, verifiable `record_payment` call to the deployed contract on Stellar Testnet.
+The final proof transaction above is verifiable evidence of the inter-contract path: settlement `record_payment` triggered pool `withdraw` in the same on-chain execution.
+
+---
+
+## Submission Checklist Evidence
+
+This section maps the required submission checklist to concrete proof in this repository.
+
+| Requirement | Proof |
+| --- | --- |
+| Public GitHub repository | https://github.com/soumen0818/SettleX |
+| README with complete documentation | This file plus final docs links in [Final Documentation Package](#final-documentation-package) |
+| Minimum 8+ meaningful commits | Local repository history: 44 commits |
+| Live demo link | [https://settle-x-pi.vercel.app/](https://settle-x-pi.vercel.app/) |
+| Screenshot: mobile responsive view | UI pages were hardened for mobile in Phase 9. Add one fresh phone viewport screenshot to `public/mobile-responsive.png` and reference it here before final submission. |
+| Screenshot or badge: CI/CD pipeline running | CI badge at the top of this README (GitHub Actions `ci.yml`) |
+| Contract addresses and transaction hash (inter-contract) | [Deployed Contracts (Phase 8 Proof)](#deployed-contracts-phase-8-proof) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
+| Token or pool address (if custom token or pool deployed) | Pool contract in [Deployed Contracts (Phase 8 Proof)](#deployed-contracts-phase-8-proof) |
+
+Additional production proof:
+- Build verified locally with `npm run build`.
+- Lint verified locally with `npm run lint`.
+- Tests verified locally with `npm test -- --runInBand`.
 
 ### Contract Functions
 
@@ -296,7 +334,7 @@ NEXT_PUBLIC_STELLAR_EXPLORER=https://stellar.expert/explorer/testnet
 
 # Soroban Smart Contract (deployed — no changes needed)
 NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
-NEXT_PUBLIC_CONTRACT_ID=CDYWC4JQBCARETZ5VKDJNNY3H37WX3CRUG764NBI7JGU37MYQCKMRU74
+NEXT_PUBLIC_CONTRACT_ID=CD4ANYS2NOLXQHPTEHI6SFU6L4SAYXKUJXFKI627P5I2H2R2CYHKGOIO
 
 # Supabase (from Project Settings → API in your Supabase dashboard)
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
@@ -415,6 +453,15 @@ settlex/
   ```
 - All transactions and contract events are visible at [stellar.expert/explorer/testnet](https://stellar.expert/explorer/testnet).
 - The deployed contract address and sample transaction on this page can be verified live on the explorer at any time.
+
+---
+
+## Final Documentation Package
+
+- [Release Checklist](docs/RELEASE_CHECKLIST.md)
+- [Production Runbook](docs/RUNBOOK.md)
+- [Requirement-to-Proof Matrix](docs/REQUIREMENT_PROOF_MATRIX.md)
+- [Architecture Assumptions and Known Limitations](docs/ARCHITECTURE_AND_LIMITATIONS.md)
 
 ---
 

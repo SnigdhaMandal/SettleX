@@ -60,7 +60,7 @@ export function TripCard({
               {trip.description && (
                 <p className="text-xs text-[#888] truncate mb-1.5">{trip.description}</p>
               )}
-              <div className="flex items-center gap-3 text-[11px] text-[#AAA]">
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-[#AAA]">
                 <span className="flex items-center gap-1">
                   <Users size={10} />
                   {trip.members.length} members
@@ -83,14 +83,14 @@ export function TripCard({
       </Link>
 
       {/* Footer */}
-      <div className="flex items-center justify-between px-4 py-2.5 border-t border-[#F5F5F5]">
+      <div className="flex items-center justify-between px-4 py-3 border-t border-[#F5F5F5]">
         <span className="text-[10px] text-[#BBB]">{createdAt}</span>
         <button
           onClick={(e) => {
             e.preventDefault();
             onDelete(trip.id);
           }}
-          className="flex items-center gap-1 text-xs text-[#CCC] hover:text-red-500 transition-colors"
+          className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-xs text-[#CCC] hover:text-red-500 hover:bg-red-50 transition-colors"
         >
           <Trash2 size={11} />
           Delete

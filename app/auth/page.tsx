@@ -64,20 +64,20 @@ export default function AuthPage() {
 
   if (!isConnected) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-[#F6F6F6] px-4">
+      <div className="min-h-screen flex items-center justify-center bg-[#F6F6F6] px-4 py-8">
         <div className="absolute inset-0 bg-hero-grid bg-[length:40px_40px] opacity-40" />
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
-          className="relative max-w-lg w-full bg-white rounded-3xl shadow-[0_8px_60px_-12px_rgba(0,0,0,0.25)] p-10"
+          className="relative max-w-lg w-full bg-white rounded-3xl shadow-[0_8px_60px_-12px_rgba(0,0,0,0.25)] p-6 sm:p-10"
         >
           <div className="text-center mb-8">
             <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#B9FF66]/15 border border-[#B9FF66]/30 rounded-full text-xs font-semibold text-[#2D6600] mb-6">
               <Shield size={14} />
               Secure Wallet Authentication
             </div>
-            <h1 className="text-4xl font-black text-[#0F0F14] mb-3">Welcome to SettleX</h1>
+            <h1 className="text-3xl sm:text-4xl font-black text-[#0F0F14] mb-3">Welcome to SettleX</h1>
             <p className="text-[#666] text-base leading-relaxed">
               Connect your Stellar wallet to get started
             </p>
@@ -137,10 +137,10 @@ export default function AuthPage() {
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.5 }}
-        className="relative max-w-lg w-full bg-white rounded-3xl shadow-[0_8px_60px_-12px_rgba(0,0,0,0.25)] p-10"
+        className="relative max-w-lg w-full bg-white rounded-3xl shadow-[0_8px_60px_-12px_rgba(0,0,0,0.25)] p-6 sm:p-10"
       >
         <div className="text-center mb-8">
-          <h1 className="text-4xl font-black text-[#0F0F14] mb-2">
+          <h1 className="text-3xl sm:text-4xl font-black text-[#0F0F14] mb-2">
             {isSignUpMode ? "Create Account" : "Welcome Back"}
           </h1>
           <p className="text-[#666] text-base">

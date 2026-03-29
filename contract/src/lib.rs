@@ -94,7 +94,7 @@ impl SettleXContract {
         env.storage().instance().set(&DataKey::PoolContract, &pool_contract);
         env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
-        env.events().publish(symbol_short!("stx_ini"), CONTRACT_VERSION);
+        env.events().publish((symbol_short!("stx_ini"),), CONTRACT_VERSION);
     }
 
     pub fn set_pool_contract(env: Env, pool_contract: Address) {
@@ -122,7 +122,7 @@ impl SettleXContract {
         env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events().publish(
-            symbol_short!("pool_cfg"),
+            (symbol_short!("pool_cfg"),),
             PoolConfigEventV1 {
                 version: CONTRACT_VERSION,
                 pool_contract,
@@ -272,10 +272,10 @@ mod test {
             let $pool_client = SettlementPoolContractClient::new(&$env, &pool_contract_id);
 
             let admin = Address::generate(&$env);
-            let settlement_address = Address::from_contract_id(&settlement_contract_id);
-            let pool_address = Address::from_contract_id(&pool_contract_id);
+            let settlement_address = settlement_contract_id.clone();
+            let pool_address = pool_contract_id.clone();
 
-            $pool_client.init(&admin, &settlement_address);
+            $pool_client.init_pool(&admin, &settlement_address);
             $client.init(&admin, &pool_address);
         };
     }

@@ -60,13 +60,13 @@ export function WalletInfo({ className }: { className?: string }) {
         {isMainnet ? "Stellar Mainnet" : "Stellar Testnet"}
       </div>
 
-      <div className="p-4">
+      <div className="p-4 sm:p-5">
         {/* Address */}
         <div className="mb-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-[#AAA] mb-1">
             Wallet Address
           </p>
-          <div className="flex items-center gap-2">
+          <div className="flex items-start sm:items-center gap-2">
             <p className="text-sm font-mono font-semibold text-[#0F0F14] flex-1 truncate">
               {publicKey}
             </p>
@@ -74,10 +74,10 @@ export function WalletInfo({ className }: { className?: string }) {
           <p className="text-xs text-[#888] font-mono mt-0.5">
             {formatAddress(publicKey, 10)}
           </p>
-          <div className="flex items-center gap-2 mt-2">
+          <div className="flex flex-wrap items-center gap-2 mt-2">
             <button
               onClick={handleCopy}
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-[#555] hover:text-[#0F0F14] transition-colors"
+              className="inline-flex items-center gap-1.5 px-1 py-1 text-xs font-medium text-[#555] hover:text-[#0F0F14] transition-colors"
             >
               {copied ? (
                 <Check size={12} className="text-[#2D6600]" />
@@ -91,7 +91,7 @@ export function WalletInfo({ className }: { className?: string }) {
               href={explorerUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1.5 text-xs font-medium text-[#555] hover:text-[#0F0F14] transition-colors"
+              className="inline-flex items-center gap-1.5 px-1 py-1 text-xs font-medium text-[#555] hover:text-[#0F0F14] transition-colors"
             >
               <ExternalLink size={12} />
               View on Explorer

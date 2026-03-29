@@ -72,7 +72,7 @@ export function PaymentRow({
         )}
       >
         {/* Top row: avatar / name / amount / action */}
-        <div className="flex items-center justify-between gap-3">
+        <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
           {/* Avatar + name */}
           <div className="flex items-center gap-3 min-w-0">
             <div
@@ -95,7 +95,7 @@ export function PaymentRow({
                   href={explorerUrl ?? "#"}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="flex items-center gap-1 text-[11px] text-[#AAA] hover:text-[#555] transition-colors"
+                  className="inline-flex items-center gap-1 text-[11px] text-[#AAA] hover:text-[#555] transition-colors max-w-full"
                   onClick={(e) => e.stopPropagation()}
                 >
                   {formatAddress(share.walletAddress, 4)}
@@ -115,7 +115,7 @@ export function PaymentRow({
           </div>
 
           {/* Amount + action */}
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center justify-between sm:justify-end gap-2">
             <span className="text-sm font-bold text-[#0F0F14]">
               {parseFloat(share.amount).toFixed(4)}{" "}
               <span className="text-[10px] font-normal text-[#888]">XLM</span>
