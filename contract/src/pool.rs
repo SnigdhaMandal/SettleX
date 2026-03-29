@@ -12,6 +12,7 @@ pub enum PoolError {
     Unauthorized = 3,
     InvalidAmount = 4,
     InsufficientBalance = 5,
+    BalanceOverflow = 6,
 }
 
 #[contracttype]
@@ -26,6 +27,10 @@ pub enum PoolDataKey {
     Config,
     Balance(Address),
 }
+
+const LEDGERS_PER_DAY: u32 = 17_280;
+const STORAGE_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 30;
+const STORAGE_BUMP_AMOUNT: u32 = LEDGERS_PER_DAY * 365;
 
 #[contract]
 pub struct SettlementPoolContract;
@@ -45,15 +50,19 @@ impl SettlementPoolContract {
         };
 
         env.storage().instance().set(&PoolDataKey::Config, &cfg);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events().publish(symbol_short!("pool_ini"), true);
     }
 
     pub fn get_config(env: Env) -> PoolConfig {
-        env.storage()
+        let cfg = env.storage()
             .instance()
             .get(&PoolDataKey::Config)
-            .unwrap_or_else(|| panic_with_error!(&env, PoolError::NotInitialized))
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::NotInitialized));
+
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+        cfg
     }
 
     pub fn set_settlement_contract(env: Env, new_contract: Address) {
@@ -62,6 +71,7 @@ impl SettlementPoolContract {
 
         cfg.settlement_contract = new_contract;
         env.storage().instance().set(&PoolDataKey::Config, &cfg);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events().publish(symbol_short!("pool_cfg"), cfg.settlement_contract);
     }
@@ -78,8 +88,13 @@ impl SettlementPoolContract {
 
         let key = PoolDataKey::Balance(from.clone());
         let current: i128 = env.storage().persistent().get(&key).unwrap_or(0_i128);
-        let next = current + amount;
+        let next = current
+            .checked_add(amount)
+            .unwrap_or_else(|| panic_with_error!(&env, PoolError::BalanceOverflow));
         env.storage().persistent().set(&key, &next);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events()
             .publish((symbol_short!("pool_dep"), from), amount);
@@ -104,6 +119,9 @@ impl SettlementPoolContract {
 
         let next = current - amount;
         env.storage().persistent().set(&key, &next);
+        env.storage()
+            .persistent()
+            .extend_ttl(&key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events()
             .publish((symbol_short!("pool_wdr"), from), amount);
@@ -112,10 +130,17 @@ impl SettlementPoolContract {
     pub fn balance_of(env: Env, member: Address) -> i128 {
         let _cfg = Self::get_config(env.clone());
 
+        let key = PoolDataKey::Balance(member);
+        let balance = env.storage()
+            .persistent()
+            .get(&key)
+            .unwrap_or(0_i128);
+
         env.storage()
             .persistent()
-            .get(&PoolDataKey::Balance(member))
-            .unwrap_or(0_i128)
+            .extend_ttl(&key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        balance
     }
 }
 
@@ -201,5 +226,14 @@ mod test {
 
         let cfg = client.get_config();
         assert_eq!(cfg.settlement_contract, next_contract);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_deposit_requires_init() {
+        setup_pool!(env, client, _admin, _settlement_contract);
+
+        let member = Address::generate(&env);
+        client.deposit(&member, &1_i128);
     }
 }
