@@ -16,8 +16,8 @@
   <a href="https://stellar.expert/explorer/testnet/tx/04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967">
     <img src="https://img.shields.io/badge/Sample%20Tx-Verified-blue?style=flat-square&logo=stellar" alt="Sample Transaction" />
   </a>
-  <a href="https://github.com/soumen0818/SettleX/actions/workflows/ci.yml">
-    <img src="https://github.com/soumen0818/SettleX/actions/workflows/ci.yml/badge.svg" alt="CI Pipeline" />
+  <a href="https://github.com/SnigdhaMandal/SettleX/actions/workflows/ci.yml">
+    <img src="https://github.com/SnigdhaMandal/SettleX/actions/workflows/ci.yml/badge.svg" alt="CI Pipeline" />
   </a>
   <img src="https://img.shields.io/badge/Network-Stellar%20Testnet-7B68EE?style=flat-square" alt="Stellar Testnet" />
   <img src="https://img.shields.io/badge/Tests-45%20Passing-brightgreen?style=flat-square" alt="45 Tests Passing" />
@@ -225,7 +225,7 @@ This section maps the required submission checklist to concrete proof in this re
 
 | Requirement | Proof |
 | --- | --- |
-| Public GitHub repository | https://github.com/soumen0818/SettleX |
+| Public GitHub repository | https://github.com/SnigdhaMandal/SettleX |
 | README with complete documentation | This file plus final docs links in [Final Documentation Package](#final-documentation-package) |
 | Minimum 8+ meaningful commits | Local repository history: 44 commits |
 | Live demo link | [https://settle-x-pi.vercel.app/](https://settle-x-pi.vercel.app/) |
@@ -282,7 +282,7 @@ The contract emits a `pmt_rec` event for every confirmed payment. `hooks/useCont
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/soumen0818/SettleX.git
+git clone https://github.com/SnigdhaMandal/SettleX.git
 cd SettleX
 ```
 
