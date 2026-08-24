@@ -25,15 +25,19 @@ const config = {
   setupFiles: ["<rootDir>/jest.setup.ts"],
   collectCoverageFrom: [
     "lib/**/*.ts",
+    "components/**/*.tsx",
+    "hooks/**/*.ts",
+    "context/**/*.tsx",
+    "app/**/*.tsx",
     "!lib/stellar/soroban.ts",
     "!lib/supabase/**",
   ],
   coverageThreshold: {
     global: {
-      branches: 30,
-      functions: 30,
-      lines: 30,
-      statements: 30,
+      branches: 70,
+      functions: 70,
+      lines: 70,
+      statements: 70,
     },
   },
 };
