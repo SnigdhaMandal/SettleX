@@ -7,7 +7,10 @@ import { ExpenseProvider } from "@/context/ExpenseContext";
 import { TripProvider } from "@/context/TripContext";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://settlex.app"),
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL || 
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://settlex.app")
+  ),
   title: {
     default: "SettleX — Split Bills on the Stellar Blockchain",
     template: "%s | SettleX",
@@ -65,14 +68,23 @@ export const viewport: Viewport = {
   initialScale: 1,
 };
 
+import { Poppins } from "next/font/google";
+
+const poppins = Poppins({
+  weight: ["300", "400", "500", "600", "700", "800", "900"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-poppins",
+});
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="scroll-smooth">
-      <body className="bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased">
+    <html lang="en" className={`scroll-smooth ${poppins.variable}`}>
+      <body className="bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased font-[family-name:var(--font-poppins)]">
         <ToastProvider>
           <WalletProvider>
             <AuthProvider>
