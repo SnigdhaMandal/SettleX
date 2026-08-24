@@ -13,16 +13,24 @@ type RawEventLike = {
   value?: unknown;
 };
 
-export function parsePaymentEvent(raw: RawEventLike): ContractPaymentEvent | null {
+export function parsePaymentEvent(raw: rpc.Api.EventResponse): ContractPaymentEvent | null {
   try {
     const topicScVals = Array.isArray(raw.topic) ? raw.topic : [];
+    
+    // SDK 1.x returns base64 XDR strings, earlier versions returned parsed objects
+    // If it's a string, decode it first.
+    const decodeTopic = (val: unknown) => {
+      if (typeof val === 'string') return xdr.ScVal.fromXDR(val, 'base64');
+      return val as xdr.ScVal;
+    };
+    
     const eventTripId = topicScVals[1]
-      ? String(scValToNative(topicScVals[1] as any))
+      ? String(scValToNative(decodeTopic(topicScVals[1])))
       : "";
 
     if (!eventTripId) return null;
 
-    const valueNative = raw.value ? scValToNative(raw.value as any) : null;
+    const valueNative = raw.value ? scValToNative(decodeTopic(raw.value)) : null;
 
     let expenseId     = "";
     let member        = "";
@@ -76,7 +84,7 @@ export async function fetchContractEvents(
       ? nativeToScVal(tripId, { type: "string" }).toXDR("base64")
       : "*";
 
-    const response = await (server as any).getEvents({
+    const response = await server.getEvents({
       startLedger: fromLedger,
       filters: [
         {
@@ -86,22 +94,22 @@ export async function fetchContractEvents(
         },
       ],
       limit: 200,
-    }) as any;
+    }) as rpc.Api.GetEventsResponse;
 
     const latestLedger: number =
       typeof response?.latestLedger === "number" && response.latestLedger > fromLedger
         ? response.latestLedger
         : fromLedger;
 
-    const rawEvents: any[] = Array.isArray(response?.events) ? response.events : [];
+    const rawEvents = Array.isArray(response?.events) ? response.events : [];
 
     const events: ContractPaymentEvent[] = rawEvents
-      .map((ev: any) => parsePaymentEvent(ev))
+      .map((ev) => parsePaymentEvent(ev))
       .filter((e): e is ContractPaymentEvent => e !== null && !!e.tripId);
 
     return { events, latestLedger };
   } catch (err) {
     console.warn("[SettleX] fetchContractEvents error:", err);
-    return { events: [], latestLedger: startLedger };
+    throw err;
   }
 }
