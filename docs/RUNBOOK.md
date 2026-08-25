@@ -21,6 +21,17 @@ Create `.env.local` and set:
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
 
+Server-only (must **not** carry the `NEXT_PUBLIC_` prefix — that would publish
+them in the browser bundle and let anyone mint a token for any wallet):
+
+- `SUPABASE_JWT_SECRET` — Supabase → Settings → API → JWT Secret. Required;
+  without it `/api/auth/verify` returns 503 and no database call is authorized.
+- `AUTH_CHALLENGE_SECRET` — optional, falls back to `SUPABASE_JWT_SECRET`.
+- `AUTH_SESSION_TTL_SECONDS` — optional, default 43200 (12h), capped at 86400.
+
+Set the same server-only values in the deployment environment (Vercel → Project
+Settings → Environment Variables, or equivalent), not just in `.env.local`.
+
 ## 3. Local Validation
 
 Run in project root:

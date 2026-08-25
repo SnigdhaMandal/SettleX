@@ -5,13 +5,19 @@ import React, {
   useCallback,
   useContext,
   useEffect,
-  useRef,
   useState,
 } from "react";
 import type { Expense, SplitShare } from "@/types/expense";
 import { LS_EXPENSES } from "@/lib/utils/constants";
-import { supabase, createAuthenticatedClient } from "@/lib/supabase/client";
-import type { RealtimePostgresChangesPayload } from "@supabase/supabase-js";
+import {
+  getAuthenticatedClient,
+  onSessionChange,
+  requireAuthenticatedClient,
+} from "@/lib/supabase/session";
+import type {
+  RealtimePostgresChangesPayload,
+  SupabaseClient,
+} from "@supabase/supabase-js";
 import { useWalletContext } from "./WalletContext";
 
 
@@ -76,21 +82,66 @@ function expenseToDbRow(expense: Expense, creatorWallet: string) {
 export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [isLoading, setIsLoading] = useState(true);
-  const channelRef = useRef<ReturnType<typeof supabase.channel> | null>(null);
+  const [client, setClient] = useState<SupabaseClient | null>(null);
   const { publicKey } = useWalletContext();
 
-  // Get the appropriate Supabase client (authenticated if wallet connected)
-  const getClient = useCallback(() => {
-    return publicKey ? createAuthenticatedClient(publicKey) : supabase;
+  // Every call is scoped by a JWT the server issues only after the wallet has
+  // signed a challenge, so RLS has a wallet identity it can actually trust.
+  const getClient = useCallback(async () => {
+    if (!publicKey) throw new Error("Wallet not connected");
+    return requireAuthenticatedClient(publicKey);
   }, [publicKey]);
+
+  // Rebind whenever the session is established or dropped, so a re-signed
+  // session never leaves this provider holding a client with a stale token.
+  const [sessionGeneration, setSessionGeneration] = useState(0);
+  useEffect(() => onSessionChange(() => setSessionGeneration((n) => n + 1)), []);
+
+  // Resolve the authenticated client once per wallet so the initial load and
+  // the realtime feed share it. Concurrent callers reuse a single handshake,
+  // so the wallet is only ever asked to sign once.
+  useEffect(() => {
+    let cancelled = false;
+
+    if (!publicKey) {
+      setClient(null);
+      return;
+    }
+
+    getAuthenticatedClient(publicKey)
+      .then((resolved) => {
+        if (!cancelled) setClient(resolved);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        console.warn("Wallet sign-in failed — falling back to cached data:", err);
+        setClient(null);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [publicKey, sessionGeneration]);
 
 
   useEffect(() => {
     let isMounted = true;
 
     async function loadExpenses() {
+      // Without a proven wallet identity RLS returns nothing, so fall back to
+      // whatever this browser cached rather than showing an empty list.
+      if (!client) {
+        try {
+          const raw = localStorage.getItem(LS_EXPENSES);
+          if (raw && isMounted) setExpenses(JSON.parse(raw) as Expense[]);
+        } catch {
+          // ignore
+        }
+        if (isMounted) setIsLoading(false);
+        return;
+      }
+
       try {
-        const client = getClient();
         // Try loading from Supabase
         const { data, error } = await client
           .from("expenses")
@@ -124,12 +175,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isMounted = false;
     };
-  }, [getClient]);
+  }, [client]);
 
+  // Realtime authorizes on the socket's own JWT, so the feed has to run on the
+  // authenticated client too — the anon client would receive nothing.
   useEffect(() => {
-    if (isLoading) return;
+    if (!client) return;
 
-    const channel = supabase
+    const channel = client
       .channel("expenses-changes")
       .on(
         "postgres_changes",
@@ -173,12 +226,10 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       )
       .subscribe();
 
-    channelRef.current = channel;
-
     return () => {
-      channel.unsubscribe();
+      void client.removeChannel(channel);
     };
-  }, [isLoading]);
+  }, [client]);
 
   const addExpense = useCallback(async (expense: Expense) => {
     if (!publicKey) throw new Error("Wallet not connected");
@@ -190,7 +241,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     });
 
     // Persist to Supabase — throw on failure so the caller can handle it
-    const client = getClient();
+    const client = await getClient();
     const { error } = await client
       .from("expenses")
       .insert([expenseToDbRow(expense, publicKey)]);
@@ -214,7 +265,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         const merged = { ...current, ...updates };
         const dbRow = expenseToDbRow(merged, publicKey || '');
 
-        const client = getClient();
+        const client = await getClient();
         const { error } = await client
           .from("expenses")
           .update(dbRow)
@@ -243,7 +294,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
   const deleteExpense = useCallback(async (id: string) => {
     try {
-      const client = getClient();
+      const client = await getClient();
       const { error } = await client.from("expenses").delete().eq("id", id);
 
       if (error) throw error;
@@ -282,7 +333,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       });
 
       try {
-        const client = getClient();
+        const client = await getClient();
 
         const { data: freshData, error: fetchErr } = await client
           .from("expenses")
