@@ -60,7 +60,13 @@ jobs:
 
       - name: Setup Rust
         uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
 
       - name: Run contract tests
         working-directory: contract
         run: cargo test
+
+      - name: Build contract for WASM
+        working-directory: contract
+        run: cargo build --target wasm32-unknown-unknown --release
