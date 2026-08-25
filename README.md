@@ -41,6 +41,7 @@
 - [Submission Checklist Evidence](#submission-checklist-evidence)
 - [Setup Instructions](#setup-instructions)
 - [Environment Variables](#environment-variables)
+- [Wallet Authentication](#wallet-authentication)
 - [Testing](#testing)
 - [Project Structure](#project-structure)
 - [Testnet Notes](#testnet-notes)
@@ -316,6 +317,7 @@ SettleX uses Supabase for real-time cross-user sync. Without it, data only persi
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the SQL Editor, run the full schema from [`supabase-setup.sql`](supabase-setup.sql) (or follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) for a walkthrough).
 3. Copy your **Project URL** and **anon key** from Project Settings → API.
+4. Copy your **JWT Secret** from the same page into `SUPABASE_JWT_SECRET`. Row Level Security authorizes on a `wallet_address` claim that the app's server signs with this secret — without it, every database call is rejected. See [Wallet Authentication](#wallet-authentication).
 
 ### 4. Configure environment variables
 
@@ -363,9 +365,35 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 # App
 NEXT_PUBLIC_APP_NAME=SettleX
 NEXT_PUBLIC_APP_VERSION=1.0.0
+
+# ─── Server-only — never prefix these with NEXT_PUBLIC_ ─────────────────────
+# Supabase Dashboard → Settings → API → JWT Secret.
+SUPABASE_JWT_SECRET=your-supabase-jwt-secret
+# Optional. Binds an auth challenge to the wallet it was issued to.
+# Falls back to SUPABASE_JWT_SECRET. Generate with: openssl rand -base64 48
+AUTH_CHALLENGE_SECRET=
+# Optional. Session lifetime in seconds (default 43200 = 12h, max 86400).
+AUTH_SESSION_TTL_SECONDS=43200
 ```
 
-> All variables carry the `NEXT_PUBLIC_` prefix because they are read client-side. The Supabase anon key is safe to expose — access is governed by Row Level Security (RLS) policies in your database.
+> Variables with the `NEXT_PUBLIC_` prefix are read client-side and are inlined into the JavaScript bundle — treat every one of them as public. The Supabase anon key is safe to expose because access is governed by Row Level Security.
+>
+> `SUPABASE_JWT_SECRET` and `AUTH_CHALLENGE_SECRET` are **not** public. They are read only inside the `/api/auth/*` route handlers. Prefixing either with `NEXT_PUBLIC_` would ship it to every visitor and let anyone mint a token for any wallet.
+
+---
+
+## Wallet Authentication
+
+Your Stellar address is your identity, and the app proves you control it before the database will accept it — a SEP-10 style challenge/response:
+
+1. **Challenge** — `POST /api/auth/challenge` returns a transaction built for your address with **sequence number 0**, carrying a random nonce. Sequence 0 is always below an account's real sequence, so the network can never accept it: it is signable but unsubmittable, and costs no fee.
+2. **Sign** — your wallet (Freighter, xBull, Lobstr) signs it locally. Your private key never leaves the extension.
+3. **Verify** — `POST /api/auth/verify` checks the signature against the claimed public key and, only on success, mints a short-lived Supabase JWT whose `wallet_address` claim carries the proven address. The token is signed with `SUPABASE_JWT_SECRET`, which never reaches the browser.
+4. **Authorize** — every RLS policy reads that claim via `public.settlex_wallet()`. Requests without a valid token get no rows at all.
+
+The token is cached in `localStorage` and reused until it expires (12 hours by default), so you sign roughly once a day rather than once per action.
+
+> **Upgrading an existing deployment:** earlier versions authorized on an `x-wallet-address` request header that the browser set itself. Because the anon key is public, anyone could send that header with any address and read or modify every user's data. Re-run [`supabase-setup.sql`](supabase-setup.sql) to replace those policies and set `SUPABASE_JWT_SECRET`. Until you do, the data layer is effectively unauthenticated.
 
 ---
 
@@ -411,9 +439,12 @@ settlex/
 │   ├── auth/page.tsx             # Authentication
 │   ├── dashboard/page.tsx        # Dashboard (wallet + balance)
 │   ├── expenses/page.tsx         # Expense list and management
-│   └── trips/
-│       ├── page.tsx              # Trip list
-│       └── [id]/page.tsx         # Trip detail — expenses + settle-up tab
+│   ├── trips/
+│   │   ├── page.tsx              # Trip list
+│   │   └── [id]/page.tsx         # Trip detail — expenses + settle-up tab
+│   └── api/auth/
+│       ├── challenge/route.ts    # Issues the challenge transaction to sign
+│       └── verify/route.ts       # Verifies the signature, mints the Supabase JWT
 │
 ├── components/
 │   ├── landing/                  # Hero, Features, HowItWorks, Pricing, Testimonials
@@ -437,6 +468,12 @@ settlex/
 │   └── useContractEvents.ts      # Real-time Soroban event polling
 │
 ├── lib/
+│   ├── auth/
+│   │   ├── challenge.ts          # Challenge build + signature verification (server)
+│   │   ├── jwt.ts                # Supabase access-token minting (server)
+│   │   ├── serverConfig.ts       # Server-only auth secrets
+│   │   └── rateLimit.ts          # Throttling for the public auth routes
+│   ├── supabase/session.ts       # Wallet-authenticated Supabase client (browser)
 │   ├── stellar/
 │   │   ├── walletsKit.ts         # Custom multi-wallet provider (Freighter, xBull, Lobstr)
 │   │   ├── contract.ts           # Soroban contract calls + error decoding

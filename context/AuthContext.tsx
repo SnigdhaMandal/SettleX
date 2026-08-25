@@ -7,7 +7,11 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import { supabase, createAuthenticatedClient } from "@/lib/supabase/client";
+import {
+  clearWalletSession,
+  getAuthenticatedClient,
+  requireAuthenticatedClient,
+} from "@/lib/supabase/session";
 import { useWalletContext } from "./WalletContext";
 import { LS_USER } from "@/lib/utils/constants";
 
@@ -26,9 +30,17 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
+  /**
+   * Set when the wallet could not prove ownership of its key (signature
+   * declined, server unreachable). Every database call fails while this is set,
+   * so the UI should ask the user to re-authenticate rather than carry on.
+   */
+  sessionError: string | null;
   signUp: (displayName: string) => Promise<void>;
   signIn: () => Promise<void>;
   signOut: () => void;
+  /** Re-runs the wallet signing handshake. */
+  refreshSession: () => Promise<void>;
   updateProfile: (updates: Partial<Pick<User, "displayName">>) => Promise<void>;
 }
 
@@ -76,6 +88,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     return null;
   });
   const [isLoading, setIsLoading] = useState(true);
+  const [sessionError, setSessionError] = useState<string | null>(null);
+  // Bumped by refreshSession() to re-run the handshake effect below.
+  const [sessionNonce, setSessionNonce] = useState(0);
   const { publicKey, isConnected, isHydrated } = useWalletContext();
 
   const isAuthenticated = !!user && isConnected;
@@ -89,16 +104,34 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     if (!publicKey) {
       setUser(null);
       clearUserCache();
+      clearWalletSession();
+      setSessionError(null);
       setIsLoading(false);
       return;
     }
 
-    async function loadUser() {
+    async function loadUser(wallet: string) {
+      // Prove key ownership before touching the database — the profile table is
+      // readable only by an authenticated wallet. This prompts the wallet to
+      // sign once per session, not once per page load.
+      const client = await getAuthenticatedClient(wallet).catch((err: unknown) => {
+        setSessionError(
+          err instanceof Error ? err.message : "Could not verify your wallet."
+        );
+        return null;
+      });
+
+      if (!client) {
+        setIsLoading(false);
+        return;
+      }
+      setSessionError(null);
+
       try {
-        const { data, error } = await supabase
+        const { data, error } = await client
           .from("users")
           .select("*")
-          .eq("wallet_address", publicKey)
+          .eq("wallet_address", wallet)
           .single();
 
         if (error) {
@@ -120,8 +153,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     }
 
-    loadUser();
-  }, [publicKey, isHydrated]);
+    loadUser(publicKey);
+  }, [publicKey, isHydrated, sessionNonce]);
 
   // ── Sign up: Create new user profile ──────────────────────────────────────
 
@@ -136,8 +169,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        const client = createAuthenticatedClient(publicKey);
-        
+        const client = await requireAuthenticatedClient(publicKey);
+        setSessionError(null);
+
         const { data, error } = await client
           .from("users")
           .insert({
@@ -183,9 +217,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
 
     try {
-      // Use authenticated client with wallet header for RLS policies
-      const client = createAuthenticatedClient(publicKey);
-      
+      // The JWT minted by the signing handshake is what RLS authorizes on.
+      const client = await requireAuthenticatedClient(publicKey);
+      setSessionError(null);
+
       const { data, error } = await client
         .from("users")
         .update({ last_login_at: new Date().toISOString() })
@@ -222,6 +257,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signOut = useCallback(() => {
     setUser(null);
     clearUserCache();
+    clearWalletSession();
+    setSessionError(null);
+  }, []);
+
+  // ── Refresh session: re-run the wallet signing handshake ──────────────────
+
+  const refreshSession = useCallback(async () => {
+    clearWalletSession();
+    setSessionError(null);
+    setIsLoading(true);
+    setSessionNonce((n) => n + 1);
   }, []);
 
   // ── Update profile ─────────────────────────────────────────────────────────
@@ -233,9 +279,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       try {
-        // Use authenticated client with wallet header for RLS policies
-        const client = createAuthenticatedClient(publicKey);
-        
+        const client = await requireAuthenticatedClient(publicKey);
+        setSessionError(null);
+
         const { data, error } = await client
           .from("users")
           .update({
@@ -267,9 +313,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     user,
     isLoading,
     isAuthenticated,
+    sessionError,
     signUp,
     signIn,
     signOut,
+    refreshSession,
     updateProfile,
   };
 

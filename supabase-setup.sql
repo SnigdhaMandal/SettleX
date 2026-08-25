@@ -157,9 +157,17 @@ CREATE INDEX IF NOT EXISTS idx_trips_settled ON trips (settled);
 -- ============================================================================
 -- 3. ENABLE ROW LEVEL SECURITY & CREATE ACCESS POLICIES
 -- ============================================================================
--- This section enables RLS and creates wallet-based authentication policies
--- Members can only see/edit expenses/trips they're part of
--- Uses custom header 'x-wallet-address' passed from the app
+-- Authorization is based on the `wallet_address` claim of the request's JWT.
+--
+-- That token is minted by /api/auth/verify only after the caller has signed a
+-- server-issued challenge transaction with their Stellar private key, and it is
+-- signed with the project's JWT secret — which never leaves the server. A
+-- caller therefore cannot pick their own identity.
+--
+-- This replaces the earlier `x-wallet-address` request header, which was set
+-- purely client-side and could be forged by anyone holding the (public) anon
+-- key. Any deployment still running those policies has no access control at
+-- all — re-run this script to replace them.
 -- ============================================================================
 
 -- Enable RLS on all tables (required before creating policies)
@@ -169,12 +177,38 @@ ALTER TABLE expenses ENABLE ROW LEVEL SECURITY;
 
 ALTER TABLE trips ENABLE ROW LEVEL SECURITY;
 
+-- ── Identity helper ─────────────────────────────────────────────────────────
+-- Returns the Stellar address the request proved control of, or NULL when the
+-- request carries no verified wallet. NULL never equals anything, so every
+-- policy below denies by default for unauthenticated callers.
+
+CREATE OR REPLACE FUNCTION public.settlex_wallet()
+RETURNS TEXT
+LANGUAGE SQL
+STABLE
+PARALLEL SAFE
+AS $$
+  SELECT NULLIF(
+    COALESCE(
+      NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address',
+      ''
+    ),
+    ''
+  );
+$$;
+
+GRANT EXECUTE ON FUNCTION public.settlex_wallet() TO anon, authenticated;
+
 -- Drop existing policies if they exist
 DROP POLICY IF EXISTS "Anyone can view users" ON users;
+
+DROP POLICY IF EXISTS "Authenticated wallets can view users" ON users;
 
 DROP POLICY IF EXISTS "Users can insert their own profile" ON users;
 
 DROP POLICY IF EXISTS "Users can update their own profile" ON users;
+
+DROP POLICY IF EXISTS "Allow all operations on users" ON users;
 
 DROP POLICY IF EXISTS "Allow all operations on expenses" ON expenses;
 
@@ -197,45 +231,43 @@ DROP POLICY IF EXISTS "Members can update their trips" ON trips;
 DROP POLICY IF EXISTS "Creator can delete trip" ON trips;
 
 -- ============================================================================
--- OPTION A: Simple Public Access (Development/Testing Only)
+-- WALLET-BASED ACCESS CONTROL
 -- ============================================================================
--- Uncomment these lines for development/testing - anyone can access all data
--- Comment out again when you implement wallet authentication
--- NOT RECOMMENDED for production!
-
--- CREATE POLICY "Allow all operations on users" ON users FOR ALL USING (true) WITH CHECK (true);
--- CREATE POLICY "Allow all operations on expenses" ON expenses FOR ALL USING (true) WITH CHECK (true);
--- CREATE POLICY "Allow all operations on trips" ON trips FOR ALL USING (true) WITH CHECK (true);
-
--- ============================================================================
--- OPTION B: Wallet-Based Access Control (Production - CURRENTLY ACTIVE ✓)
--- ============================================================================
--- Only members can see/edit expenses/trips they're part of
--- This is the SECURE OPTION - keeps your data protected
--- Each user can only access expenses/trips where their wallet address is in member_wallets[]
+-- Only members can see/edit expenses/trips they're part of.
+-- Each user can only access expenses/trips where their proven wallet address
+-- is in member_wallets[] (or on one of the shares).
+--
+-- Do NOT replace these with `USING (true)` policies, not even temporarily:
+-- the anon key is shipped in the browser bundle, so a permissive policy is
+-- equivalent to publishing the table.
 -- ============================================================================
 
 -- USERS POLICIES --
 
--- Anyone can view user profiles (for member selection in forms)
-CREATE POLICY "Anyone can view users" ON users FOR
-SELECT USING (true);
+-- Any wallet that has proven key ownership can read the member directory
+-- (needed to resolve display names when picking members for a split).
+-- Signing in does not require an existing profile, so a brand-new wallet can
+-- still authenticate and then create one.
+CREATE POLICY "Authenticated wallets can view users" ON users FOR
+SELECT USING (
+    public.settlex_wallet() IS NOT NULL
+);
 
 -- Users can insert their own profile during signup (wallet must match)
 CREATE POLICY "Users can insert their own profile" ON users
 FOR INSERT
 WITH CHECK (
-    wallet_address = current_setting('request.headers', true)::json->>'x-wallet-address'
+    wallet_address = public.settlex_wallet()
 );
 
 -- Users can only update their own profile
 CREATE POLICY "Users can update their own profile" ON users
 FOR UPDATE
 USING (
-    wallet_address = current_setting('request.headers', true)::json->>'x-wallet-address'
+    wallet_address = public.settlex_wallet()
 )
 WITH CHECK (
-    wallet_address = current_setting('request.headers', true)::json->>'x-wallet-address'
+    wallet_address = public.settlex_wallet()
 );
 
 -- EXPENSES POLICIES --
@@ -246,19 +278,19 @@ WITH CHECK (
 CREATE POLICY "Members can view their expenses" ON expenses
 FOR SELECT
 USING (
-    current_setting('request.headers', true)::json->>'x-wallet-address' = ANY(member_wallets)
+    public.settlex_wallet() = ANY(member_wallets)
     OR EXISTS (
         SELECT 1 FROM jsonb_array_elements(shares) AS s
-        WHERE s->>'walletAddress' = current_setting('request.headers', true)::json->>'x-wallet-address'
+        WHERE s->>'walletAddress' = public.settlex_wallet()
     )
 );
 
--- Any connected wallet can create an expense (they become the creator)
+-- Any authenticated wallet can create an expense (they become the creator)
 CREATE POLICY "Members can create expenses" ON expenses
 FOR INSERT
 WITH CHECK (
-    -- Creator wallet matches the connected wallet
-    created_by_wallet = current_setting('request.headers', true)::json->>'x-wallet-address'
+    -- Creator wallet matches the proven wallet
+    created_by_wallet = public.settlex_wallet()
     AND
     -- Creator must be in the members list
     created_by_wallet = ANY(member_wallets)
@@ -270,17 +302,17 @@ WITH CHECK (
 CREATE POLICY "Members can update their expenses" ON expenses
 FOR UPDATE
 USING (
-    current_setting('request.headers', true)::json->>'x-wallet-address' = ANY(member_wallets)
+    public.settlex_wallet() = ANY(member_wallets)
     OR EXISTS (
         SELECT 1 FROM jsonb_array_elements(shares) AS s
-        WHERE s->>'walletAddress' = current_setting('request.headers', true)::json->>'x-wallet-address'
+        WHERE s->>'walletAddress' = public.settlex_wallet()
     )
 )
 WITH CHECK (
-    current_setting('request.headers', true)::json->>'x-wallet-address' = ANY(member_wallets)
+    public.settlex_wallet() = ANY(member_wallets)
     OR EXISTS (
         SELECT 1 FROM jsonb_array_elements(shares) AS s
-        WHERE s->>'walletAddress' = current_setting('request.headers', true)::json->>'x-wallet-address'
+        WHERE s->>'walletAddress' = public.settlex_wallet()
     )
 );
 
@@ -288,7 +320,7 @@ WITH CHECK (
 CREATE POLICY "Creator can delete expense" ON expenses
 FOR DELETE
 USING (
-    created_by_wallet = current_setting('request.headers', true)::json->>'x-wallet-address'
+    created_by_wallet = public.settlex_wallet()
 );
 
 -- TRIPS POLICIES --
@@ -297,14 +329,14 @@ USING (
 CREATE POLICY "Members can view their trips" ON trips
 FOR SELECT
 USING (
-    current_setting('request.headers', true)::json->>'x-wallet-address' = ANY(member_wallets)
+    public.settlex_wallet() = ANY(member_wallets)
 );
 
--- Any connected wallet can create a trip
+-- Any authenticated wallet can create a trip
 CREATE POLICY "Members can create trips" ON trips
 FOR INSERT
 WITH CHECK (
-    created_by_wallet = current_setting('request.headers', true)::json->>'x-wallet-address'
+    created_by_wallet = public.settlex_wallet()
     AND
     created_by_wallet = ANY(member_wallets)
 );
@@ -313,17 +345,17 @@ WITH CHECK (
 CREATE POLICY "Members can update their trips" ON trips
 FOR UPDATE
 USING (
-    current_setting('request.headers', true)::json->>'x-wallet-address' = ANY(member_wallets)
+    public.settlex_wallet() = ANY(member_wallets)
 )
 WITH CHECK (
-    current_setting('request.headers', true)::json->>'x-wallet-address' = ANY(member_wallets)
+    public.settlex_wallet() = ANY(member_wallets)
 );
 
 -- Only the creator can delete a trip
 CREATE POLICY "Creator can delete trip" ON trips
 FOR DELETE
 USING (
-    created_by_wallet = current_setting('request.headers', true)::json->>'x-wallet-address'
+    created_by_wallet = public.settlex_wallet()
 );
 
 -- ============================================================================
