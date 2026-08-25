@@ -18,6 +18,7 @@ export const TX_BASE_FEE    = 100;
 export const MEMO_MAX_BYTES = 28;
 
 export const LS_PUBLIC_KEY = "settlex:publicKey";
+export const LS_WALLET_ID  = "settlex:walletId";
 export const LS_EXPENSES   = "settlex:expenses";
 export const LS_TRIPS      = "settlex:trips";
 export const LS_USER       = "settlex:user";
