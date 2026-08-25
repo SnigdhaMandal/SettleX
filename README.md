@@ -217,6 +217,7 @@ The final proof transaction above is verifiable evidence of the inter-contract p
 
 Security hardening note:
 - Pool credits are now admin-managed in the pool contract to prevent untrusted self-crediting.
+- Pool `withdraw` requires auth from **both** the configured settlement contract and the member. Credits can therefore only be consumed as part of a `record_payment` call — a member cannot drain their own credits directly, and no other contract can spend them. Rotating `set_settlement_contract` immediately revokes the previous contract's ability to withdraw.
 
 ---
 

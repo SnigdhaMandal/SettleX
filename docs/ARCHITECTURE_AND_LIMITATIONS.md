@@ -9,7 +9,9 @@ SettleX uses:
 - Supabase for app data and realtime sync
 - Stellar payment operations for value transfer
 - Soroban settlement contract for immutable payment recording
-- Separate pool contract for inter-contract withdraw flow
+- Separate pool contract for inter-contract withdraw flow. `withdraw`
+  requires authorization from both the configured settlement contract and
+  the member, so pool credits can only be spent through `record_payment`.
 
 ## Key Assumptions
 
