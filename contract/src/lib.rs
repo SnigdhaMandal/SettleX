@@ -22,6 +22,8 @@ pub enum ContractError {
     AmountTooLarge     = 8,
     VersionMismatch    = 9,
     TxHashTooLong      = 10,
+    NotPaid            = 11,
+    Unauthorized       = 12,
 }
 
 #[contracttype]
@@ -33,6 +35,11 @@ pub struct PaymentRecord {
     pub amount:     i128,
     pub tx_hash:    String,
     pub timestamp:  u64,
+    /// `true` only when a configured attestor co-signed this record, meaning
+    /// something actually checked the Stellar transaction behind `tx_hash`.
+    /// `false` means the record is self-attested by the member: the contract
+    /// stores the string but verifies nothing about it.
+    pub attested:   bool,
 }
 
 #[contracttype]
@@ -45,6 +52,7 @@ pub struct PaymentEventV1 {
     pub amount:      i128,
     pub tx_hash:     String,
     pub timestamp:   u64,
+    pub attested:    bool,
 }
 
 #[contracttype]
@@ -63,12 +71,15 @@ pub enum DataKey {
     Admin,
     PoolContract,
     Version,
+    /// Optional off-chain verifier. When set, it must co-sign every
+    /// `record_payment`; when unset, records are self-attested.
+    Attestor,
 }
 
 const LEDGERS_PER_DAY:        u32 = 17_280;
 const STORAGE_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 30;
 const STORAGE_BUMP_AMOUNT:    u32 = LEDGERS_PER_DAY * 365;
-const CONTRACT_VERSION:       u32 = 1;
+const CONTRACT_VERSION:       u32 = 2;
 const MAX_ID_LEN:             u32 = 64;
 const MAX_TX_HASH_LEN:        u32 = 128;
 const MAX_AMOUNT_STROOPS:     i128 = 10_000_000_000_000_000;
@@ -151,6 +162,106 @@ impl SettleXContract {
         pool
     }
 
+    /// Reads the admin, panicking if the contract is uninitialized or on a
+    /// different version.
+    fn require_admin(env: &Env) -> Address {
+        let version: u32 = env
+            .storage()
+            .instance()
+            .get(&DataKey::Version)
+            .unwrap_or_else(|| panic_with_error!(env, ContractError::NotInitialized));
+        if version != CONTRACT_VERSION {
+            panic_with_error!(env, ContractError::VersionMismatch);
+        }
+
+        let admin: Address = env
+            .storage()
+            .instance()
+            .get(&DataKey::Admin)
+            .unwrap_or_else(|| panic_with_error!(env, ContractError::NotInitialized));
+        admin.require_auth();
+        admin
+    }
+
+    /// Configures the off-chain verifier that must co-sign `record_payment`.
+    ///
+    /// This is the hook for binding a record to something real: a verifier that
+    /// checks the Horizon transaction (payer, destination, amount, memo) before
+    /// co-signing. Until one is set, records are self-attested and prove only
+    /// that the member wrote a string — see `attested` on `PaymentRecord`.
+    pub fn set_attestor(env: Env, attestor: Address) {
+        let admin = Self::require_admin(&env);
+
+        if attestor == admin {
+            panic_with_error!(&env, ContractError::InvalidActor);
+        }
+
+        env.storage().instance().set(&DataKey::Attestor, &attestor);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        env.events().publish(
+            (symbol_short!("attestor"),),
+            PoolConfigEventV1 {
+                version: CONTRACT_VERSION,
+                pool_contract: attestor,
+                updated_by: admin,
+                timestamp: env.ledger().timestamp(),
+            },
+        );
+    }
+
+    /// Removes the attestor requirement, returning the contract to
+    /// self-attested records.
+    pub fn clear_attestor(env: Env) {
+        let admin = Self::require_admin(&env);
+        env.storage().instance().remove(&DataKey::Attestor);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        env.events().publish(
+            (symbol_short!("attest_c"),),
+            (CONTRACT_VERSION, admin, env.ledger().timestamp()),
+        );
+    }
+
+    /// The configured attestor, or `None` when records are self-attested.
+    pub fn get_attestor(env: Env) -> Option<Address> {
+        env.storage().instance().get(&DataKey::Attestor)
+    }
+
+    /// Admin-gated escape hatch for the paid flag.
+    ///
+    /// Without this, a bogus or mistaken record for `(expense_id, member)` locks
+    /// that pair forever: `record_payment` panics with `AlreadyPaid` and the
+    /// legitimate record can never be written. Clearing the flag lets the real
+    /// payment be recorded.
+    ///
+    /// It deliberately does NOT remove the original entry from the trip's
+    /// payment history — the audit trail stays intact, and the fact that a flag
+    /// was cleared is emitted as an event.
+    pub fn clear_paid(env: Env, expense_id: String, member: Address) {
+        let admin = Self::require_admin(&env);
+
+        if expense_id.len() == 0 {
+            panic_with_error!(&env, ContractError::EmptyId);
+        }
+        if expense_id.len() > MAX_ID_LEN {
+            panic_with_error!(&env, ContractError::IdTooLong);
+        }
+
+        let paid_key = DataKey::ExpensePaid(expense_id.clone(), member.clone());
+        if !env.storage().persistent().has(&paid_key) {
+            panic_with_error!(&env, ContractError::NotPaid);
+        }
+
+        env.storage().persistent().remove(&paid_key);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        env.events().publish(
+            (symbol_short!("pmt_clr"), expense_id),
+            (CONTRACT_VERSION, member, admin, env.ledger().timestamp()),
+        );
+    }
+
     pub fn record_payment(
         env:        Env,
         trip_id:    String,
@@ -195,6 +306,20 @@ impl SettleXContract {
             panic_with_error!(&env, ContractError::AlreadyPaid);
         }
 
+        // When an attestor is configured it must co-sign, which is what lets a
+        // record mean "the Stellar transaction behind this hash was checked".
+        // With no attestor the record is self-attested: the contract stores
+        // `payer`, `amount` and `tx_hash` exactly as given and verifies none of
+        // them. `attested` carries that distinction to every consumer.
+        let attestor: Option<Address> = env.storage().instance().get(&DataKey::Attestor);
+        let attested = match attestor {
+            Some(addr) => {
+                addr.require_auth();
+                true
+            }
+            None => false,
+        };
+
         // Inter-contract call: settlement contract consumes member funds from pool balance.
         let pool_contract = Self::get_pool_contract(env.clone());
         let pool_client = SettlementPoolContractClient::new(&env, &pool_contract);
@@ -207,6 +332,7 @@ impl SettleXContract {
             amount,
             tx_hash: tx_hash.clone(),
             timestamp: env.ledger().timestamp(),
+            attested,
         };
 
         let trip_key = DataKey::TripPayments(trip_id.clone());
@@ -238,6 +364,7 @@ impl SettleXContract {
                 amount,
                 tx_hash,
                 timestamp: env.ledger().timestamp(),
+                attested,
             },
         );
     }
@@ -289,6 +416,290 @@ mod test {
     /// The member authorizes `record_payment`; the nested pool `withdraw` is
     /// authorized for the settlement contract by the host, because a contract
     /// making a sub-invocation authorizes itself from the invocation stack.
+    // ── Escape hatch for the permanent paid-flag lock ────────────────────
+
+    /// The griefing scenario: a bogus record for (expense_id, member) makes the
+    /// legitimate one impossible forever. `clear_paid` has to break that.
+    #[test]
+    fn test_clear_paid_unblocks_a_griefed_expense() {
+        setup!(env, client, pool_client);
+
+        let trip_id = String::from_str(&env, "trip-grief");
+        let expense_id = String::from_str(&env, "exp-grief");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+        let bogus_hash = String::from_str(&env, "bogus000000");
+        let real_hash = String::from_str(&env, "real1234567");
+
+        pool_client.deposit(&member, &10_000_000_i128);
+
+        // Bogus entry lands first and locks the pair.
+        client.record_payment(&trip_id, &expense_id, &payer, &member, &1_i128, &bogus_hash);
+        assert!(client.is_paid(&expense_id, &member));
+
+        // Before the fix there was no way past this point.
+        client.clear_paid(&expense_id, &member);
+        assert!(!client.is_paid(&expense_id, &member));
+
+        // The real payment can now be recorded.
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member, &4_000_000_i128, &real_hash,
+        );
+        assert!(client.is_paid(&expense_id, &member));
+
+        // History is preserved rather than rewritten — both attempts remain
+        // visible for audit.
+        let payments = client.get_payments(&trip_id);
+        assert_eq!(payments.len(), 2);
+        assert_eq!(payments.get(1).unwrap().tx_hash, real_hash);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_clear_paid_rejects_unknown_entry() {
+        setup!(env, client, _pool_client);
+        let member = Address::generate(&env);
+        client.clear_paid(&String::from_str(&env, "never-recorded"), &member);
+    }
+
+    /// `clear_paid` is admin-gated: anyone else clearing flags would let a
+    /// member wipe their own record and replay it.
+    #[test]
+    #[should_panic]
+    fn test_clear_paid_requires_admin_auth() {
+        let env = Env::default();
+        let settlement_contract_id = env.register_contract(None, SettleXContract);
+        let pool_contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettleXContractClient::new(&env, &settlement_contract_id);
+        let pool_client = SettlementPoolContractClient::new(&env, &pool_contract_id);
+
+        let admin = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        pool_client.init_pool(&admin, &settlement_contract_id);
+        client.init(&admin, &pool_contract_id);
+        pool_client.deposit(&member, &10_000_000_i128);
+
+        let trip_id = String::from_str(&env, "trip-auth");
+        let expense_id = String::from_str(&env, "exp-auth");
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &1_000_000_i128,
+            &String::from_str(&env, "hash1234567"),
+        );
+
+        // Only the member authorizes — not the admin.
+        env.set_auths(&[]);
+        env.mock_auths(&[MockAuth {
+            address: &member,
+            invoke: &MockAuthInvoke {
+                contract: &settlement_contract_id,
+                fn_name: "clear_paid",
+                args: (expense_id.clone(), member.clone()).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        client.clear_paid(&expense_id, &member);
+    }
+
+    // ── Attestor: the hook that makes a record mean something ─────────────
+
+    /// With no attestor the record is self-attested, and says so.
+    #[test]
+    fn test_records_are_self_attested_by_default() {
+        setup!(env, client, pool_client);
+
+        let trip_id = String::from_str(&env, "trip-selfatt");
+        let expense_id = String::from_str(&env, "exp-selfatt");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        pool_client.deposit(&member, &10_000_000_i128);
+        assert!(client.get_attestor().is_none());
+
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &1_000_000_i128,
+            &String::from_str(&env, "unverified1"),
+        );
+
+        let rec = client.get_payments(&trip_id).get(0).unwrap();
+        assert!(
+            !rec.attested,
+            "a record nothing verified must not claim to be attested",
+        );
+    }
+
+    /// Once an attestor is configured it must co-sign, and the record is marked
+    /// attested. Uses real auth so the requirement is actually exercised.
+    #[test]
+    fn test_attested_record_requires_and_records_attestor() {
+        let env = Env::default();
+        let settlement_contract_id = env.register_contract(None, SettleXContract);
+        let pool_contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettleXContractClient::new(&env, &settlement_contract_id);
+        let pool_client = SettlementPoolContractClient::new(&env, &pool_contract_id);
+
+        let admin = Address::generate(&env);
+        let attestor = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        pool_client.init_pool(&admin, &settlement_contract_id);
+        client.init(&admin, &pool_contract_id);
+        client.set_attestor(&attestor);
+        pool_client.deposit(&member, &10_000_000_i128);
+        assert_eq!(client.get_attestor(), Some(attestor.clone()));
+
+        let trip_id = String::from_str(&env, "trip-att");
+        let expense_id = String::from_str(&env, "exp-att");
+        let tx_hash = String::from_str(&env, "verified123");
+        let amount = 4_000_000_i128;
+        let args: soroban_sdk::Vec<soroban_sdk::Val> = (
+            trip_id.clone(), expense_id.clone(), payer.clone(),
+            member.clone(), amount, tx_hash.clone(),
+        ).into_val(&env);
+
+        env.set_auths(&[]);
+        env.mock_auths(&[
+            MockAuth {
+                address: &member,
+                invoke: &MockAuthInvoke {
+                    contract: &settlement_contract_id,
+                    fn_name: "record_payment",
+                    args: args.clone(),
+                    sub_invokes: &[MockAuthInvoke {
+                        contract: &pool_contract_id,
+                        fn_name: "withdraw",
+                        args: (member.clone(), amount).into_val(&env),
+                        sub_invokes: &[],
+                    }],
+                },
+            },
+            MockAuth {
+                address: &attestor,
+                invoke: &MockAuthInvoke {
+                    contract: &settlement_contract_id,
+                    fn_name: "record_payment",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            },
+        ]);
+
+        client.record_payment(&trip_id, &expense_id, &payer, &member, &amount, &tx_hash);
+
+        let rec = client.get_payments(&trip_id).get(0).unwrap();
+        assert!(rec.attested, "an attestor-cosigned record must be marked attested");
+    }
+
+    /// The member alone cannot write a record once an attestor is required.
+    #[test]
+    #[should_panic]
+    fn test_member_alone_cannot_record_when_attestor_set() {
+        let env = Env::default();
+        let settlement_contract_id = env.register_contract(None, SettleXContract);
+        let pool_contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettleXContractClient::new(&env, &settlement_contract_id);
+        let pool_client = SettlementPoolContractClient::new(&env, &pool_contract_id);
+
+        let admin = Address::generate(&env);
+        let attestor = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        pool_client.init_pool(&admin, &settlement_contract_id);
+        client.init(&admin, &pool_contract_id);
+        client.set_attestor(&attestor);
+        pool_client.deposit(&member, &10_000_000_i128);
+
+        let trip_id = String::from_str(&env, "trip-noatt");
+        let expense_id = String::from_str(&env, "exp-noatt");
+        let tx_hash = String::from_str(&env, "forged12345");
+        let amount = 4_000_000_i128;
+
+        env.set_auths(&[]);
+        env.mock_auths(&[MockAuth {
+            address: &member,
+            invoke: &MockAuthInvoke {
+                contract: &settlement_contract_id,
+                fn_name: "record_payment",
+                args: (
+                    trip_id.clone(), expense_id.clone(), payer.clone(),
+                    member.clone(), amount, tx_hash.clone(),
+                ).into_val(&env),
+                sub_invokes: &[MockAuthInvoke {
+                    contract: &pool_contract_id,
+                    fn_name: "withdraw",
+                    args: (member.clone(), amount).into_val(&env),
+                    sub_invokes: &[],
+                }],
+            },
+        }]);
+
+        client.record_payment(&trip_id, &expense_id, &payer, &member, &amount, &tx_hash);
+    }
+
+    #[test]
+    #[should_panic]
+    fn test_set_attestor_requires_admin() {
+        let env = Env::default();
+        let settlement_contract_id = env.register_contract(None, SettleXContract);
+        let pool_contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettleXContractClient::new(&env, &settlement_contract_id);
+        let pool_client = SettlementPoolContractClient::new(&env, &pool_contract_id);
+
+        let admin = Address::generate(&env);
+        let attacker = Address::generate(&env);
+
+        env.mock_all_auths();
+        pool_client.init_pool(&admin, &settlement_contract_id);
+        client.init(&admin, &pool_contract_id);
+
+        env.set_auths(&[]);
+        env.mock_auths(&[MockAuth {
+            address: &attacker,
+            invoke: &MockAuthInvoke {
+                contract: &settlement_contract_id,
+                fn_name: "set_attestor",
+                args: (attacker.clone(),).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        client.set_attestor(&attacker);
+    }
+
+    #[test]
+    fn test_clear_attestor_returns_to_self_attested() {
+        setup!(env, client, pool_client);
+
+        let attestor = Address::generate(&env);
+        client.set_attestor(&attestor);
+        assert_eq!(client.get_attestor(), Some(attestor));
+
+        client.clear_attestor();
+        assert!(client.get_attestor().is_none());
+
+        // Recording works again with member auth alone.
+        let trip_id = String::from_str(&env, "trip-cleared");
+        let expense_id = String::from_str(&env, "exp-cleared");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+        pool_client.deposit(&member, &10_000_000_i128);
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &1_000_000_i128,
+            &String::from_str(&env, "afterclear1"),
+        );
+        assert!(!client.get_payments(&trip_id).get(0).unwrap().attested);
+    }
+
     #[test]
     fn test_record_payment_works_under_real_auth() {
         let env = Env::default();

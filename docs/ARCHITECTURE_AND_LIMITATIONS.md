@@ -58,7 +58,22 @@ SettleX uses:
   the other members of a split.
 - Some screenshots in README are desktop captures; mobile screenshots should be added for evaluator clarity.
 - Pool balances are internal contract accounting credits, not native XLM/token custody transfers on-chain.
-- `record_payment` stores provided `tx_hash` metadata and relies on app flow integrity; it does not cryptographically verify Horizon payment details inside the contract.
+- `record_payment` stores the provided `payer`, `amount` and `tx_hash` without
+  verifying any of them against Horizon. With no attestor configured the record
+  is **self-attested** — it proves a member wrote a string, nothing more — and
+  every such record carries `attested: false` so consumers cannot mistake it for
+  proof. Do not present self-attested records as evidence of payment; the
+  Stellar transaction on the explorer is the evidence.
+- Setting an attestor (`set_attestor`) makes a co-signature mandatory on every
+  `record_payment`, and marks the resulting records `attested: true`. This is
+  the on-chain half of real verification: the off-chain verifier that checks the
+  Horizon transaction (payer, destination, amount, memo) before co-signing is
+  **not implemented** — until it is deployed and configured, all records remain
+  self-attested.
+- `clear_paid` is an admin-gated escape hatch for the `ExpensePaid` flag. Without
+  it, a bogus or mistaken record permanently blocks the legitimate one for that
+  `(expense_id, member)` pair. It clears the flag only; the original entry stays
+  in the trip's payment history so the audit trail is not rewritten.
 
 ## Operational Constraints
 
@@ -72,7 +87,12 @@ SettleX uses:
 - Add a script to validate README proof links are live.
 - Add an automated checklist CI job that verifies required docs/sections exist.
 - Introduce token/native-asset backed pool settlement model (transfer in/out) for stronger economic guarantees.
-- Add off-chain verifier service (or on-chain protocol changes) to bind `tx_hash` to payer/member/amount claims.
+- Build and deploy the off-chain verifier service that checks Horizon before
+  co-signing, then point `set_attestor` at it. The contract-side hook already
+  exists; only the service is missing.
+- Consider requiring the payer to co-sign `record_payment` as a second source of
+  truth. Not done here because the frontend signs with a single wallet, so it
+  would break every payment until a co-signature flow is built.
 - Move challenge nonces and a token revocation list into a shared store so the
   replay guard and sign-out hold across instances.
 - Narrow the expense/trip UPDATE policies so membership and creator columns can

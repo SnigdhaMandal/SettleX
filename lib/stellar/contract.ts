@@ -345,6 +345,7 @@ export async function getContractPayments(
       amount: bigint;
       tx_hash: string;
       timestamp: bigint;
+      attested?: boolean;
     }>;
 
     const payments: ContractPaymentRecord[] = rawPayments.map((r) => ({
@@ -355,6 +356,9 @@ export async function getContractPayments(
       amountStroops: r.amount,
       txHash:        r.tx_hash,
       timestamp:     Number(r.timestamp),
+      // Default to self-attested: a record from an older contract build that
+      // predates the flag has verified nothing, so it must not read as proof.
+      attested:      r.attested === true,
     }));
 
     return { payments, success: true };

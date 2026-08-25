@@ -44,6 +44,10 @@ export function ReceiptModal({
         </div>
         <p className="text-xl font-bold text-[#0F0F14]">Payment Confirmed</p>
         <p className="text-sm text-[#888]">Successfully sent on Stellar Testnet</p>
+        <p className="text-[11px] text-[#AAA] text-center leading-relaxed max-w-[17rem]">
+          Verify the transaction on Stellar Expert below. The in-app settlement
+          record is self-attested and is not itself proof of payment.
+        </p>
       </div>
 
       {/* ── Summary rows ── */}
