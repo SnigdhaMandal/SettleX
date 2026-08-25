@@ -344,6 +344,47 @@ export class StellarWalletsKit {
     throw new Error(`Wallet "${this.selectedWalletId}" is not supported.`);
   }
 
+  /**
+   * Reads the currently selected account **without prompting**.
+   *
+   * Returns `null` when the answer would require user interaction (the site was
+   * never authorised, the extension is locked or missing) — callers use this to
+   * reconcile a restored session against the live wallet, and a popup on every
+   * page load would be unacceptable there.
+   *
+   * A `null` result means "unknown", never "mismatch": callers must not treat it
+   * as proof the saved address is still valid.
+   */
+  async getAddressSilently(): Promise<string | null> {
+    if (typeof window === "undefined") return null;
+    try {
+      if (this.selectedWalletId === FREIGHTER_ID) {
+        // isAllowed() is the only Freighter call that never opens a popup.
+        const allowed = await isAllowed();
+        if (allowed.error || !allowed.isAllowed) return null;
+        const result = await freighterGetAddress();
+        if (result.error || !result.address) return null;
+        return result.address;
+      }
+
+      // The remaining extensions expose no "already authorised" probe, and
+      // their address calls can prompt. Read only what they publish eagerly.
+      const injected = (window as unknown as Record<string, unknown>)[
+        this.selectedWalletId === XBULL_ID
+          ? "xBulls"
+          : this.selectedWalletId === LOBSTR_ID
+            ? "lobstr"
+            : "rabet"
+      ] as { publicKey?: unknown; address?: unknown } | undefined;
+
+      if (!injected) return null;
+      const address = injected.publicKey ?? injected.address;
+      return typeof address === "string" && address ? address : null;
+    } catch {
+      return null;
+    }
+  }
+
   private async rabetGetAddress(): Promise<GetAddressResult> {
     const rabet = (window as unknown as Record<string, unknown>).rabet as
       | { connect: () => Promise<{ publicKey?: string }> }

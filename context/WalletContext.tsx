@@ -12,12 +12,28 @@ import { getFreighterNetwork, isFreighterInstalled } from "@/lib/freighter";
 import { getWalletsKit, FREIGHTER_ID, type WalletId } from "@/lib/stellar/walletsKit";
 import { getXLMBalance } from "@/lib/stellar/getBalance";
 import { LS_PUBLIC_KEY, LS_WALLET_ID } from "@/lib/utils/constants";
+import { clearWalletSession } from "@/lib/supabase/session";
 import type { WalletContextType } from "@/types/wallet";
 import { useToast } from "@/components/ui/Toast";
 
 
 const WalletContext = createContext<WalletContextType | null>(null);
 WalletContext.displayName = "WalletContext";
+
+/**
+ * Drops every trace of the connected wallet, including the verified session
+ * token. Anything derived from an address we can no longer vouch for has to go
+ * with it, or the next request would carry a token for the wrong account.
+ */
+function clearStoredWallet() {
+  try {
+    localStorage.removeItem(LS_PUBLIC_KEY);
+    localStorage.removeItem(LS_WALLET_ID);
+  } catch {
+    // Private-mode browsers refuse writes — in-memory state is still cleared.
+  }
+  clearWalletSession();
+}
 
 
 export function WalletProvider({ children }: { children: React.ReactNode }) {
@@ -74,37 +90,102 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    const restore = () => {
+    const walletId = savedWalletId ?? FREIGHTER_ID;
+    // Bind after the null guard above so the async closure keeps the narrowing.
+    const restoredKey: string = savedKey;
+
+    async function hydrate() {
       // Point the kit at the wallet the user actually connected with, so signing
       // after a reload goes to the right extension (not always Freighter).
       try {
-        getWalletsKit().setWallet(savedWalletId ?? FREIGHTER_ID);
+        getWalletsKit().setWallet(walletId);
       } catch {
         /* SSR guard — never reached in this client effect */
       }
-      setPublicKey(savedKey);
-      setSelectedWalletId(savedWalletId ?? FREIGHTER_ID);
-      fetchBalance(savedKey);
-      hydrateNetwork();
-    };
 
-    // Freighter exposes an install check, so we can verify + clear stale keys.
-    // Other wallets restore optimistically (a missing wallet re-prompts on sign).
-    if (!savedWalletId || savedWalletId === FREIGHTER_ID) {
-      isFreighterInstalled().then((installed) => {
-        if (!installed) {
-          localStorage.removeItem(LS_PUBLIC_KEY);
-          localStorage.removeItem(LS_WALLET_ID);
-        } else {
-          restore();
-        }
+      if (walletId === FREIGHTER_ID && !(await isFreighterInstalled())) {
+        clearStoredWallet();
         setIsHydrated(true);
-      });
-    } else {
-      restore();
+        return;
+      }
+
+      // The saved key is caller-supplied data, not evidence. Ask the extension
+      // which account is actually selected and drop the session if it disagrees
+      // — this is what stops a hand-written localStorage entry from restoring an
+      // arbitrary identity, and what catches an account switch made while the
+      // tab was closed.
+      const liveKey = await getWalletsKit()
+        .getAddressSilently()
+        .catch(() => null);
+
+      if (liveKey && liveKey !== restoredKey) {
+        clearStoredWallet();
+        setIsHydrated(true);
+        toastInfo(
+          "Wallet account changed",
+          "Please reconnect to continue with your current account."
+        );
+        return;
+      }
+
+      // `liveKey === null` means the extension could not answer without a
+      // popup. Restore optimistically so the UI can render, but nothing is
+      // authorized on this key: every privileged call goes through a signed
+      // challenge, which fails if the wallet no longer holds this address.
+      setPublicKey(restoredKey);
+      setSelectedWalletId(walletId);
+      fetchBalance(restoredKey);
+      hydrateNetwork();
       setIsHydrated(true);
     }
-  }, [fetchBalance, hydrateNetwork]);
+
+    hydrate().catch(() => {
+      // Never leave the app stuck on the hydration spinner.
+      clearStoredWallet();
+      setIsHydrated(true);
+    });
+  }, [fetchBalance, hydrateNetwork, toastInfo]);
+
+  // ── Detect account switches while the tab is open ──────────────────────────
+  // Extensions do not emit a standard account-change event, so poll the silent
+  // read. A switch mid-session must not leave the app acting as the old account
+  // while the wallet signs as the new one.
+
+  useEffect(() => {
+    if (!publicKey) return;
+
+    let cancelled = false;
+
+    const reconcile = async () => {
+      const liveKey = await getWalletsKit()
+        .getAddressSilently()
+        .catch(() => null);
+
+      if (cancelled || !liveKey || liveKey === publicKey) return;
+
+      clearStoredWallet();
+      setPublicKey(null);
+      setBalance(null);
+      setNetwork(null);
+      setSelectedWalletId(null);
+      toastInfo(
+        "Wallet account changed",
+        "Please reconnect to continue with your current account."
+      );
+    };
+
+    const interval = setInterval(reconcile, 5_000);
+    const handleVisibility = () => {
+      if (document.visibilityState === "visible") void reconcile();
+    };
+    document.addEventListener("visibilitychange", handleVisibility);
+
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", handleVisibility);
+    };
+  }, [publicKey, toastInfo]);
 
   useEffect(() => {
     if (!publicKey) return;
@@ -190,8 +271,10 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setError(null);
     setSelectedWalletId(null);
     toastInfo("Wallet disconnected");
-    localStorage.removeItem(LS_PUBLIC_KEY);
-  }, []);
+    // Also drops LS_WALLET_ID and the verified session token — leaving either
+    // behind would let the next load restore a half-session.
+    clearStoredWallet();
+  }, [toastInfo]);
 
 
   const refreshBalance = useCallback(async () => {

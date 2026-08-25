@@ -14,6 +14,12 @@ interface AuthGuardProps {
 /**
  * Protects routes by requiring authentication.
  * Redirects to /auth if user is not authenticated.
+ *
+ * `isAuthenticated` is derived from the verified session token, not from cached
+ * localStorage state, so forging `settlex:user` / `settlex:publicKey` does not
+ * get past this guard. It is defence in depth either way: RLS rejects every
+ * request that lacks a server-signed `wallet_address` claim, so bypassing the
+ * guard in the client would still yield an app with no data.
  */
 export function AuthGuard({ children }: AuthGuardProps) {
   const { isAuthenticated, isLoading, user, sessionError, refreshSession } = useAuth();
