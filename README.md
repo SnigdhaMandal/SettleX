@@ -53,7 +53,7 @@
 
 SettleX solves a fundamental problem with group expense sharing: apps like Splitwise only track IOUs — you still have to chase people for real money. SettleX closes the loop by connecting split calculations directly to on-chain payments.
 
-Every payment produces a **real, verifiable transaction hash** on the Stellar blockchain. An on-chain Soroban smart contract acts as an immutable settlement ledger, so payment records cannot be edited or disputed. The app syncs across all participants in real time — when someone pays, everyone sees it immediately.
+Every payment produces a **real, verifiable transaction hash** on the Stellar blockchain — that hash, checkable on any explorer, is the evidence a payment happened. An on-chain Soroban smart contract additionally records each settlement so participants share one append-only history. Those records are currently *self-attested*: the contract stores what the member submits without checking it against Horizon, so treat the Stellar transaction as the proof and the contract record as bookkeeping (see [Architecture and Limitations](docs/ARCHITECTURE_AND_LIMITATIONS.md)). The app syncs across all participants in real time — when someone pays, everyone sees it immediately.
 
 **Core design principles:**
 
@@ -73,7 +73,7 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 | Pay shares with XLM (Stellar Payment operation)              | Live   |
 | SEP-0007 QR code generation for mobile wallets               | Live   |
 | Transaction hash receipt linked to Stellar Explorer          | Live   |
-| Soroban contract: immutable on-chain payment recording       | Live   |
+| Soroban contract: append-only on-chain settlement records     | Live   |
 | Real-time event listening from contract (`pmt_rec` events)   | Live   |
 | Trip mode — group expenses with net-balance settle-up        | Live   |
 | Live cross-user sync via Supabase Realtime                   | Live   |
@@ -218,6 +218,10 @@ The final proof transaction above is verifiable evidence of the inter-contract p
 Security hardening note:
 - Pool credits are now admin-managed in the pool contract to prevent untrusted self-crediting.
 - Pool `withdraw` requires auth from **both** the configured settlement contract and the member. Credits can therefore only be consumed as part of a `record_payment` call — a member cannot drain their own credits directly, and no other contract can spend them. Rotating `set_settlement_contract` immediately revokes the previous contract's ability to withdraw.
+- Settlement records now carry an `attested` flag. With no attestor configured a record is **self-attested** — it proves only that a member wrote a string, and the contract verifies neither the `payer`, the `amount`, nor the `tx_hash` against Horizon. Treat the Stellar transaction on the explorer as the evidence, not the in-app record. `set_attestor` makes a verifier's co-signature mandatory and marks records `attested: true`; the verifier service itself is not yet built.
+- `clear_paid` (admin-only) clears the `ExpensePaid` flag, so a bogus or mistaken record can no longer permanently block the legitimate one. It preserves the original entry in trip history.
+
+> **Redeploy required.** `PaymentRecord` gained a field and `CONTRACT_VERSION` is now `2`. Records written by a v1 deployment cannot be read by this build — deploy fresh contracts and update `NEXT_PUBLIC_CONTRACT_ID`.
 
 ---
 

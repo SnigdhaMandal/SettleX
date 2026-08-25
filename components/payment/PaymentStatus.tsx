@@ -66,7 +66,7 @@ export function PaymentStatus({ state, onReset, onRetryOnChain, className }: Pay
                 </p>
                 {state.status === "recording" && (
                   <p className="text-[11px] text-[#AAA] mt-0.5">
-                    Storing settlement proof in the Soroban contract pool flow…
+                    Recording your settlement in the Soroban contract…
                   </p>
                 )}
               </div>

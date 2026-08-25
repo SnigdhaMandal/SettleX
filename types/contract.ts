@@ -6,6 +6,15 @@ export interface ContractPaymentRecord {
   amountStroops: bigint;
   txHash: string;
   timestamp: number;
+  /**
+   * `true` only when a configured attestor co-signed the record, meaning the
+   * Stellar transaction behind `txHash` was actually checked.
+   *
+   * `false` means the record is self-attested: the member supplied `payer`,
+   * `amountStroops` and `txHash`, and the contract stored them without
+   * verifying any of it. Never present a self-attested record as proof.
+   */
+  attested: boolean;
 }
 
 // Contract call status
