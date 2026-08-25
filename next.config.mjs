@@ -1,3 +1,5 @@
+import withSerwistInit from "@serwist/next";
+
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   // ── Images ────────────────────────────────────────────────────────────────
@@ -55,4 +57,16 @@ const nextConfig = {
   // output: "standalone",
 };
 
-export default nextConfig;
+// ── PWA (Serwist) ───────────────────────────────────────────────────────────
+// Builds the service worker from app/sw.ts → public/sw.js. We register it
+// manually (see components/pwa/ServiceWorkerRegister) so no inline script is
+// injected, keeping the strict CSP intact. Disabled in dev for fast HMR.
+const withSerwist = withSerwistInit({
+  swSrc: "app/sw.ts",
+  swDest: "public/sw.js",
+  register: false,
+  reloadOnOnline: true,
+  disable: process.env.NODE_ENV === "development",
+});
+
+export default withSerwist(nextConfig);

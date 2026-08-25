@@ -13,11 +13,13 @@ import { STELLAR_NETWORK } from "@/lib/utils/constants";
 export const FREIGHTER_ID = "freighter" as const;
 export const XBULL_ID     = "xbull"     as const;
 export const LOBSTR_ID    = "lobstr"    as const;
+export const RABET_ID     = "rabet"     as const;
 
 export type WalletId =
   | typeof FREIGHTER_ID
   | typeof XBULL_ID
-  | typeof LOBSTR_ID;
+  | typeof LOBSTR_ID
+  | typeof RABET_ID;
 
 // ─── Network enum ─────────────────────────────────────────────────────────────
 
@@ -72,6 +74,17 @@ const SUPPORTED_WALLETS: SupportedWallet[] = [
       if (typeof window === "undefined") return false;
       return typeof (window as unknown as Record<string, unknown>).lobstr === "object" &&
              (window as unknown as Record<string, unknown>).lobstr !== null;
+    },
+  },
+  {
+    id: RABET_ID,
+    name:       "Rabet",
+    logoUrl:    "https://rabet.io/static/images/logo.svg",
+    installUrl: "https://rabet.io/",
+    isInstalled: async () => {
+      if (typeof window === "undefined") return false;
+      return typeof (window as unknown as Record<string, unknown>).rabet === "object" &&
+             (window as unknown as Record<string, unknown>).rabet !== null;
     },
   },
 ];
@@ -327,7 +340,18 @@ export class StellarWalletsKit {
     if (this.selectedWalletId === FREIGHTER_ID) return this.freighterGetAddress();
     if (this.selectedWalletId === XBULL_ID)     return this.xBullGetAddress();
     if (this.selectedWalletId === LOBSTR_ID)    return this.lobstrGetAddress();
+    if (this.selectedWalletId === RABET_ID)     return this.rabetGetAddress();
     throw new Error(`Wallet "${this.selectedWalletId}" is not supported.`);
+  }
+
+  private async rabetGetAddress(): Promise<GetAddressResult> {
+    const rabet = (window as unknown as Record<string, unknown>).rabet as
+      | { connect: () => Promise<{ publicKey?: string }> }
+      | undefined;
+    if (!rabet) throw new Error("Rabet extension is not installed.");
+    const result = await rabet.connect();
+    if (!result.publicKey) throw new Error("Rabet did not return a public key.");
+    return { address: result.publicKey };
   }
 
   private async freighterGetAddress(): Promise<GetAddressResult> {
@@ -368,7 +392,20 @@ export class StellarWalletsKit {
     if (this.selectedWalletId === FREIGHTER_ID) return this.freighterSign(xdr, opts);
     if (this.selectedWalletId === XBULL_ID)     return this.xBullSign(xdr, opts);
     if (this.selectedWalletId === LOBSTR_ID)    return this.lobstrSign(xdr, opts);
+    if (this.selectedWalletId === RABET_ID)     return this.rabetSign(xdr, opts);
     throw new Error(`Wallet "${this.selectedWalletId}" does not support signing.`);
+  }
+
+  private async rabetSign(xdr: string, opts: SignTransactionOptions): Promise<SignTransactionResult> {
+    const rabet = (window as unknown as Record<string, unknown>).rabet as
+      | { sign: (xdr: string, network: "testnet" | "mainnet") => Promise<{ xdr?: string }> }
+      | undefined;
+    if (!rabet) throw new Error("Rabet extension is not installed.");
+    const passphrase = opts.networkPassphrase ?? this.network;
+    const network = passphrase === WalletNetwork.PUBLIC ? "mainnet" : "testnet";
+    const result = await rabet.sign(xdr, network);
+    if (!result.xdr) throw new Error("Rabet did not return a signed transaction.");
+    return { signedTxXdr: result.xdr };
   }
 
   private async freighterSign(xdr: string, opts: SignTransactionOptions): Promise<SignTransactionResult> {

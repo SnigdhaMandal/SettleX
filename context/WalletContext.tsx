@@ -9,9 +9,9 @@ import React, {
   useState,
 } from "react";
 import { getFreighterNetwork, isFreighterInstalled } from "@/lib/freighter";
-import { getWalletsKit, FREIGHTER_ID } from "@/lib/stellar/walletsKit";
+import { getWalletsKit, FREIGHTER_ID, type WalletId } from "@/lib/stellar/walletsKit";
 import { getXLMBalance } from "@/lib/stellar/getBalance";
-import { LS_PUBLIC_KEY } from "@/lib/utils/constants";
+import { LS_PUBLIC_KEY, LS_WALLET_ID } from "@/lib/utils/constants";
 import type { WalletContextType } from "@/types/wallet";
 import { useToast } from "@/components/ui/Toast";
 
@@ -64,6 +64,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     const savedKey = typeof window !== "undefined"
       ? localStorage.getItem(LS_PUBLIC_KEY)
       : null;
+    const savedWalletId = (typeof window !== "undefined"
+      ? localStorage.getItem(LS_WALLET_ID)
+      : null) as WalletId | null;
 
     if (!savedKey) {
       // No saved key — nothing to restore, mark hydration done immediately
@@ -71,20 +74,36 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // Verify Freighter still has the same key before auto-restoring
-    isFreighterInstalled().then((installed) => {
-      if (!installed) {
-        localStorage.removeItem(LS_PUBLIC_KEY);
-      } else {
-        // Restore silently — do not re-prompt the user
-        setPublicKey(savedKey);
-        setSelectedWalletId(FREIGHTER_ID);
-        fetchBalance(savedKey);
-        hydrateNetwork();
+    const restore = () => {
+      // Point the kit at the wallet the user actually connected with, so signing
+      // after a reload goes to the right extension (not always Freighter).
+      try {
+        getWalletsKit().setWallet(savedWalletId ?? FREIGHTER_ID);
+      } catch {
+        /* SSR guard — never reached in this client effect */
       }
-      // Either way, hydration check is done — allow WalletGuard to render
+      setPublicKey(savedKey);
+      setSelectedWalletId(savedWalletId ?? FREIGHTER_ID);
+      fetchBalance(savedKey);
+      hydrateNetwork();
+    };
+
+    // Freighter exposes an install check, so we can verify + clear stale keys.
+    // Other wallets restore optimistically (a missing wallet re-prompts on sign).
+    if (!savedWalletId || savedWalletId === FREIGHTER_ID) {
+      isFreighterInstalled().then((installed) => {
+        if (!installed) {
+          localStorage.removeItem(LS_PUBLIC_KEY);
+          localStorage.removeItem(LS_WALLET_ID);
+        } else {
+          restore();
+        }
+        setIsHydrated(true);
+      });
+    } else {
+      restore();
       setIsHydrated(true);
-    });
+    }
   }, [fetchBalance, hydrateNetwork]);
 
   useEffect(() => {
@@ -111,15 +130,11 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     setError(null);
 
     try {
-      const installed = await isFreighterInstalled();
-      if (!installed) {
-        throw new Error(
-          "No Stellar wallet detected. Please install the Freighter browser extension from freighter.app"
-        );
-      }
-
+      // The kit modal handles per-wallet install detection, so we no longer
+      // hard-gate on Freighter — any supported wallet can connect.
       const kit = getWalletsKit();
       let resolvedAddress = "";
+      let chosenWalletId: WalletId = FREIGHTER_ID;
       let walletError: Error | null = null;
 
       await kit.openModal({
@@ -128,6 +143,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
         onWalletSelected: async (wallet) => {
           kit.setWallet(wallet.id);
+          chosenWalletId = wallet.id;
           const { address } = await kit.getAddress();
           resolvedAddress = address;
         },
@@ -143,8 +159,9 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       setPublicKey(resolvedAddress);
       setNetwork(net);
-      setSelectedWalletId(FREIGHTER_ID);
+      setSelectedWalletId(chosenWalletId);
       localStorage.setItem(LS_PUBLIC_KEY, resolvedAddress);
+      localStorage.setItem(LS_WALLET_ID, chosenWalletId);
       toastSuccess(
         "Wallet connected",
         `${resolvedAddress.slice(0, 6)}…${resolvedAddress.slice(-4)} on ${net === "PUBLIC" ? "Mainnet" : "Testnet"}`

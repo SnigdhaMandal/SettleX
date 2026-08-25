@@ -2,39 +2,41 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { TrendingUp, Users, Globe, Zap } from "lucide-react";
+import { Zap, ShieldCheck, Coins, Code2 } from "lucide-react";
 
+// Verifiable capability facts — not invented usage metrics. Each is either a
+// property of the Stellar network or independently checkable in this repo.
 const stats = [
   {
-    icon: TrendingUp,
-    value: "2.3M",
-    unit: "XLM",
-    label: "Total Settled",
-    sub: "On Stellar Testnet",
-    color: "#B9FF66",
-  },
-  {
-    icon: Users,
-    value: "8,200+",
-    unit: "",
-    label: "Active Groups",
-    sub: "Across 40+ countries",
-    color: "#B9FF66",
-  },
-  {
-    icon: Globe,
-    value: "47K+",
-    unit: "",
-    label: "Transactions",
-    sub: "All publicly verifiable",
-    color: "#B9FF66",
-  },
-  {
     icon: Zap,
-    value: "<5s",
+    value: "~5s",
     unit: "",
-    label: "Average Finality",
+    label: "Settlement finality",
     sub: "Stellar consensus speed",
+    color: "#B9FF66",
+  },
+  {
+    icon: ShieldCheck,
+    value: "100%",
+    unit: "",
+    label: "Non-custodial",
+    sub: "Keys never leave your wallet",
+    color: "#B9FF66",
+  },
+  {
+    icon: Coins,
+    value: "<$0.01",
+    unit: "",
+    label: "Network fee",
+    sub: "Zero platform fees",
+    color: "#B9FF66",
+  },
+  {
+    icon: Code2,
+    value: "Open",
+    unit: "",
+    label: "Source",
+    sub: "Public code · 45 passing tests",
     color: "#B9FF66",
   },
 ];

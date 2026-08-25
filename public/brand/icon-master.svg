@@ -1,0 +1,8 @@
+<svg width="512" height="512" viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="SettleX app icon">
+  <!-- Full-bleed dark background: safe for PWA `maskable` (platform applies its own mask) -->
+  <rect width="512" height="512" fill="#0F0F14"/>
+  <!-- Brand lightning bolt, centered within the maskable safe zone (inner 80%) -->
+  <g transform="translate(256,256) scale(11) translate(-20.75,-24)">
+    <path d="M 24.0 9.5 L 14.5 25.5 H 21.0 L 16.5 38.5 L 27.0 22.5 H 20.5 L 24.0 9.5 Z" fill="#B9FF66"/>
+  </g>
+</svg>
