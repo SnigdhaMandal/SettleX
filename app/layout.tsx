@@ -1,13 +1,32 @@
 import type { Metadata, Viewport } from "next";
+import { Poppins, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { WalletProvider } from "@/context/WalletContext";
 import { AuthProvider } from "@/context/AuthContext";
 import { ToastProvider } from "@/components/ui/Toast";
 import { ExpenseProvider } from "@/context/ExpenseContext";
 import { TripProvider } from "@/context/TripContext";
+import { ServiceWorkerRegister } from "@/components/pwa/ServiceWorkerRegister";
+import { InstallPrompt } from "@/components/pwa/InstallPrompt";
+
+const poppins = Poppins({
+  subsets: ["latin"],
+  weight: ["300", "400", "500", "600", "700", "800", "900"],
+  variable: "--font-poppins",
+  display: "swap",
+});
+
+const jetbrainsMono = JetBrains_Mono({
+  subsets: ["latin"],
+  weight: ["400", "500", "600", "700"],
+  variable: "--font-jetbrains-mono",
+  display: "swap",
+});
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://settlex.app"),
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_SITE_URL ?? "https://settlex.app",
+  ),
   title: {
     default: "SettleX — Split Bills on the Stellar Blockchain",
     template: "%s | SettleX",
@@ -35,34 +54,31 @@ export const metadata: Metadata = {
     title: "SettleX — Split Bills on the Stellar Blockchain",
     description:
       "Decentralized bill-splitting powered by Stellar. Split instantly, pay transparently.",
-    images: [
-      {
-        url: "/og-image.png",
-        width: 1200,
-        height: 630,
-        alt: "SettleX — Split Bills on Stellar",
-      },
-    ],
+    // Social image is provided by app/opengraph-image.tsx (file convention).
   },
   twitter: {
     card: "summary_large_image",
     title: "SettleX — Split Bills on the Stellar Blockchain",
     description: "Decentralized bill-splitting powered by Stellar.",
-    images: ["/og-image.png"],
+    // Image provided by app/twitter-image.tsx (file convention).
   },
-  icons: {
-    icon: [
-      { url: "/icon.svg", type: "image/svg+xml" },
-    ],
-    apple: "/icon.svg",
-    shortcut: "/icon.svg",
+  // Icons are provided by app/icon.svg + app/apple-icon.tsx (file conventions).
+  applicationName: "SettleX",
+  appleWebApp: {
+    capable: true,
+    title: "SettleX",
+    statusBarStyle: "black-translucent",
   },
+  formatDetection: { telephone: false },
 };
 
 export const viewport: Viewport = {
   themeColor: "#B9FF66",
   width: "device-width",
   initialScale: 1,
+  // Extend under the iOS notch / home indicator so safe-area insets work in the
+  // installed PWA.
+  viewportFit: "cover",
 };
 
 export default function RootLayout({
@@ -71,14 +87,16 @@ export default function RootLayout({
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className="scroll-smooth">
+    <html lang="en" className={`${poppins.variable} ${jetbrainsMono.variable} scroll-smooth`}>
       <body className="bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased">
+        <ServiceWorkerRegister />
         <ToastProvider>
           <WalletProvider>
             <AuthProvider>
               <ExpenseProvider>
                 <TripProvider>
                   {children}
+                  <InstallPrompt />
                 </TripProvider>
               </ExpenseProvider>
             </AuthProvider>

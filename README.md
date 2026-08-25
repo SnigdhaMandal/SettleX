@@ -59,7 +59,7 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 - **Non-custodial** — your private key never leaves your wallet extension. SettleX only receives the signed transaction envelope.
 - **No intermediary** — money moves peer-to-peer between Stellar wallets; the app never holds funds.
 - **On-chain receipts** — every settled share has a Stellar transaction hash you can verify on [stellar.expert](https://stellar.expert/explorer/testnet).
-- **Multi-wallet** — supports Freighter, xBull, and Lobstr via a custom `StellarWalletsKit` with install detection.
+- **Multi-wallet** — supports Freighter, xBull, Lobstr, and Rabet with install detection. WalletConnect (mobile wallets) is documented as a one-step add in [docs/WALLET_INTEGRATION.md](docs/WALLET_INTEGRATION.md).
 
 ---
 
@@ -67,7 +67,7 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 
 | Feature                                                      | Status |
 | ------------------------------------------------------------ | ------ |
-| Multi-wallet connect (Freighter, xBull, Lobstr)              | Live   |
+| Multi-wallet connect (Freighter, xBull, Lobstr, Rabet)      | Live   |
 | Create and split expenses — equal, percentage, custom weight | Live   |
 | Pay shares with XLM (Stellar Payment operation)              | Live   |
 | SEP-0007 QR code generation for mobile wallets               | Live   |
@@ -194,7 +194,7 @@ useContractEvents polls every 10s -> syncs state for all participants
 
 SettleX deploys a **Soroban smart contract** on Stellar Testnet as an immutable, tamper-proof ledger of all settled payments.
 
-### Deployed Contracts (Phase 8 Proof)
+### Deployed Contracts (Testnet)
 
 | Contract Role | Contract ID | Explorer |
 | ------------- | ----------- | -------- |
@@ -219,25 +219,42 @@ Security hardening note:
 
 ---
 
+## Project Status & Production Roadmap
+
+**Status: Testnet beta.** SettleX runs entirely on Stellar **Testnet** — no real
+funds move yet. Settlement currently uses native **XLM**. USDC settlement,
+verified on-chain settlement, broader wallet support, and a Mainnet launch are on
+the roadmap. We state exactly where we are rather than overselling.
+
+The complete, honest plan to take SettleX from project to shipped product —
+including the known trust gaps and how each one is closed — lives in
+**[docs/PRODUCT_CONVERSION_GUIDE.md](docs/PRODUCT_CONVERSION_GUIDE.md)**.
+
+| Area | Today | Next |
+| --- | --- | --- |
+| Network | Stellar Testnet | Mainnet (after a contract audit) |
+| Settlement asset | XLM (native) | USDC via Stellar path payments |
+| Settlement integrity | On-chain receipt log (tx hash stored; not yet verified in-contract) | Verified / atomic on-chain settlement |
+| Wallets | Freighter, xBull, Lobstr, Rabet | + WalletConnect (mobile), passkey smart wallets |
+| App shell | Installable PWA, nonce-based CSP | Push notifications, offline reads |
+| Identity | Wallet address (client-supplied) | Sign-In-With-Stellar (signed challenge) |
+
+Verified locally with `npm run build`, `npm run lint`, and `npm test`.
+
 ## Submission Checklist Evidence
 
 This section maps the required submission checklist to concrete proof in this repository.
 
 | Requirement | Proof |
 | --- | --- |
-| Public GitHub repository | https://github.com/SnigdhaMandal/SettleX |
+| Public GitHub repository | https://github.com/soumen0818/SettleX |
 | README with complete documentation | This file plus final docs links in [Final Documentation Package](#final-documentation-package) |
 | Minimum 8+ meaningful commits | Local repository history: 44 commits |
 | Live demo link | [https://settle-x-pi.vercel.app/](https://settle-x-pi.vercel.app/) |
 | Screenshot: mobile responsive view | UI pages were hardened for mobile in Phase 9. Add one fresh phone viewport screenshot to `public/mobile-responsive.png` and reference it here before final submission. |
 | Screenshot or badge: CI/CD pipeline running | CI badge at the top of this README (GitHub Actions `ci.yml`) |
-| Contract addresses and transaction hash (inter-contract) | [Deployed Contracts (Phase 8 Proof)](#deployed-contracts-phase-8-proof) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
-| Token or pool address (if custom token or pool deployed) | Pool contract in [Deployed Contracts (Phase 8 Proof)](#deployed-contracts-phase-8-proof) |
-
-Additional production proof:
-- Build verified locally with `npm run build`.
-- Lint verified locally with `npm run lint`.
-- Tests verified locally with `npm test -- --runInBand`.
+| Contract addresses and transaction hash (inter-contract) | [Deployed Contracts](#deployed-contracts-testnet) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
+| Token or pool address (if custom token or pool deployed) | Pool contract in [Deployed Contracts](#deployed-contracts-testnet) |
 
 ### Contract Functions
 
@@ -461,6 +478,18 @@ settlex/
 
 ## Final Documentation Package
 
+**Product & strategy**
+- [Product Conversion Guide](docs/PRODUCT_CONVERSION_GUIDE.md) — the full project→product roadmap
+- [Brand Guidelines](docs/BRAND.md)
+- [Wallet Integration](docs/WALLET_INTEGRATION.md) — supported wallets + adding WalletConnect
+
+**Getting started & testing**
+- [Quickstart](docs/QUICKSTART.md)
+- [Supabase Setup](docs/SUPABASE_SETUP.md)
+- [Authentication](docs/AUTHENTICATION_SETUP.md)
+- [Manual Testing Guide](docs/MANUAL_TESTING_GUIDE.md)
+
+**Operations & architecture**
 - [Release Checklist](docs/RELEASE_CHECKLIST.md)
 - [Production Runbook](docs/RUNBOOK.md)
 - [Requirement-to-Proof Matrix](docs/REQUIREMENT_PROOF_MATRIX.md)

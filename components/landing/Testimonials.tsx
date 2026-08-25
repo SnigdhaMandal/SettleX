@@ -2,75 +2,58 @@
 
 import React from "react";
 import { motion } from "framer-motion";
-import { Star, Quote, Zap } from "lucide-react";
+import { ShieldCheck, Link2, Zap, Clock, Code2, Map } from "lucide-react";
 import { Badge } from "@/components/ui/Badge";
 
-const testimonials = [
+const CONTRACT_ID = "CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI";
+const SAMPLE_TX = "04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967";
+const EXPLORER = "https://stellar.expert/explorer/testnet";
+const REPO = "https://github.com/soumen0818/SettleX";
+
+// Honest, verifiable proof points — no fabricated reviews. Every claim below is
+// something a visitor can independently check on-chain or in the source.
+const proofs = [
   {
-    name: "Rahul Sharma",
-    handle: "@rahulsharma_dev",
-    avatar: "R",
-    avatarBg: "#B9FF66",
-    avatarColor: "#0F0F14",
-    role: "Stellar Developer",
-    stars: 5,
-    text: "Finally a bill-splitting app that doesn't require me to trust a random backend. Everything settles on-chain, the QR codes work perfectly with my wallet. SettleX is exactly what Web3 UX should look like.",
-    highlight: "exactly what Web3 UX should look like",
+    icon: ShieldCheck,
+    title: "Non-custodial by design",
+    text: "Your private key never leaves your wallet. SettleX only ever receives a signed transaction — it can’t touch or hold your funds.",
+    href: undefined as string | undefined,
+    cta: undefined as string | undefined,
   },
   {
-    name: "Priya Menon",
-    handle: "@priyam_crypto",
-    avatar: "P",
-    avatarBg: "#0F0F14",
-    avatarColor: "#B9FF66",
-    role: "DeFi Enthusiast",
-    stars: 5,
-    text: "Used SettleX for our group trip to Goa. 6 people, 22 expenses — it auto-settled everything into 3 transactions. The Stellar fees were basically zero. Can't go back to Splitwise after this.",
-    highlight: "auto-settled everything into 3 transactions",
+    icon: Link2,
+    title: "Verifiable on-chain",
+    text: "Every settlement produces a real Stellar transaction hash you can open on a public explorer. No trust required — check it yourself.",
+    href: `${EXPLORER}/tx/${SAMPLE_TX}`,
+    cta: "View a sample transaction",
   },
   {
-    name: "Alex Donovan",
-    handle: "@alexd_blockchain",
-    avatar: "A",
-    avatarBg: "#1A1A22",
-    avatarColor: "#B9FF66",
-    role: "Blockchain Engineer",
-    stars: 5,
-    text: "The on-chain memo system is clever. Every receipt permanently lives on the Stellar ledger — I clicked the TX hash to verify it myself. For crypto-native users, this is the bill-splitting app.",
-    highlight: "every receipt permanently lives on the Stellar ledger",
+    icon: Zap,
+    title: "Near-zero fees",
+    text: "Stellar’s base network fee is a fraction of a US cent, so settling a share costs effectively nothing — even across borders.",
+    href: undefined,
+    cta: undefined,
   },
   {
-    name: "Sam Chen",
-    handle: "@samchen_xyz",
-    avatar: "S",
-    avatarBg: "#7DD835",
-    avatarColor: "#0F0F14",
-    role: "Product Designer",
-    stars: 5,
-    text: "The design is incredibly clean. Cards feel premium, the lime accent is distinctive, and the Freighter integration is seamless. I shipped this to my whole friend group and they love it.",
-    highlight: "The design is incredibly clean",
+    icon: Clock,
+    title: "Settles in ~5 seconds",
+    text: "Payments confirm on the Stellar network in about five seconds — not the days a bank transfer or remittance can take.",
+    href: undefined,
+    cta: undefined,
   },
   {
-    name: "Nisha Patel",
-    handle: "@nisha_stellar",
-    avatar: "N",
-    avatarBg: "#2A2A35",
-    avatarColor: "#B9FF66",
-    role: "Crypto UX Researcher",
-    stars: 5,
-    text: "Group trip settlements used to cause drama. With SettleX's auto-settlement algorithm, our 8-person trip needed only 2 transactions. The transparency kills any arguments about who paid what.",
-    highlight: "8-person trip needed only 2 transactions",
+    icon: Code2,
+    title: "Open source",
+    text: "The full app and the Soroban settlement contract are public. Read the code, run the tests, verify the contract — nothing is hidden.",
+    href: REPO,
+    cta: "Read the source",
   },
   {
-    name: "Dev Kapoor",
-    handle: "@devkapoor_web3",
-    avatar: "D",
-    avatarBg: "#B9FF66",
-    avatarColor: "#0F0F14",
-    role: "Web3 Founder",
-    stars: 5,
-    text: "Built on Stellar so fees are negligible. Non-custodial so I keep my keys. QR codes so my non-crypto friends can pay too. This is the holy trinity of good crypto UX.",
-    highlight: "holy trinity of good crypto UX",
+    icon: Map,
+    title: "Testnet live, mainnet on the roadmap",
+    text: "SettleX runs on Stellar Testnet today, with USDC settlement and a mainnet launch on a published roadmap. We say exactly where we are.",
+    href: `${EXPLORER}/contract/${CONTRACT_ID}`,
+    cta: "View the live contract",
   },
 ];
 
@@ -79,27 +62,13 @@ const cardVariants = {
   visible: (i: number) => ({
     opacity: 1,
     y: 0,
-    transition: { duration: 0.55, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] },
+    transition: { duration: 0.55, delay: i * 0.08, ease: [0.22, 1, 0.36, 1] as const },
   }),
 };
-
-function HighlightedText({ text, highlight }: { text: string; highlight: string }) {
-  const parts = text.split(highlight);
-  return (
-    <>
-      {parts[0]}
-      <span className="bg-[#B9FF66]/20 text-[#2D6600] font-semibold px-0.5 rounded">
-        {highlight}
-      </span>
-      {parts[1]}
-    </>
-  );
-}
 
 export default function Testimonials() {
   return (
     <section className="section-padding bg-[#F6F6F6] relative overflow-hidden">
-      {/* Radial */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -118,96 +87,72 @@ export default function Testimonials() {
           className="text-center mb-16 max-w-xl mx-auto"
         >
           <Badge variant="lime" className="mb-4">
-            <Star size={11} className="fill-current" />
-            Loved by early users
+            <ShieldCheck size={11} />
+            Built to be verified
           </Badge>
           <h2 className="heading-section text-[#0F0F14] mb-4">
-            Real people.{" "}
+            Don’t trust us.{" "}
             <span
               className="bg-clip-text text-transparent"
-              style={{
-                backgroundImage: "linear-gradient(135deg, #B9FF66, #7DD835)",
-              }}
+              style={{ backgroundImage: "linear-gradient(135deg, #B9FF66, #7DD835)" }}
             >
-              Real settlements.
+              Verify it.
             </span>
           </h2>
           <p className="text-[#666] text-lg">
-            From group trips to shared apartments — see what our early community
-            is saying about SettleX.
+            SettleX is early and honest about it. Instead of reviews, here’s proof
+            you can check yourself — on-chain and in the source.
           </p>
         </motion.div>
 
-        {/* Masonry-style grid */}
-        <div className="columns-1 sm:columns-2 lg:columns-3 gap-4 space-y-0">
-          {testimonials.map((t, i) => (
-            <motion.div
-              key={t.name}
-              custom={i}
-              variants={cardVariants}
-              initial="hidden"
-              whileInView="visible"
-              viewport={{ once: true, margin: "-40px" }}
-              className="break-inside-avoid mb-4 group"
-            >
-              <div className="bg-white rounded-3xl border border-[#E5E5E5] p-6 hover:border-[#B9FF66]/40 hover:shadow-[0_8px_40px_-8px_rgba(0,0,0,0.1)] transition-all duration-300">
-                {/* Stars */}
-                <div className="flex gap-0.5 mb-4">
-                  {[...Array(t.stars)].map((_, s) => (
-                    <Star
-                      key={s}
-                      size={13}
-                      className="text-[#B9FF66] fill-[#B9FF66]"
-                    />
-                  ))}
-                </div>
-
-                {/* Quote icon */}
-                <Quote
-                  size={20}
-                  className="text-[#E5E5E5] mb-3 group-hover:text-[#B9FF66]/30 transition-colors"
-                />
-
-                {/* Text */}
-                <p className="text-[15px] text-[#333] leading-relaxed mb-5">
-                  &ldquo;<HighlightedText text={t.text} highlight={t.highlight} />&rdquo;
-                </p>
-
-                {/* Author */}
-                <div className="flex items-center gap-3">
-                  <div
-                    className="w-9 h-9 rounded-full flex items-center justify-center text-sm font-bold shrink-0"
-                    style={{
-                      backgroundColor: t.avatarBg,
-                      color: t.avatarColor,
-                    }}
-                  >
-                    {t.avatar}
+        {/* Proof grid */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {proofs.map((p, i) => {
+            const Icon = p.icon;
+            return (
+              <motion.div
+                key={p.title}
+                custom={i}
+                variants={cardVariants}
+                initial="hidden"
+                whileInView="visible"
+                viewport={{ once: true, margin: "-40px" }}
+              >
+                <div className="h-full bg-white rounded-3xl border border-[#E5E5E5] p-6 hover:border-[#B9FF66]/40 hover:shadow-[0_8px_40px_-8px_rgba(0,0,0,0.1)] transition-all duration-300 flex flex-col">
+                  <div className="w-10 h-10 rounded-xl bg-[#B9FF66]/15 flex items-center justify-center mb-4">
+                    <Icon size={18} className="text-[#2D6600]" />
                   </div>
-                  <div>
-                    <p className="text-sm font-bold text-[#0F0F14]">{t.name}</p>
-                    <p className="text-xs text-[#AAA]">
-                      {t.role} · {t.handle}
-                    </p>
-                  </div>
+                  <h3 className="text-base font-bold text-[#0F0F14] mb-2">{p.title}</h3>
+                  <p className="text-[15px] text-[#555] leading-relaxed flex-1">{p.text}</p>
+                  {p.href && (
+                    <a
+                      href={p.href}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="mt-4 inline-flex items-center gap-1 text-sm font-semibold text-[#2D6600] hover:underline"
+                    >
+                      {p.cta} →
+                    </a>
+                  )}
                 </div>
-              </div>
-            </motion.div>
-          ))}
+              </motion.div>
+            );
+          })}
         </div>
 
-        {/* Bottom trust bar */}
+        {/* Honest metrics — all independently true, no invented user counts */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           viewport={{ once: true }}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="flex flex-col sm:flex-row items-center justify-center gap-6 mt-12 pt-12 border-t border-[#E5E5E5]"
+          className="flex flex-col sm:flex-row items-center justify-center gap-6 sm:gap-12 mt-12 pt-12 border-t border-[#E5E5E5]"
         >
           {[
-            { value: "4.9/5", label: "Average rating" },
-            { value: "2,000+", label: "Early users" },
-            { value: "0 fees", label: "Platform charges" },
+            { value: "~5s", label: "Settlement time" },
+            { value: "<$0.01", label: "Network fee" },
+            { value: "0", label: "Platform fees" },
+            { value: "100%", label: "Non-custodial" },
           ].map(({ value, label }) => (
             <div key={label} className="text-center">
               <div className="text-2xl font-black text-[#0F0F14]">{value}</div>
