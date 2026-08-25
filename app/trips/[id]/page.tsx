@@ -180,7 +180,7 @@ export default function TripDetailPage() {
 
   const trip = getTrip(params.id);
 
-  const { events: onChainEvents } = useContractEvents(trip?.id);
+  const { events: onChainEvents, error: eventsError } = useContractEvents(trip?.id);
 
   // ── Auto-settle trip when ALL linked expenses are paid ─────────────────────
   // Runs whenever any expense changes (e.g. a share gets marked paid).
@@ -320,6 +320,14 @@ export default function TripDetailPage() {
           </div>
 
           {/* Tabs */}
+          {eventsError && (
+            <div className="flex items-center gap-2 mb-4 px-4 py-3 bg-red-50 border border-red-200 rounded-xl">
+              <div className="min-w-0">
+                <p className="text-sm font-bold text-red-700">Unable to verify on-chain settlements</p>
+                <p className="text-xs text-red-600">{eventsError} — showing degraded settlement state</p>
+              </div>
+            </div>
+          )}
           {/* Per-member settlement banner — visible to the connected user */}
           {publicKey && myShares.length > 0 && (
             <div

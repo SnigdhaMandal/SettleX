@@ -30,13 +30,18 @@ type RowState =
   | { status: "paying" }
   | { status: "done"; txHash: string };
 
-function deriveRawDebts(expenses: Expense[]): RawDebt[] {
+function deriveRawDebts(expenses: Expense[], onChainEvents: ContractPaymentEvent[] = []): RawDebt[] {
+  const onChainSet = new Set(onChainEvents.map(e => `${e.expenseId}-${e.member.toLowerCase()}`));
+  
   const debts: RawDebt[] = [];
   for (const expense of expenses) {
     for (const share of expense.shares) {
       const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
       if (!payer || share.memberId === expense.paidByMemberId) continue;
-      if (share.paid) continue;
+      
+      const isPaidOnChain = share.walletAddress && onChainSet.has(`${expense.id}-${share.walletAddress.toLowerCase()}`);
+      if (share.paid || isPaidOnChain) continue;
+      
       debts.push({
         from:       share.name,
         to:         payer.name,
@@ -54,13 +59,11 @@ function NetPaymentRow({
   index,
   tripName,
   expenses,
-  isOnChain,
 }: {
   payment: NetPayment;
   index: number;
   tripName: string;
   expenses: Expense[];
-  isOnChain: boolean;
 }) {
   const { publicKey } = useWallet();
   const { markSharePaid } = useExpense();
@@ -84,7 +87,7 @@ function NetPaymentRow({
         amount:               payment.amount,
         memoText:             memo,
       });
-      toastInfo("Waiting for Freighter…", "Confirm the settlement payment.");
+      toastInfo("Waiting for Freighter?", "Confirm the settlement payment.");
       const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE);
       const { hash }  = await submitSignedTransaction(signedXDR);
 
@@ -114,8 +117,7 @@ function NetPaymentRow({
     }
   };
 
-  const done    = rowState.status === "done";
-  const settled = done || isOnChain;
+  const done = rowState.status === "done";
 
   return (
     <motion.div
@@ -124,7 +126,7 @@ function NetPaymentRow({
       transition={{ delay: index * 0.06 }}
       className={cn(
         "flex flex-col gap-2 p-3.5 rounded-xl border transition-all",
-        settled ? "bg-[#F0FFDB] border-[#B9FF66]/40" : "bg-white border-[#E5E5E5]",
+        done ? "bg-[#F0FFDB] border-[#B9FF66]/40" : "bg-white border-[#E5E5E5]",
       )}
     >
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
@@ -140,13 +142,9 @@ function NetPaymentRow({
             <span className="text-[10px] font-normal text-[#888]">XLM</span>
           </span>
 
-          {settled ? (
+          {done ? (
             <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#B9FF66]/30 text-[#2D6600] rounded-full">
-              {isOnChain && !done ? (
-                <><Database size={9} /> On-chain</>
-              ) : (
-                <><CheckCircle2 size={9} /> Paid</>
-              )}
+              <CheckCircle2 size={9} /> Paid
             </span>
           ) : (
             <PayButton
@@ -167,14 +165,7 @@ function NetPaymentRow({
         </div>
       )}
 
-      {isOnChain && !done && (
-        <p className="text-[10px] text-[#5a9400] pl-1 flex items-center gap-1">
-          <Database size={9} />
-          Confirmed on Stellar — ledger proof recorded
-        </p>
-      )}
-
-      {!settled && rowState.status === "idle" && publicKey && publicKey !== payment.fromWallet && (
+      {!done && rowState.status === "idle" && publicKey && publicKey !== payment.fromWallet && (
         <p className="text-[10px] text-[#AAA] pl-1">
           Connect {payment.from}&apos;s wallet to pay
         </p>
@@ -184,14 +175,8 @@ function NetPaymentRow({
 }
 
 export function SettlementSummary({ trip, expenses, onChainEvents = [] }: SettlementSummaryProps) {
-  const rawDebts    = useMemo(() => deriveRawDebts(expenses), [expenses]);
+  const rawDebts    = useMemo(() => deriveRawDebts(expenses, onChainEvents), [expenses, onChainEvents]);
   const netPayments = useMemo(() => computeNetPayments(rawDebts), [rawDebts]);
-
-  // Build a set of on-chain confirmed wallet addresses (members who settled)
-  const onChainMembers = useMemo(
-    () => new Set(onChainEvents.map((e) => e.member.toLowerCase())),
-    [onChainEvents],
-  );
 
   if (netPayments.length === 0) {
     return (
@@ -227,7 +212,6 @@ export function SettlementSummary({ trip, expenses, onChainEvents = [] }: Settle
           index={i}
           tripName={trip.name}
           expenses={expenses}
-          isOnChain={!!(p.fromWallet && onChainMembers.has(p.fromWallet.toLowerCase()))}
         />
       ))}
     </div>
