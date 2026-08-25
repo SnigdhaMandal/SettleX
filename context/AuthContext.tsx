@@ -83,7 +83,9 @@ function clearUserCache() {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
-    // Restore user immediately from cache on first render (avoids flash on refresh)
+    // Render hint only — shows the user's name instead of a flash of empty UI
+    // on refresh. It is NOT evidence of anything: `isAuthenticated` below
+    // ignores it entirely, and every request is authorized by the signed token.
     if (typeof window !== "undefined") return loadUserFromCache();
     return null;
   });
@@ -91,9 +93,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [sessionError, setSessionError] = useState<string | null>(null);
   // Bumped by refreshSession() to re-run the handshake effect below.
   const [sessionNonce, setSessionNonce] = useState(0);
+  // Set only after the wallet has signed a server-issued challenge and the
+  // server has minted a token for this exact address.
+  const [verifiedWallet, setVerifiedWallet] = useState<string | null>(null);
   const { publicKey, isConnected, isHydrated } = useWalletContext();
 
-  const isAuthenticated = !!user && isConnected;
+  // Authorization rests on the verified token, never on cached state. Writing
+  // `settlex:user` and `settlex:publicKey` by hand now buys nothing: without a
+  // signature the server issues no token, so this stays false and every
+  // database call is rejected by RLS regardless.
+  const isAuthenticated =
+    !!user && isConnected && !!verifiedWallet && verifiedWallet === publicKey;
 
   // ── Load user profile when wallet connects ────────────────────────────────────────────────────────
 
@@ -105,10 +115,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setUser(null);
       clearUserCache();
       clearWalletSession();
+      setVerifiedWallet(null);
       setSessionError(null);
       setIsLoading(false);
       return;
     }
+
+    // A different address than the one we verified means the wallet switched
+    // accounts. Revoke immediately — before any await — so no render can slip
+    // through with the old identity still marked authenticated.
+    setVerifiedWallet((current) => (current === publicKey ? current : null));
 
     async function loadUser(wallet: string) {
       // Prove key ownership before touching the database — the profile table is
@@ -122,9 +138,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       });
 
       if (!client) {
+        setVerifiedWallet(null);
         setIsLoading(false);
         return;
       }
+
+      // The token exists and its `wallet_address` claim was signed by the
+      // server for this address — that, and only that, is what authorizes.
+      setVerifiedWallet(wallet);
       setSessionError(null);
 
       try {
@@ -170,6 +191,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const client = await requireAuthenticatedClient(publicKey);
+        setVerifiedWallet(publicKey);
         setSessionError(null);
 
         const { data, error } = await client
@@ -219,6 +241,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       // The JWT minted by the signing handshake is what RLS authorizes on.
       const client = await requireAuthenticatedClient(publicKey);
+      setVerifiedWallet(publicKey);
       setSessionError(null);
 
       const { data, error } = await client
@@ -258,6 +281,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setUser(null);
     clearUserCache();
     clearWalletSession();
+    setVerifiedWallet(null);
     setSessionError(null);
   }, []);
 
@@ -265,6 +289,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const refreshSession = useCallback(async () => {
     clearWalletSession();
+    setVerifiedWallet(null);
     setSessionError(null);
     setIsLoading(true);
     setSessionNonce((n) => n + 1);
@@ -280,6 +305,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const client = await requireAuthenticatedClient(publicKey);
+        setVerifiedWallet(publicKey);
         setSessionError(null);
 
         const { data, error } = await client
