@@ -25,7 +25,8 @@ const jetbrainsMono = JetBrains_Mono({
 
 export const metadata: Metadata = {
   metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL ?? "https://settlex.app",
+    process.env.NEXT_PUBLIC_SITE_URL || 
+    (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://settlex.app")
   ),
   title: {
     default: "SettleX — Split Bills on the Stellar Blockchain",
@@ -81,15 +82,23 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
+import { Poppins } from "next/font/google";
+
+const poppins = Poppins({
+  weight: ["300", "400", "500", "600", "700", "800", "900"],
+  subsets: ["latin"],
+  display: "swap",
+  variable: "--font-poppins",
+});
+
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`${poppins.variable} ${jetbrainsMono.variable} scroll-smooth`}>
-      <body className="bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased">
-        <ServiceWorkerRegister />
+    <html lang="en" className={`scroll-smooth ${poppins.variable}`}>
+      <body className="bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased font-[family-name:var(--font-poppins)]">
         <ToastProvider>
           <WalletProvider>
             <AuthProvider>
