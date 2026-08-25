@@ -177,9 +177,17 @@ impl SettlementPoolContract {
             panic_with_error!(&env, PoolError::AmountTooLarge);
         }
 
-        // Ensure pool is initialized before allowing balance operations.
-        let _cfg = Self::get_config(env.clone());
+        let cfg = Self::get_config(env.clone());
 
+        // Withdrawals must originate from the configured settlement contract, so
+        // credits can only ever be consumed as part of recording a payment.
+        //
+        // A contract address can only satisfy require_auth() for a call it makes
+        // itself (the host authorizes it from the invocation stack — there is no
+        // signature that produces it), so this is what makes the check binding
+        // rather than decorative. Member auth is still required on top: the
+        // settlement contract cannot spend a member's credits unilaterally.
+        cfg.settlement_contract.require_auth();
         from.require_auth();
 
         let key = PoolDataKey::Balance(from.clone());
@@ -229,7 +237,10 @@ impl SettlementPoolContract {
 #[cfg(test)]
 mod test {
     use super::*;
-    use soroban_sdk::{testutils::Address as _, Env};
+    use soroban_sdk::{
+        testutils::{Address as _, MockAuth, MockAuthInvoke},
+        Env, IntoVal,
+    };
 
     macro_rules! setup_pool {
         ($env:ident, $client:ident, $admin:ident, $settlement:ident) => {
@@ -240,6 +251,208 @@ mod test {
             let $admin = Address::generate(&$env);
             let $settlement = Address::generate(&$env);
         };
+    }
+
+    // ── Withdraw authorization ────────────────────────────────────────────
+    //
+    // These tests deliberately avoid `mock_all_auths()`. That helper authorizes
+    // every address for every call, which makes an unenforced `require_auth()`
+    // indistinguishable from an enforced one — the original suite passed just as
+    // happily against the vulnerable contract. `mock_auths()` grants exactly the
+    // listed invocations and nothing else, so it can actually tell them apart.
+
+    /// Grants only `member`'s auth for a direct `withdraw` — no settlement
+    /// contract in the picture. This is the attack from the report.
+    #[test]
+    #[should_panic]
+    fn test_direct_member_withdraw_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettlementPoolContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let settlement_contract = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.init_pool(&admin, &settlement_contract);
+        client.deposit(&member, &1_000_000_i128);
+
+        // From here on, only what is explicitly listed is authorized.
+        env.set_auths(&[]);
+        env.mock_auths(&[MockAuth {
+            address: &member,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "withdraw",
+                args: (member.clone(), 400_000_i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        // Must panic: the settlement contract never authorized this call.
+        client.withdraw(&member, &400_000_i128);
+    }
+
+    /// A member's credits must not be spendable by an arbitrary third-party
+    /// contract, even one the member authorizes.
+    #[test]
+    #[should_panic]
+    fn test_withdraw_by_unconfigured_contract_rejected() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettlementPoolContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let settlement_contract = Address::generate(&env);
+        let impostor = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.init_pool(&admin, &settlement_contract);
+        client.deposit(&member, &1_000_000_i128);
+
+        env.set_auths(&[]);
+        let args: soroban_sdk::Vec<soroban_sdk::Val> =
+            (member.clone(), 400_000_i128).into_val(&env);
+        env.mock_auths(&[
+            MockAuth {
+                address: &member,
+                invoke: &MockAuthInvoke {
+                    contract: &contract_id,
+                    fn_name: "withdraw",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            },
+            MockAuth {
+                address: &impostor,
+                invoke: &MockAuthInvoke {
+                    contract: &contract_id,
+                    fn_name: "withdraw",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            },
+        ]);
+
+        client.withdraw(&member, &400_000_i128);
+    }
+
+    /// The configured settlement contract may consume credits — but only with
+    /// the member's own authorization alongside it.
+    #[test]
+    fn test_withdraw_allowed_for_configured_settlement_contract() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettlementPoolContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let settlement_contract = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.init_pool(&admin, &settlement_contract);
+        client.deposit(&member, &1_000_000_i128);
+
+        env.set_auths(&[]);
+        let args: soroban_sdk::Vec<soroban_sdk::Val> =
+            (member.clone(), 400_000_i128).into_val(&env);
+        env.mock_auths(&[
+            MockAuth {
+                address: &settlement_contract,
+                invoke: &MockAuthInvoke {
+                    contract: &contract_id,
+                    fn_name: "withdraw",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            },
+            MockAuth {
+                address: &member,
+                invoke: &MockAuthInvoke {
+                    contract: &contract_id,
+                    fn_name: "withdraw",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            },
+        ]);
+
+        client.withdraw(&member, &400_000_i128);
+        assert_eq!(client.balance_of(&member), 600_000_i128);
+    }
+
+    /// The settlement contract cannot spend a member's credits on its own.
+    #[test]
+    #[should_panic]
+    fn test_settlement_contract_alone_cannot_withdraw() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettlementPoolContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let settlement_contract = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.init_pool(&admin, &settlement_contract);
+        client.deposit(&member, &1_000_000_i128);
+
+        env.set_auths(&[]);
+        env.mock_auths(&[MockAuth {
+            address: &settlement_contract,
+            invoke: &MockAuthInvoke {
+                contract: &contract_id,
+                fn_name: "withdraw",
+                args: (member.clone(), 400_000_i128).into_val(&env),
+                sub_invokes: &[],
+            },
+        }]);
+
+        client.withdraw(&member, &400_000_i128);
+    }
+
+    /// `set_settlement_contract` must actually re-point enforcement, not just
+    /// round-trip a stored value — the gap called out in the report.
+    #[test]
+    #[should_panic]
+    fn test_rotated_settlement_contract_revokes_old_one() {
+        let env = Env::default();
+        let contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettlementPoolContractClient::new(&env, &contract_id);
+        let admin = Address::generate(&env);
+        let old_settlement = Address::generate(&env);
+        let new_settlement = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        client.init_pool(&admin, &old_settlement);
+        client.deposit(&member, &1_000_000_i128);
+        client.set_settlement_contract(&new_settlement);
+
+        env.set_auths(&[]);
+        let args: soroban_sdk::Vec<soroban_sdk::Val> =
+            (member.clone(), 400_000_i128).into_val(&env);
+        env.mock_auths(&[
+            MockAuth {
+                address: &old_settlement,
+                invoke: &MockAuthInvoke {
+                    contract: &contract_id,
+                    fn_name: "withdraw",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            },
+            MockAuth {
+                address: &member,
+                invoke: &MockAuthInvoke {
+                    contract: &contract_id,
+                    fn_name: "withdraw",
+                    args: args.clone(),
+                    sub_invokes: &[],
+                },
+            },
+        ]);
+
+        // The rotated-out contract must no longer be able to spend credits.
+        client.withdraw(&member, &400_000_i128);
     }
 
     #[test]

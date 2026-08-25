@@ -260,7 +260,10 @@ impl SettleXContract {
 mod test {
     use super::*;
     use crate::pool::{SettlementPoolContract, SettlementPoolContractClient};
-    use soroban_sdk::{testutils::Address as _, Address, Env, String};
+    use soroban_sdk::{
+        testutils::{Address as _, MockAuth, MockAuthInvoke},
+        Address, Env, IntoVal, String,
+    };
 
     macro_rules! setup {
         ($env:ident, $client:ident, $pool_client:ident) => {
@@ -278,6 +281,66 @@ mod test {
             $pool_client.init_pool(&admin, &settlement_address);
             $client.init(&admin, &pool_address);
         };
+    }
+
+    /// End-to-end proof that the pool's settlement-contract check does not break
+    /// the legitimate path, verified WITHOUT `mock_all_auths()`.
+    ///
+    /// The member authorizes `record_payment`; the nested pool `withdraw` is
+    /// authorized for the settlement contract by the host, because a contract
+    /// making a sub-invocation authorizes itself from the invocation stack.
+    #[test]
+    fn test_record_payment_works_under_real_auth() {
+        let env = Env::default();
+        let settlement_contract_id = env.register_contract(None, SettleXContract);
+        let pool_contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettleXContractClient::new(&env, &settlement_contract_id);
+        let pool_client = SettlementPoolContractClient::new(&env, &pool_contract_id);
+
+        let admin = Address::generate(&env);
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        env.mock_all_auths();
+        pool_client.init_pool(&admin, &settlement_contract_id);
+        client.init(&admin, &pool_contract_id);
+        pool_client.deposit(&member, &10_000_000_i128);
+
+        let trip_id = String::from_str(&env, "trip-real-auth");
+        let expense_id = String::from_str(&env, "exp-real-auth");
+        let tx_hash = String::from_str(&env, "abc123def456");
+        let amount = 4_000_000_i128;
+
+        // Only the member signs; the settlement contract's authorization of the
+        // nested withdraw has to come from the invocation stack itself.
+        env.set_auths(&[]);
+        env.mock_auths(&[MockAuth {
+            address: &member,
+            invoke: &MockAuthInvoke {
+                contract: &settlement_contract_id,
+                fn_name: "record_payment",
+                args: (
+                    trip_id.clone(),
+                    expense_id.clone(),
+                    payer.clone(),
+                    member.clone(),
+                    amount,
+                    tx_hash.clone(),
+                )
+                    .into_val(&env),
+                sub_invokes: &[MockAuthInvoke {
+                    contract: &pool_contract_id,
+                    fn_name: "withdraw",
+                    args: (member.clone(), amount).into_val(&env),
+                    sub_invokes: &[],
+                }],
+            },
+        }]);
+
+        client.record_payment(&trip_id, &expense_id, &payer, &member, &amount, &tx_hash);
+
+        assert!(client.is_paid(&expense_id, &member));
+        assert_eq!(pool_client.balance_of(&member), 6_000_000_i128);
     }
 
     #[test]
