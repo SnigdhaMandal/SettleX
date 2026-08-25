@@ -8,7 +8,7 @@ import { Badge } from "@/components/ui/Badge";
 const CONTRACT_ID = "CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI";
 const SAMPLE_TX = "04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967";
 const EXPLORER = "https://stellar.expert/explorer/testnet";
-const REPO = "https://github.com/soumen0818/SettleX";
+const REPO = "https://github.com/SnigdhaMandal/SettleX";
 
 // Honest, verifiable proof points — no fabricated reviews. Every claim below is
 // something a visitor can independently check on-chain or in the source.

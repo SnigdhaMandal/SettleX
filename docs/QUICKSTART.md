@@ -9,7 +9,7 @@ Get SettleX running locally in ~5 minutes.
 
 ## 1. Install
 ```bash
-git clone https://github.com/soumen0818/SettleX.git
+git clone https://github.com/SnigdhaMandal/SettleX.git
 cd SettleX
 npm install
 ```

@@ -247,7 +247,7 @@ This section maps the required submission checklist to concrete proof in this re
 
 | Requirement | Proof |
 | --- | --- |
-| Public GitHub repository | https://github.com/soumen0818/SettleX |
+| Public GitHub repository | https://github.com/SnigdhaMandal/SettleX |
 | README with complete documentation | This file plus final docs links in [Final Documentation Package](#final-documentation-package) |
 | Minimum 8+ meaningful commits | Local repository history: 44 commits |
 | Live demo link | [https://settle-x-pi.vercel.app/](https://settle-x-pi.vercel.app/) |
