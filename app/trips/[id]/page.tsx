@@ -29,8 +29,7 @@ import { SettlementSummary } from "@/components/trips/SettlementSummary";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
 import { useWallet } from "@/hooks/useWallet";
 import { useAuth } from "@/context/AuthContext";
-import { formatXLM } from "@/lib/utils";
-import { xlmToStroops, stroopsToXlm } from "@/lib/split/calculator";
+import { useToast } from "@/components/ui/Toast";
 import type { Expense, Member, SplitShare } from "@/types/expense";
 
 type Tab = "expenses" | "settle";
@@ -175,6 +174,7 @@ export default function TripDetailPage() {
   const { expenses, addExpense } = useExpense();
   const { publicKey } = useWallet();
   const { user } = useAuth();
+  const { success: toastSuccess, error: toastError } = useToast();
 
   const [activeTab, setActiveTab] = useState<Tab>("expenses");
   const [showExpenseForm, setShowExpenseForm] = useState(false);
@@ -190,7 +190,9 @@ export default function TripDetailPage() {
     if (!trip || trip.settled) return;
     const linked = expenses.filter((e) => trip.expenseIds.includes(e.id));
     if (linked.length > 0 && linked.every((e) => e.settled)) {
-      settleTrip(trip.id);
+      settleTrip(trip.id).catch((err) => {
+        console.error("Failed to auto-settle trip in database:", err);
+      });
     }
   }, [expenses, trip, settleTrip]);
 
@@ -468,8 +470,15 @@ export default function TripDetailPage() {
           currentUserPublicKey={publicKey}
           currentUserName={user?.displayName}
           defaultMembers={trip.members}
-          onSuccess={(newExpenseId?: string) => {
-            if (newExpenseId) addExpenseToTrip(trip.id, newExpenseId);
+          onSuccess={async (newExpenseId?: string) => {
+            if (newExpenseId) {
+              try {
+                await addExpenseToTrip(trip.id, newExpenseId);
+                toastSuccess("Expense added!", "Expense added to trip.");
+              } catch (err: any) {
+                toastError("Failed to link expense", err?.message || "Could not link expense to trip in database.");
+              }
+            }
             setShowExpenseForm(false);
           }}
           onCancel={() => setShowExpenseForm(false)}

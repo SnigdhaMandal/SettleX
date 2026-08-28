@@ -85,6 +85,15 @@ export default function TripsPage() {
     }
   };
 
+  const handleDeleteTrip = async (id: string) => {
+    try {
+      await deleteTrip(id);
+      toastSuccess("Trip deleted", "The trip was removed successfully.");
+    } catch (err: any) {
+      toastError("Delete failed", err?.message || "Could not delete trip. Check your permissions or connection.");
+    }
+  };
+
   return (
     <AuthGuard>
       <div className="min-h-screen bg-[#F6F6F6]">
@@ -152,8 +161,8 @@ export default function TripsPage() {
                       key={trip.id}
                       trip={trip}
                       expenseCount={tripExpenses.length}
-                      totalXLM={stroopsToXlm(totalStroops)}
-                      onDelete={deleteTrip}
+                      totalXLM={totalXLM}
+                      onDelete={handleDeleteTrip}
                       index={i}
                     />
                   );

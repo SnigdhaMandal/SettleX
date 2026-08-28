@@ -21,7 +21,7 @@ import { Modal } from "@/components/ui/Modal";
 import { ExpenseForm } from "@/components/expenses/ExpenseForm";
 import { SplitCalculator } from "@/components/expenses/SplitCalculator";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
-import { formatXLM } from "@/lib/utils";
+import { useToast } from "@/components/ui/Toast";
 import type { Expense, SplitShare } from "@/types/expense";
 
 // ─── Expense Card ─────────────────────────────────────────────────────────────
@@ -249,7 +249,17 @@ export default function ExpensesPage() {
   const { publicKey } = useWallet();
   const { user } = useAuth();
   const { expenses, deleteExpense } = useExpense();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [showForm, setShowForm] = useState(false);
+
+  const handleDeleteExpense = async (id: string) => {
+    try {
+      await deleteExpense(id);
+      toastSuccess("Expense deleted", "The expense was removed successfully.");
+    } catch (err: any) {
+      toastError("Delete failed", err?.message || "Could not delete expense. Check your permissions or connection.");
+    }
+  };
 
   return (
     <AuthGuard>
@@ -300,7 +310,7 @@ export default function ExpensesPage() {
                   <ExpenseCard
                     key={expense.id}
                     expense={expense}
-                    onDelete={deleteExpense}
+                    onDelete={handleDeleteExpense}
                     currentUserPublicKey={publicKey}
                   />
                 ))}

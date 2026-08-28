@@ -24,8 +24,8 @@ import { useWalletContext } from "./WalletContext";
 interface ExpenseContextType {
   expenses: Expense[];
   addExpense: (expense: Expense) => Promise<void>;
-  updateExpense: (id: string, updates: Partial<Expense>) => void;
-  deleteExpense: (id: string) => void;
+  updateExpense: (id: string, updates: Partial<Expense>) => Promise<void>;
+  deleteExpense: (id: string) => Promise<void>;
   markSharePaid: (expenseId: string, memberId: string, txHash: string) => Promise<void>;
   getExpense: (id: string) => Expense | undefined;
   isLoading: boolean;
@@ -260,11 +260,20 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
   const updateExpense = useCallback(
     async (id: string, updates: Partial<Expense>) => {
-      try {
-        const current = expenses.find((e) => e.id === id);
-        if (!current) return;
+      const current = expenses.find((e) => e.id === id);
+      if (!current) return;
 
-        const merged = { ...current, ...updates };
+      const merged = { ...current, ...updates };
+      const dbRow = expenseToDbRow(merged, publicKey || "");
+
+      // Optimistic update
+      setExpenses((prev) => {
+        const updated = prev.map((e) => (e.id === id ? merged : e));
+        localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+        return updated;
+      });
+
+      try {
         const client = await getClient();
 
         // Build partial update payload so we don't accidentally overwrite shares or other concurrent fields
@@ -295,48 +304,51 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           .select("*");
 
         if (error) throw error;
-
-        const updatedExpense = data && data.length > 0 ? dbRowToExpense(data[0]) : merged;
-        setExpenses((prev) => {
-          const updated = prev.map((e) => (e.id === id ? updatedExpense : e));
-          localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
-          return updated;
-        });
       } catch (err) {
         console.error("Failed to update expense in Supabase:", err);
+        // Roll back optimistic update on error
         setExpenses((prev) => {
-          const updated = prev.map((e) =>
-            e.id === id ? { ...e, ...updates } : e
-          );
-          localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
-          return updated;
+          const rolled = prev.map((e) => (e.id === id ? current : e));
+          localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
+          return rolled;
         });
+        throw err;
       }
     },
     [expenses, getClient, publicKey]
   );
 
-  const deleteExpense = useCallback(async (id: string) => {
-    try {
-      const client = await getClient();
-      const { error } = await client.from("expenses").delete().eq("id", id);
+  const deleteExpense = useCallback(
+    async (id: string) => {
+      const current = expenses.find((e) => e.id === id);
+      if (!current) return;
 
-      if (error) throw error;
-
+      // Optimistic deletion
       setExpenses((prev) => {
         const updated = prev.filter((e) => e.id !== id);
         localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
         return updated;
       });
-    } catch (err) {
-      console.error("Failed to delete expense from Supabase:", err);
-      setExpenses((prev) => {
-        const updated = prev.filter((e) => e.id !== id);
-        localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
-        return updated;
-      });
-    }
-  }, [getClient]);
+
+      try {
+        const client = await getClient();
+        const { error } = await client.from("expenses").delete().eq("id", id);
+
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to delete expense from Supabase:", err);
+        // Roll back optimistic deletion on error
+        setExpenses((prev) => {
+          if (prev.some((e) => e.id === id)) return prev;
+          const rolled = [current, ...prev];
+          localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
+          return rolled;
+        });
+        throw err;
+      }
+    },
+    [expenses, getClient]
+  );
 
   const markSharePaid = useCallback(
     async (expenseId: string, memberId: string, txHash: string) => {
