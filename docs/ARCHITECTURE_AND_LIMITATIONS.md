@@ -37,6 +37,13 @@ SettleX uses:
   valid token match no rows.
 - Sessions are cached in `localStorage` and last 12 hours by default
   (`AUTH_SESSION_TTL_SECONDS`, capped at 24 hours).
+- The cached blob's `walletAddress` and `expiresAt` are a cache hint only. The
+  client decodes the JWT payload and checks identity and expiry against the
+  token's own claims, so a hand-written localStorage entry cannot make the UI
+  show one wallet while requests act as another. The signature is not checked
+  client-side — it cannot be, the secret is server-side — and it does not need
+  to be: the server re-verifies every request and RLS authorizes on the real
+  claim.
 
 ## Known Limitations
 
