@@ -35,6 +35,26 @@ interface ExpenseContextType {
 const ExpenseContext = createContext<ExpenseContextType | null>(null);
 ExpenseContext.displayName = "ExpenseContext";
 
+function isRowForWallet(row: any, walletAddress: string | null): boolean {
+  if (!walletAddress) return false;
+
+  const memberWallets = new Set<string>();
+  const rowMembers = Array.isArray(row?.members) ? row.members : [];
+  const rowMemberWallets = Array.isArray(row?.member_wallets) ? row.member_wallets : [];
+
+  for (const member of rowMembers) {
+    if (member?.walletAddress) memberWallets.add(member.walletAddress);
+  }
+
+  for (const wallet of rowMemberWallets) {
+    if (wallet) memberWallets.add(wallet);
+  }
+
+  if (row?.created_by_wallet) memberWallets.add(row.created_by_wallet);
+
+  return memberWallets.has(walletAddress);
+}
+
 function dbRowToExpense(row: any): Expense {
   return {
     id: row.id,
@@ -194,7 +214,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "expenses" },
         (payload: RealtimePostgresChangesPayload<any>) => {
-          const newExpense = dbRowToExpense(payload.new);
+          const row = payload.new;
+          if (!row || !isRowForWallet(row, publicKey)) return;
+          const newExpense = dbRowToExpense(row);
           setExpenses((prev) => {
             if (prev.some((e) => e.id === newExpense.id)) return prev;
             const updated = [newExpense, ...prev];
@@ -207,7 +229,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "expenses" },
         (payload: RealtimePostgresChangesPayload<any>) => {
-          const updatedExpense = dbRowToExpense(payload.new);
+          const row = payload.new;
+          if (!row || !isRowForWallet(row, publicKey)) return;
+          const updatedExpense = dbRowToExpense(row);
           setExpenses((prev) => {
             const updated = prev.map((e) =>
               e.id === updatedExpense.id ? updatedExpense : e
@@ -221,7 +245,9 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "expenses" },
         (payload: RealtimePostgresChangesPayload<any>) => {
-          const deletedId = (payload.old as any)?.id;
+          const row = payload.old;
+          if (!row || !isRowForWallet(row, publicKey)) return;
+          const deletedId = row?.id;
           if (!deletedId) return;
           setExpenses((prev) => {
             const updated = prev.filter((e) => e.id !== deletedId);
@@ -230,7 +256,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           });
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.error("Expenses realtime subscription failed", { status, err });
+        }
+      });
 
     return () => {
       void client.removeChannel(channel);
