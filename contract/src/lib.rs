@@ -2,7 +2,6 @@
 
 pub mod pool;
 
-use crate::pool::SettlementPoolContractClient;
 use soroban_sdk::{
     contract, contractimpl, contracterror, contracttype, panic_with_error, symbol_short,
     Address, Env, String, Vec,
@@ -66,7 +65,12 @@ pub struct PoolConfigEventV1 {
 
 #[contracttype]
 pub enum DataKey {
-    TripPayments(String),
+    /// Tracks the set of expense IDs that have at least one recorded payment for a trip.
+    /// This keeps the trip-level index bounded while payment history stays keyed by expense.
+    TripExpenseIds(String),
+    /// Payments for a specific trip and expense; prevents one huge ledger vector from
+    /// accumulating across the entire trip.
+    ExpensePayments(String, String),
     ExpensePaid(String, Address),
     Admin,
     PoolContract,
@@ -330,17 +334,38 @@ impl SettleXContract {
             attested,
         };
 
-        let trip_key = DataKey::TripPayments(trip_id.clone());
+        let expense_key = DataKey::ExpensePayments(trip_id.clone(), expense_id.clone());
         let mut payments: Vec<PaymentRecord> = env
             .storage()
             .persistent()
-            .get(&trip_key)
+            .get(&expense_key)
             .unwrap_or_else(|| Vec::new(&env));
         payments.push_back(record);
-        env.storage().persistent().set(&trip_key, &payments);
+        env.storage().persistent().set(&expense_key, &payments);
         env.storage()
             .persistent()
-            .extend_ttl(&trip_key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+            .extend_ttl(&expense_key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        let trip_expenses_key = DataKey::TripExpenseIds(trip_id.clone());
+        let mut trip_expenses: Vec<String> = env
+            .storage()
+            .persistent()
+            .get(&trip_expenses_key)
+            .unwrap_or_else(|| Vec::new(&env));
+        let mut already_indexed = false;
+        for existing in trip_expenses.iter() {
+            if existing == expense_id {
+                already_indexed = true;
+                break;
+            }
+        }
+        if !already_indexed {
+            trip_expenses.push_back(expense_id.clone());
+            env.storage().persistent().set(&trip_expenses_key, &trip_expenses);
+            env.storage()
+                .persistent()
+                .extend_ttl(&trip_expenses_key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+        }
 
         env.storage().persistent().set(&paid_key, &true);
         env.storage()
@@ -365,11 +390,27 @@ impl SettleXContract {
     }
 
     pub fn get_payments(env: Env, trip_id: String) -> Vec<PaymentRecord> {
-        let key = DataKey::TripPayments(trip_id);
-        env.storage()
+        let trip_expenses_key = DataKey::TripExpenseIds(trip_id.clone());
+        let trip_expenses: Vec<String> = env
+            .storage()
             .persistent()
-            .get(&key)
-            .unwrap_or_else(|| Vec::new(&env))
+            .get(&trip_expenses_key)
+            .unwrap_or_else(|| Vec::new(&env));
+
+        let mut payments = Vec::new(&env);
+        for expense_id in trip_expenses.iter() {
+            let key = DataKey::ExpensePayments(trip_id.clone(), expense_id.clone());
+            let expense_payments: Vec<PaymentRecord> = env
+                .storage()
+                .persistent()
+                .get(&key)
+                .unwrap_or_else(|| Vec::new(&env));
+            for payment in expense_payments.iter() {
+                payments.push_back(payment);
+            }
+        }
+
+        payments
     }
 
     pub fn is_paid(env: Env, expense_id: String, member: Address) -> bool {
@@ -806,6 +847,37 @@ mod test {
         assert!(client.is_paid(&exp_1, &member));
         assert!(client.is_paid(&exp_2, &member));
         assert_eq!(client.get_payments(&trip_id).len(), 2);
+    }
+
+    #[test]
+    fn test_trip_payment_history_is_partitioned_by_expense() {
+        setup!(env, client, pool_client);
+
+        let trip_id  = String::from_str(&env, "trip-partition");
+        let exp_1    = String::from_str(&env, "exp-001");
+        let exp_2    = String::from_str(&env, "exp-002");
+        let payer    = Address::generate(&env);
+        let member   = Address::generate(&env);
+        let tx_1     = String::from_str(&env, "tx_001");
+        let tx_2     = String::from_str(&env, "tx_002");
+
+        pool_client.deposit(&member, &7_500_000_i128);
+
+        client.record_payment(&trip_id, &exp_1, &payer, &member, &3_000_000_i128, &tx_1);
+        client.record_payment(&trip_id, &exp_2, &payer, &member, &4_500_000_i128, &tx_2);
+
+        let payments = client.get_payments(&trip_id);
+        assert_eq!(payments.len(), 2);
+
+        let mut seen_expenses = soroban_sdk::Vec::new(&env);
+        for payment in payments.iter() {
+            assert!(payment.expense_id == exp_1 || payment.expense_id == exp_2);
+            seen_expenses.push_back(payment.expense_id.clone());
+        }
+
+        assert_eq!(seen_expenses.len(), 2);
+        assert!((seen_expenses.get(0).unwrap() == exp_1 && seen_expenses.get(1).unwrap() == exp_2)
+            || (seen_expenses.get(0).unwrap() == exp_2 && seen_expenses.get(1).unwrap() == exp_1));
     }
 
     #[test]
