@@ -21,6 +21,7 @@ import { Modal } from "@/components/ui/Modal";
 import { ExpenseForm } from "@/components/expenses/ExpenseForm";
 import { SplitCalculator } from "@/components/expenses/SplitCalculator";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
+import { useToast } from "@/components/ui/Toast";
 import type { Expense, SplitShare } from "@/types/expense";
 
 // ─── Expense Card ─────────────────────────────────────────────────────────────
@@ -64,6 +65,13 @@ function ExpenseCard({
     });
     setPayingShareId(null);
   };
+  const paidCount = expense.shares.filter((s) => s.paid).length;
+  const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
+  const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 
   return (
     <motion.div
@@ -87,7 +95,7 @@ function ExpenseCard({
               {expense.title}
             </p>
             <p className="text-xs text-[#AAA] leading-relaxed">
-              {total.toFixed(4)} XLM &middot; {expense.members.length} members
+              {formatXLM(expense.totalAmount)} XLM &middot; {expense.members.length} members
               &middot; {createdAt}
             </p>
           </div>
@@ -257,7 +265,17 @@ export default function ExpensesPage() {
   const { publicKey } = useWallet();
   const { user } = useAuth();
   const { expenses, deleteExpense } = useExpense();
+  const { success: toastSuccess, error: toastError } = useToast();
   const [showForm, setShowForm] = useState(false);
+
+  const handleDeleteExpense = async (id: string) => {
+    try {
+      await deleteExpense(id);
+      toastSuccess("Expense deleted", "The expense was removed successfully.");
+    } catch (err: any) {
+      toastError("Delete failed", err?.message || "Could not delete expense. Check your permissions or connection.");
+    }
+  };
 
   return (
     <AuthGuard>
@@ -308,7 +326,7 @@ export default function ExpensesPage() {
                   <ExpenseCard
                     key={expense.id}
                     expense={expense}
-                    onDelete={deleteExpense}
+                    onDelete={handleDeleteExpense}
                     currentUserPublicKey={publicKey}
                   />
                 ))}

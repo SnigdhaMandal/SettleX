@@ -17,7 +17,7 @@ import { useToast } from "@/components/ui/Toast";
 import { NETWORK_PASSPHRASE } from "@/lib/utils/constants";
 import { PayButton } from "@/components/payment/PayButton";
 import { TransactionHash } from "@/components/payment/TransactionHash";
-import { cn } from "@/lib/utils";
+import { cn, formatXLM } from "@/lib/utils";
 
 interface SettlementSummaryProps {
   trip: Trip;
@@ -46,8 +46,7 @@ function deriveRawDebts(expenses: Expense[], onChainEvents: ContractPaymentEvent
         from:       share.name,
         fromId:     share.memberId,
         to:         payer.name,
-        toId:       payer.id,
-        amount:     parseFloat(share.amount),
+        amount:     share.amount,
         fromWallet: share.walletAddress,
         toWallet:   payer.walletAddress,
       });
@@ -106,7 +105,7 @@ function NetPaymentRow({
       setRowState({ status: "done", txHash: hash });
       toastSuccess(
         "Settlement sent!",
-        `Paid ${parseFloat(payment.amount).toFixed(4)} XLM to ${payment.to}`,
+        `Paid ${formatXLM(payment.amount)} XLM to ${payment.to}`,
       );
     } catch (err: unknown) {
       const msg        = err instanceof Error ? err.message : "Payment failed";
@@ -140,7 +139,7 @@ function NetPaymentRow({
 
         <div className="flex items-center justify-between sm:justify-end gap-2">
           <span className="text-sm font-bold">
-            {parseFloat(payment.amount).toFixed(4)}{" "}
+            {formatXLM(payment.amount)}{" "}
             <span className="text-[10px] font-normal text-[#888]">XLM</span>
           </span>
 

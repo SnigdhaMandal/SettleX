@@ -1,3 +1,5 @@
+import { stroopsToXlm, xlmToStroops } from "@/lib/split/calculator";
+
 export interface NetPayment {
   from: string;
   fromId: string;
@@ -12,38 +14,34 @@ export interface RawDebt {
   from: string;
   fromId: string;
   to: string;
-  toId: string;
-  amount: number;
+  amount: number | string | bigint;
   fromWallet?: string;
   toWallet?: string;
 }
 
 export function computeNetPayments(debts: RawDebt[]): NetPayment[] {
-  const balance = new Map<string, number>();
+  const balance = new Map<string, bigint>();
   const wallets = new Map<string, string>();
   const names = new Map<string, string>();
 
-  debts.forEach(({ from, fromId, to, toId, amount, fromWallet, toWallet }) => {
-    balance.set(fromId, (balance.get(fromId) ?? 0) - amount);
-    balance.set(toId,   (balance.get(toId)   ?? 0) + amount);
-    names.set(fromId, from);
-    names.set(toId, to);
-    if (fromWallet) wallets.set(fromId, fromWallet);
-    if (toWallet)   wallets.set(toId,   toWallet);
+  debts.forEach(({ from, to, amount, fromWallet, toWallet }) => {
+    const stroops = typeof amount === "bigint" ? amount : xlmToStroops(amount);
+    balance.set(from, (balance.get(from) ?? 0n) - stroops);
+    balance.set(to,   (balance.get(to)   ?? 0n) + stroops);
+    if (fromWallet) wallets.set(from, fromWallet);
+    if (toWallet)   wallets.set(to,   toWallet);
   });
 
-  const creditors: Array<{ id: string; name: string; balance: number }> = [];
-  const debtors:   Array<{ id: string; name: string; balance: number }> = [];
+  const creditors: Array<{ name: string; balance: bigint }> = [];
+  const debtors:   Array<{ name: string; balance: bigint }> = [];
 
-  balance.forEach((bal, id) => {
-    const rounded = Math.round(bal * 1e7) / 1e7;
-    const name = names.get(id) ?? id;
-    if (rounded > 0.0000001)  creditors.push({ id, name, balance:  rounded });
-    if (rounded < -0.0000001) debtors.push({   id, name, balance: -rounded });
+  balance.forEach((bal, name) => {
+    if (bal > 0n) creditors.push({ name, balance:  bal });
+    if (bal < 0n) debtors.push({   name, balance: -bal });
   });
 
-  creditors.sort((a, b) => b.balance - a.balance);
-  debtors.sort(  (a, b) => b.balance - a.balance);
+  creditors.sort((a, b) => (b.balance > a.balance ? 1 : b.balance < a.balance ? -1 : 0));
+  debtors.sort(  (a, b) => (b.balance > a.balance ? 1 : b.balance < a.balance ? -1 : 0));
 
   const result: NetPayment[] = [];
 
@@ -52,26 +50,24 @@ export function computeNetPayments(debts: RawDebt[]): NetPayment[] {
     const creditor = creditors[ci];
     const debtor   = debtors[di];
 
-    const settle = Math.min(creditor.balance, debtor.balance);
-    const rounded = Math.round(settle * 1e7) / 1e7;
+    const settle = creditor.balance < debtor.balance ? creditor.balance : debtor.balance;
 
-    if (rounded > 0.0000001) {
+    if (settle > 0n) {
       result.push({
         from:       debtor.name,
         fromId:     debtor.id,
         to:         creditor.name,
-        toId:       creditor.id,
-        amount:     rounded.toFixed(7),
-        fromWallet: wallets.get(debtor.id),
-        toWallet:   wallets.get(creditor.id),
+        amount:     stroopsToXlm(settle),
+        fromWallet: wallets.get(debtor.name),
+        toWallet:   wallets.get(creditor.name),
       });
     }
 
     creditor.balance -= settle;
     debtor.balance   -= settle;
 
-    if (creditor.balance < 0.0000001) ci++;
-    if (debtor.balance   < 0.0000001) di++;
+    if (creditor.balance === 0n) ci++;
+    if (debtor.balance   === 0n) di++;
   }
 
   return result;

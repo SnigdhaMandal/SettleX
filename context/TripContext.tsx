@@ -23,11 +23,11 @@ import { useWalletContext } from "./WalletContext";
 
 interface TripContextType {
   trips: Trip[];
-  addTrip: (trip: Trip) => void;
-  updateTrip: (id: string, updates: Partial<Trip>) => void;
-  deleteTrip: (id: string) => void;
-  addExpenseToTrip: (tripId: string, expenseId: string) => void;
-  settleTrip: (id: string) => void;
+  addTrip: (trip: Trip) => Promise<void>;
+  updateTrip: (id: string, updates: Partial<Trip>) => Promise<void>;
+  deleteTrip: (id: string) => Promise<void>;
+  addExpenseToTrip: (tripId: string, expenseId: string) => Promise<void>;
+  settleTrip: (id: string) => Promise<void>;
   getTrip: (id: string) => Trip | undefined;
   isLoading: boolean;
 }
@@ -252,13 +252,20 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
   const updateTrip = useCallback(
     async (id: string, updates: Partial<Trip>) => {
+      const current = trips.find((t) => t.id === id);
+      if (!current) return;
+
+      const merged = { ...current, ...updates };
+      const dbRow = tripToDbRow(merged, publicKey || "");
+
+      // Optimistic update
+      setTrips((prev) => {
+        const updated = prev.map((t) => (t.id === id ? merged : t));
+        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+        return updated;
+      });
+
       try {
-        const current = trips.find((t) => t.id === id);
-        if (!current) return;
-
-        const merged = { ...current, ...updates };
-        const dbRow = tripToDbRow(merged, publicKey || '');
-
         const client = await getClient();
         const { error } = await client
           .from("trips")
@@ -266,56 +273,69 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
           .eq("id", id);
 
         if (error) throw error;
-
-        setTrips((prev) => {
-          const updated = prev.map((t) => (t.id === id ? merged : t));
-          localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
-          return updated;
-        });
       } catch (err) {
         console.error("Failed to update trip in Supabase:", err);
+        // Roll back optimistic update on error
         setTrips((prev) => {
-          const updated = prev.map((t) =>
-            t.id === id ? { ...t, ...updates } : t
-          );
-          localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
-          return updated;
+          const rolled = prev.map((t) => (t.id === id ? current : t));
+          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          return rolled;
         });
+        throw err;
       }
     },
     [trips, getClient, publicKey]
   );
 
-  const deleteTrip = useCallback(async (id: string) => {
-    try {
-      const client = await getClient();
-      const { error } = await client.from("trips").delete().eq("id", id);
+  const deleteTrip = useCallback(
+    async (id: string) => {
+      const current = trips.find((t) => t.id === id);
+      if (!current) return;
 
-      if (error) throw error;
-
+      // Optimistic deletion
       setTrips((prev) => {
         const updated = prev.filter((t) => t.id !== id);
         localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
         return updated;
       });
-    } catch (err) {
-      console.error("Failed to delete trip from Supabase:", err);
-      setTrips((prev) => {
-        const updated = prev.filter((t) => t.id !== id);
-        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
-        return updated;
-      });
-    }
-  }, [getClient]);
+
+      try {
+        const client = await getClient();
+        const { error } = await client.from("trips").delete().eq("id", id);
+
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to delete trip from Supabase:", err);
+        // Roll back optimistic deletion on error
+        setTrips((prev) => {
+          if (prev.some((t) => t.id === id)) return prev;
+          const rolled = [current, ...prev];
+          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          return rolled;
+        });
+        throw err;
+      }
+    },
+    [trips, getClient]
+  );
 
   const addExpenseToTrip = useCallback(
     async (tripId: string, expenseId: string) => {
+      const current = trips.find((t) => t.id === tripId);
+      if (!current || current.expenseIds.includes(expenseId)) return;
+
+      const expenseIds = [...current.expenseIds, expenseId];
+
+      // Optimistic update
+      setTrips((prev) => {
+        const updated = prev.map((t) =>
+          t.id === tripId ? { ...t, expenseIds } : t
+        );
+        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+        return updated;
+      });
+
       try {
-        const current = trips.find((t) => t.id === tripId);
-        if (!current || current.expenseIds.includes(expenseId)) return;
-
-        const expenseIds = [...current.expenseIds, expenseId];
-
         const client = await getClient();
         const { error } = await client
           .from("trips")
@@ -323,54 +343,53 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
           .eq("id", tripId);
 
         if (error) throw error;
-
-        setTrips((prev) => {
-          const updated = prev.map((t) =>
-            t.id === tripId ? { ...t, expenseIds } : t
-          );
-          localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
-          return updated;
-        });
       } catch (err) {
         console.error("Failed to add expense to trip in Supabase:", err);
+        // Roll back optimistic update on error
         setTrips((prev) => {
-          const updated = prev.map((t) =>
-            t.id === tripId && !t.expenseIds.includes(expenseId)
-              ? { ...t, expenseIds: [...t.expenseIds, expenseId] }
-              : t
-          );
-          localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
-          return updated;
+          const rolled = prev.map((t) => (t.id === tripId ? current : t));
+          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          return rolled;
         });
+        throw err;
       }
     },
     [trips, getClient]
   );
 
-  const settleTrip = useCallback(async (id: string) => {
-    try {
-      const client = await getClient();
-      const { error } = await client
-        .from("trips")
-        .update({ settled: true })
-        .eq("id", id);
+  const settleTrip = useCallback(
+    async (id: string) => {
+      const current = trips.find((t) => t.id === id);
+      if (!current || current.settled) return;
 
-      if (error) throw error;
-
+      // Optimistic update
       setTrips((prev) => {
         const updated = prev.map((t) => (t.id === id ? { ...t, settled: true } : t));
         localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
         return updated;
       });
-    } catch (err) {
-      console.error("Failed to settle trip in Supabase:", err);
-      setTrips((prev) => {
-        const updated = prev.map((t) => (t.id === id ? { ...t, settled: true } : t));
-        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
-        return updated;
-      });
-    }
-  }, [getClient]);
+
+      try {
+        const client = await getClient();
+        const { error } = await client
+          .from("trips")
+          .update({ settled: true })
+          .eq("id", id);
+
+        if (error) throw error;
+      } catch (err) {
+        console.error("Failed to settle trip in Supabase:", err);
+        // Roll back optimistic update on error
+        setTrips((prev) => {
+          const rolled = prev.map((t) => (t.id === id ? current : t));
+          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          return rolled;
+        });
+        throw err;
+      }
+    },
+    [trips, getClient]
+  );
 
   const getTrip = useCallback(
     (id: string) => trips.find((t) => t.id === id),

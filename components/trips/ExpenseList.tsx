@@ -4,7 +4,7 @@ import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ReceiptText, Inbox } from "lucide-react";
 import type { Expense } from "@/types/expense";
-import { cn } from "@/lib/utils";
+import { cn, formatXLM } from "@/lib/utils";
 
 interface ExpenseListProps {
   expenses: Expense[];
@@ -26,7 +26,6 @@ export function ExpenseList({ expenses, onSelect }: ExpenseListProps) {
       <AnimatePresence mode="popLayout">
         {expenses.map((expense, i) => {
           const paidCount = expense.shares.filter((s) => s.paid).length;
-          const total = parseFloat(expense.totalAmount);
           const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
             month: "short",
             day: "numeric",
@@ -59,7 +58,7 @@ export function ExpenseList({ expenses, onSelect }: ExpenseListProps) {
                       {expense.title}
                     </p>
                     <p className="text-[11px] text-[#AAA]">
-                      {total.toFixed(4)} XLM &middot; {createdAt}
+                      {formatXLM(expense.totalAmount)} XLM &middot; {createdAt}
                     </p>
                   </div>
                 </div>
