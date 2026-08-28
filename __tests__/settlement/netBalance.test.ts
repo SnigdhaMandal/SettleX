@@ -94,4 +94,16 @@ describe("computeNetPayments", () => {
     const result = computeNetPayments(debts);
     expect(result[0].amount).toMatch(/^\d+\.\d{7}$/);
   });
+
+  it("handles string and bigint amounts with exact stroop arithmetic", () => {
+    const debts: RawDebt[] = [
+      { from: "Alice", to: "Bob", amount: "0.0000003" },
+      { from: "Bob", to: "Alice", amount: 1000000n }, // 0.1 XLM in stroops
+    ];
+    const result = computeNetPayments(debts);
+    expect(result).toHaveLength(1);
+    expect(result[0].from).toBe("Bob");
+    expect(result[0].to).toBe("Alice");
+    expect(result[0].amount).toBe("0.0999997");
+  });
 });

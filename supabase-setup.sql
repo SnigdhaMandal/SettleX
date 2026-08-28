@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS expenses (
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
     settled BOOLEAN DEFAULT FALSE NOT NULL,
+    version BIGINT NOT NULL DEFAULT 1,
     -- New: Track creator and member wallets for authentication
     created_by_wallet TEXT NOT NULL,  -- Stellar address of expense creator
     member_wallets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[]  -- Array of all member wallet addresses
@@ -81,6 +82,13 @@ BEGIN
         WHERE table_name = 'expenses' AND column_name = 'member_wallets'
     ) THEN
         ALTER TABLE expenses ADD COLUMN member_wallets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'expenses' AND column_name = 'version'
+    ) THEN
+        ALTER TABLE expenses ADD COLUMN version BIGINT NOT NULL DEFAULT 1;
     END IF;
 END $$;
 
@@ -445,6 +453,84 @@ CREATE TRIGGER update_trips_updated_at
 BEFORE UPDATE ON trips
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
+
+-- ============================================================================
+-- 5.5. ATOMIC RPC FUNCTION FOR MARKING SHARES PAID (Concurrency-Safe)
+-- ============================================================================
+-- Safely patches a single element in the shares JSONB array using row-level locking
+-- (FOR UPDATE), preventing concurrent payments from overwriting each other.
+CREATE OR REPLACE FUNCTION public.mark_share_paid(
+    p_expense_id UUID,
+    p_member_id TEXT,
+    p_tx_hash TEXT
+)
+RETURNS SETOF public.expenses
+LANGUAGE plpgsql
+SECURITY DEFINER
+AS $$
+DECLARE
+    v_caller_wallet TEXT;
+    v_current_shares JSONB;
+    v_updated_shares JSONB;
+    v_settled BOOLEAN;
+BEGIN
+    v_caller_wallet := public.settlex_wallet();
+    IF v_caller_wallet IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    -- Lock the expense row for update to eliminate race conditions
+    SELECT shares INTO v_current_shares
+    FROM public.expenses
+    WHERE id = p_expense_id
+    FOR UPDATE;
+
+    IF v_current_shares IS NULL THEN
+        RAISE EXCEPTION 'Expense not found';
+    END IF;
+
+    -- Atomically transform the specific member share inside the JSONB array
+    SELECT 
+        jsonb_agg(
+            CASE 
+                WHEN elem->>'memberId' = p_member_id THEN 
+                    jsonb_set(
+                        jsonb_set(elem, '{paid}', 'true'::jsonb),
+                        '{txHash}', 
+                        to_jsonb(p_tx_hash)
+                    )
+                ELSE elem 
+            END
+        ),
+        bool_and(
+            CASE 
+                WHEN elem->>'memberId' = p_member_id THEN true
+                ELSE COALESCE((elem->>'paid')::boolean, false)
+            END
+        )
+    INTO v_updated_shares, v_settled
+    FROM jsonb_array_elements(v_current_shares) AS elem;
+
+    RETURN QUERY
+    UPDATE public.expenses
+    SET 
+        shares = v_updated_shares,
+        settled = COALESCE(v_settled, false),
+        version = COALESCE(version, 0) + 1,
+        updated_at = NOW()
+    WHERE id = p_expense_id
+      AND (
+          v_caller_wallet = ANY(member_wallets)
+          OR EXISTS (
+              SELECT 1 FROM jsonb_array_elements(shares) AS s
+              WHERE s->>'walletAddress' = v_caller_wallet
+          )
+      )
+    RETURNING *;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT) TO authenticated, anon;
 
 -- ============================================================================
 -- 6. VERIFICATION QUERIES (Optional - Run to verify setup)

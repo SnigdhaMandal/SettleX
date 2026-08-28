@@ -9,6 +9,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { useExpense } from "@/hooks/useExpense";
 import { useToast } from "@/components/ui/Toast";
 import { NETWORK_PASSPHRASE, STELLAR_EXPLORER, CONTRACT_ID } from "@/lib/utils/constants";
+import { formatXLM } from "@/lib/utils";
 import type { SplitShare } from "@/types/expense";
 
 type OnChainStep = "simulating" | "signing" | "sending" | "confirming";
@@ -218,7 +219,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
         setPaymentState({ status: "success", hash: result.hash, ledger: result.ledger, onChain });
         toastSuccess(
-          `Paid ${parseFloat(share.amount).toFixed(4)} XLM to ${share.name}`,
+          `Paid ${formatXLM(share.amount)} XLM to ${share.name}`,
           onChain
             ? `TX: ${result.hash.slice(0, 12)}… · Recorded on-chain ✓`
             : `TX: ${result.hash.slice(0, 12)}…`,

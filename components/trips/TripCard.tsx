@@ -5,12 +5,12 @@ import Link from "next/link";
 import { motion } from "framer-motion";
 import { Users, ReceiptText, ChevronRight, Trash2, CheckCheck } from "lucide-react";
 import type { Trip } from "@/types/trip";
-import { cn } from "@/lib/utils";
+import { cn, formatXLM } from "@/lib/utils";
 
 interface TripCardProps {
   trip: Trip;
   expenseCount?: number;
-  totalXLM?: number;
+  totalXLM?: number | string | bigint;
   onDelete: (id: string) => void;
   index?: number;
 }
@@ -69,9 +69,9 @@ export function TripCard({
                   <ReceiptText size={10} />
                   {expenseCount} expense{expenseCount !== 1 ? "s" : ""}
                 </span>
-                {totalXLM > 0 && (
+                {Boolean(totalXLM) && (
                   <span className="font-semibold text-[#555]">
-                    {totalXLM.toFixed(4)} XLM
+                    {formatXLM(totalXLM)} XLM
                   </span>
                 )}
               </div>

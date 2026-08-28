@@ -26,7 +26,8 @@ import { AuthGuard } from "@/components/auth/AuthGuard";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
 import { WalletInfo } from "@/components/wallet/WalletInfo";
 import { Spinner } from "@/components/ui/Spinner";
-import { formatAddress } from "@/lib/utils";
+import { formatAddress, formatXLM } from "@/lib/utils";
+import { xlmToStroops, stroopsToXlm } from "@/lib/split/calculator";
 import type { Expense } from "@/types/expense";
 
 // ─── Not-connected view ───────────────────────────────────────────────────────
@@ -135,7 +136,6 @@ function StatCard({
 
 function RecentExpenseRow({ expense }: { expense: Expense }) {
   const paidCount = expense.shares.filter((s) => s.paid).length;
-  const total = parseFloat(expense.totalAmount);
   const allPaid = paidCount === expense.shares.length && expense.shares.length > 0;
   const date = new Date(expense.createdAt).toLocaleDateString("en-US", {
     month: "short",
@@ -153,7 +153,7 @@ function RecentExpenseRow({ expense }: { expense: Expense }) {
       <div className="flex-1 min-w-0">
         <p className="text-sm font-semibold text-[#0F0F14] truncate">{expense.title}</p>
         <p className="text-[11px] text-[#AAA]">
-          {total.toFixed(4)} XLM · {expense.members.length} members · {date}
+          {formatXLM(expense.totalAmount)} XLM · {expense.members.length} members · {date}
         </p>
       </div>
       <div className="shrink-0 flex items-center gap-2">
@@ -179,7 +179,13 @@ function DashboardView() {
   const { trips } = useTrip();
 
   const recentExpenses = expenses.slice(0, 5);
-  const totalXLM = expenses.reduce((s, e) => s + parseFloat(e.totalAmount), 0);
+  const totalStroops = expenses.reduce((s, e) => {
+    try {
+      return s + xlmToStroops(e.totalAmount || "0");
+    } catch {
+      return s;
+    }
+  }, 0n);
   const pendingShares = expenses
     .flatMap((e) => e.shares)
     .filter((s) => !s.paid).length;
@@ -250,7 +256,7 @@ function DashboardView() {
         {/* ── Stats row ── */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-6">
           <StatCard icon={ReceiptText}  label="Total Expenses"  value={expenses.length}          sub={`${settledExpenses} settled`} />
-          <StatCard icon={TrendingUp}   label="Total XLM Spent" value={`${totalXLM.toFixed(2)}`} sub="across all bills" accent />
+          <StatCard icon={TrendingUp}   label="Total XLM Spent" value={formatXLM(stroopsToXlm(totalStroops))} sub="across all bills" accent />
           <StatCard icon={AlertCircle}  label="Pending Shares"  value={pendingShares}             sub="awaiting payment" />
           <StatCard icon={Map}          label="Trips"           value={trips.length}              sub={`${trips.filter(t => t.settled).length} settled`} />
         </div>

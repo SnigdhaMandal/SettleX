@@ -57,7 +57,6 @@ function ExpenseCard({
     setPayingShareId(null);
   };
   const paidCount = expense.shares.filter((s) => s.paid).length;
-  const total = parseFloat(expense.totalAmount);
   const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
   const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
     month: "short",
@@ -87,7 +86,7 @@ function ExpenseCard({
               {expense.title}
             </p>
             <p className="text-xs text-[#AAA] leading-relaxed">
-              {total.toFixed(4)} XLM &middot; {expense.members.length} members
+              {formatXLM(expense.totalAmount)} XLM &middot; {expense.members.length} members
               &middot; {createdAt}
             </p>
           </div>
