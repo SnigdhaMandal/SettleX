@@ -112,61 +112,6 @@ export interface PoolPrecheckResult {
   error?: string;
 }
 
-async function getPoolContractId(callerPublicKey: string): Promise<string> {
-  const account = await loadAccount(callerPublicKey);
-  const contract = new Contract(CONTRACT_ID);
-
-  const tx = new TransactionBuilder(account, {
-    fee: SOROBAN_BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(contract.call("get_pool_contract"))
-    .setTimeout(30)
-    .build();
-
-  const simResult = await sorobanServer.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(simResult)) {
-    throw new Error(decodeContractError(simResult.error));
-  }
-  if (!rpc.Api.isSimulationSuccess(simResult) || !simResult.result?.retval) {
-    throw new Error("Unable to read settlement pool contract.");
-  }
-
-  const native = scValToNative(simResult.result.retval) as unknown;
-  if (typeof native !== "string" || native.length === 0) {
-    throw new Error("Invalid pool contract id returned by settlement contract.");
-  }
-  return native;
-}
-
-async function getPoolBalanceStroops(
-  callerPublicKey: string,
-  memberPublicKey: string,
-): Promise<bigint> {
-  const account = await loadAccount(callerPublicKey);
-  const poolContractId = await getPoolContractId(callerPublicKey);
-  const poolContract = new Contract(poolContractId);
-
-  const tx = new TransactionBuilder(account, {
-    fee: SOROBAN_BASE_FEE,
-    networkPassphrase: NETWORK_PASSPHRASE,
-  })
-    .addOperation(poolContract.call("balance_of", new Address(memberPublicKey).toScVal()))
-    .setTimeout(30)
-    .build();
-
-  const simResult = await sorobanServer.simulateTransaction(tx);
-  if (rpc.Api.isSimulationError(simResult)) {
-    throw new Error(decodeContractError(simResult.error));
-  }
-  if (!rpc.Api.isSimulationSuccess(simResult) || !simResult.result?.retval) {
-    throw new Error("Unable to read member pool balance.");
-  }
-
-  const native = scValToNative(simResult.result.retval) as bigint | string | number;
-  return BigInt(native);
-}
-
 export async function precheckPoolBalance(
   callerPublicKey: string,
   memberPublicKey: string,
@@ -178,25 +123,8 @@ export async function precheckPoolBalance(
     return { ok: false, requiredStroops, error: "Contract not configured." };
   }
 
-  try {
-    const balanceStroops = await getPoolBalanceStroops(callerPublicKey, memberPublicKey);
-    if (balanceStroops >= requiredStroops) {
-      return { ok: true, requiredStroops, balanceStroops };
-    }
-
-    return {
-      ok: false,
-      requiredStroops,
-      balanceStroops,
-      shortfallStroops: requiredStroops - balanceStroops,
-      error:
-        `Pool balance too low. Required ${stroopsToXlm(requiredStroops)} XLM, ` +
-        `available ${stroopsToXlm(balanceStroops)} XLM.`,
-    };
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Pool precheck failed.";
-    return { ok: false, requiredStroops, error: message };
-  }
+  // The pool requirement has been removed, so balance is always sufficient.
+  return { ok: true, requiredStroops, balanceStroops: requiredStroops };
 }
 
 export async function recordPaymentOnChain(
