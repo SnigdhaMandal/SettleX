@@ -320,11 +320,6 @@ impl SettleXContract {
             None => false,
         };
 
-        // Inter-contract call: settlement contract consumes member funds from pool balance.
-        let pool_contract = Self::get_pool_contract(env.clone());
-        let pool_client = SettlementPoolContractClient::new(&env, &pool_contract);
-        pool_client.withdraw(&member, &amount);
-
         let record = PaymentRecord {
             expense_id: expense_id.clone(),
             payer: payer.clone(),
@@ -572,12 +567,7 @@ mod test {
                     contract: &settlement_contract_id,
                     fn_name: "record_payment",
                     args: args.clone(),
-                    sub_invokes: &[MockAuthInvoke {
-                        contract: &pool_contract_id,
-                        fn_name: "withdraw",
-                        args: (member.clone(), amount).into_val(&env),
-                        sub_invokes: &[],
-                    }],
+                    sub_invokes: &[],
                 },
             },
             MockAuth {
@@ -633,12 +623,7 @@ mod test {
                     trip_id.clone(), expense_id.clone(), payer.clone(),
                     member.clone(), amount, tx_hash.clone(),
                 ).into_val(&env),
-                sub_invokes: &[MockAuthInvoke {
-                    contract: &pool_contract_id,
-                    fn_name: "withdraw",
-                    args: (member.clone(), amount).into_val(&env),
-                    sub_invokes: &[],
-                }],
+                sub_invokes: &[],
             },
         }]);
 
@@ -739,19 +724,13 @@ mod test {
                     tx_hash.clone(),
                 )
                     .into_val(&env),
-                sub_invokes: &[MockAuthInvoke {
-                    contract: &pool_contract_id,
-                    fn_name: "withdraw",
-                    args: (member.clone(), amount).into_val(&env),
-                    sub_invokes: &[],
-                }],
+                sub_invokes: &[],
             },
         }]);
 
         client.record_payment(&trip_id, &expense_id, &payer, &member, &amount, &tx_hash);
 
         assert!(client.is_paid(&expense_id, &member));
-        assert_eq!(pool_client.balance_of(&member), 6_000_000_i128);
     }
 
     #[test]
@@ -782,7 +761,6 @@ mod test {
         let rec = payments.get(0).unwrap();
         assert_eq!(rec.amount,     10_000_000_i128);
         assert_eq!(rec.expense_id, expense_id);
-        assert_eq!(pool_client.balance_of(&member), 0_i128);
     }
 
     #[test]
@@ -907,20 +885,6 @@ mod test {
         assert_eq!(client.get_payments(&trip_id).len(), 0);
     }
 
-    #[test]
-    #[should_panic]
-    fn test_record_payment_fails_with_insufficient_pool_balance() {
-        setup!(env, client, _pool_client);
-
-        let trip_id    = String::from_str(&env, "trip-balance");
-        let expense_id = String::from_str(&env, "exp-balance");
-        let payer      = Address::generate(&env);
-        let member     = Address::generate(&env);
-        let tx_hash    = String::from_str(&env, "hash-balance");
-
-        // No deposit for member, inter-contract withdraw must fail.
-        client.record_payment(&trip_id, &expense_id, &payer, &member, &1_000_000_i128, &tx_hash);
-    }
 
     #[test]
     #[should_panic]
