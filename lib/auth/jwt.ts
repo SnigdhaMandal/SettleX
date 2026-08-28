@@ -5,7 +5,7 @@
  * Server-side only — it needs `SUPABASE_JWT_SECRET`, which must never reach the
  * browser bundle.
  */
-import { createHash, createHmac, timingSafeEqual } from "crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { WALLET_CLAIM } from "@/lib/auth/constants";
 
 export interface WalletClaims {
@@ -18,6 +18,8 @@ export interface WalletClaims {
   exp: number;
   /** The Stellar address this token proves control of. */
   wallet_address: string;
+  /** Unique token id, so this one token can be revoked before it expires. */
+  jti: string;
 }
 
 // ─── base64url helpers ────────────────────────────────────────────────────────
@@ -126,6 +128,8 @@ export interface AccessToken {
   token: string;
   /** Expiry as an ISO timestamp. */
   expiresAt: string;
+  /** Id of this token, needed to revoke it on sign-out. */
+  jti: string;
 }
 
 /**
@@ -142,6 +146,7 @@ export function issueAccessToken(params: {
   const { walletAddress, secret, ttlSeconds } = params;
   const issuedAt = Math.floor((params.now ?? Date.now()) / 1000);
   const expiresAt = issuedAt + ttlSeconds;
+  const jti = randomUUID();
 
   const claims: WalletClaims = {
     sub: walletToUuid(walletAddress),
@@ -151,10 +156,12 @@ export function issueAccessToken(params: {
     iat: issuedAt,
     exp: expiresAt,
     [WALLET_CLAIM]: walletAddress,
+    jti,
   };
 
   return {
     token: signJwt(claims as unknown as Record<string, unknown>, secret),
     expiresAt: new Date(expiresAt * 1000).toISOString(),
+    jti,
   };
 }

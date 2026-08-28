@@ -35,8 +35,14 @@ SettleX uses:
 - On success the server mints a Supabase JWT carrying `wallet_address`. Every
   RLS policy reads it through `public.settlex_wallet()`; requests without a
   valid token match no rows.
-- Sessions are cached in `localStorage` and last 12 hours by default
-  (`AUTH_SESSION_TTL_SECONDS`, capped at 24 hours).
+- Sessions are cached in `localStorage` and last 1 hour by default
+  (`AUTH_SESSION_TTL_SECONDS`, capped at 12 hours). They re-sign silently before
+  expiry, so the short lifetime is invisible in normal use.
+- Every token carries a `jti`. Signing out writes that id to
+  `public.revoked_tokens`, and `settlex_wallet()` — the one function every RLS
+  policy resolves identity through — returns NULL for a revoked token, so it
+  matches no row on any table. "Sign out everywhere" writes a wallet-wide
+  tombstone that denies every token issued at or before that moment.
 
 ## Known Limitations
 
@@ -50,9 +56,16 @@ SettleX uses:
   replayed against a sibling instance within its 5-minute window; TLS and that
   short TTL are what bound the exposure. A shared store (Redis, a Postgres
   table) would close it.
-- Issued access tokens are bearer tokens with no revocation list. Signing out
-  clears the browser's copy but a leaked token stays valid until it expires —
-  shorten `AUTH_SESSION_TTL_SECONDS` if that matters for your deployment.
+- Access tokens live in `localStorage`, so any script running on the origin can
+  read one. The nonce-based CSP in `middleware.ts` is what keeps that path
+  closed; the token is not in an httpOnly cookie because Supabase Realtime
+  authorizes on its own websocket and would need every call proxied.
+- Revocation needs `SUPABASE_SERVICE_ROLE_KEY` set and `supabase-setup.sql`
+  applied. Without it `/api/auth/signout` returns 503 rather than reporting a
+  sign-out that did not happen, and a token stays valid until `exp`.
+- Revocation covers tokens the user signs out of. A token leaked *without* a
+  sign-out (shared device, exported browser profile) is still valid until it
+  expires — that window is `AUTH_SESSION_TTL_SECONDS`, 1 hour by default.
 - Expense and trip UPDATE policies let any member rewrite the whole row,
   including `member_wallets`. Membership is therefore only as trustworthy as
   the other members of a split.

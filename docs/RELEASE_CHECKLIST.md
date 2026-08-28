@@ -33,6 +33,17 @@ Date: 2026-03-29
 - [x] README includes submission checklist evidence section
 - [x] Final docs package added under `docs/`
 
+## Session Revocation
+
+- [ ] `supabase-setup.sql` re-applied so `revoked_tokens`, `revoked_wallets` and
+      the updated `settlex_wallet()` guard exist
+- [ ] `SUPABASE_SERVICE_ROLE_KEY` set as a server-only env var (never
+      `NEXT_PUBLIC_`) in every deployment environment
+- [ ] Verified sign-out actually revokes: sign in, copy the token, sign out,
+      then confirm a PostgREST call with that token returns no rows
+- [ ] Confirmed `AUTH_SESSION_TTL_SECONDS` is 3600 or lower — it bounds how long
+      a token leaked *without* a sign-out stays usable
+
 ## Submission Gate
 
 - [x] Public GitHub repository ready

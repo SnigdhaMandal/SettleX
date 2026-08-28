@@ -10,17 +10,29 @@ export const CHALLENGE_ENDPOINT = "/api/auth/challenge";
 /** Route that verifies a signed challenge and mints a Supabase access token. */
 export const VERIFY_ENDPOINT = "/api/auth/verify";
 
+/** Route that revokes an access token server-side. */
+export const SIGNOUT_ENDPOINT = "/api/auth/signout";
+
 /** How long a challenge stays signable, in seconds. */
 export const CHALLENGE_TTL_SECONDS = 300;
 
-/** Default lifetime of an issued Supabase access token, in seconds. */
-export const DEFAULT_SESSION_TTL_SECONDS = 12 * 60 * 60;
+/**
+  * Default lifetime of an issued Supabase access token, in seconds.
+  *
+  * Kept short because a leaked token is valid until it expires: the denylist
+  * closes the sign-out gap, but only for sessions the user actually signs out
+  * of. Re-signing is silent — the cached session refreshes itself well before
+  * expiry (`SESSION_REFRESH_SKEW_SECONDS`), so a shorter TTL costs no extra
+  * wallet prompts.
+  */
+export const DEFAULT_SESSION_TTL_SECONDS = 60 * 60;
 
 /**
  * Re-authenticate this many seconds before the token actually expires so a
- * long-running request never lands on the server with a stale token.
+ * long-running request never lands on the server with a stale token. Five
+ * minutes of headroom keeps the refresh silent on the shorter default TTL.
  */
-export const SESSION_REFRESH_SKEW_SECONDS = 60;
+export const SESSION_REFRESH_SKEW_SECONDS = 5 * 60;
 
 /** Tolerated clock drift between the browser and the server, in seconds. */
 export const CLOCK_SKEW_SECONDS = 30;
