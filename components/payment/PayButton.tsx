@@ -2,7 +2,7 @@
 
 import React from "react";
 import { Zap, Loader2 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, formatXLM } from "@/lib/utils";
 
 interface PayButtonProps {
   amount: string;
@@ -23,7 +23,7 @@ export function PayButton({
   className,
   size = "md",
 }: PayButtonProps) {
-  const xlm = parseFloat(amount).toFixed(4);
+  const xlm = formatXLM(amount);
 
   return (
     <button

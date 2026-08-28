@@ -14,6 +14,7 @@ import { Modal } from "@/components/ui/Modal";
 import { TripCard } from "@/components/trips/TripCard";
 import { TripForm } from "@/components/trips/TripForm";
 import { useToast } from "@/components/ui/Toast";
+import { stroopsToXlm, xlmToStroops } from "@/lib/split/calculator";
 import type { TripFormData, Trip } from "@/types/trip";
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
@@ -139,16 +140,19 @@ export default function TripsPage() {
                   const tripExpenses = expenses.filter((e) =>
                     trip.expenseIds.includes(e.id)
                   );
-                  const totalXLM = tripExpenses.reduce(
-                    (sum, e) => sum + parseFloat(e.totalAmount),
-                    0
-                  );
+                  const totalStroops = tripExpenses.reduce((sum, e) => {
+                    try {
+                      return sum + xlmToStroops(e.totalAmount || "0");
+                    } catch {
+                      return sum;
+                    }
+                  }, 0n);
                   return (
                     <TripCard
                       key={trip.id}
                       trip={trip}
                       expenseCount={tripExpenses.length}
-                      totalXLM={totalXLM}
+                      totalXLM={stroopsToXlm(totalStroops)}
                       onDelete={deleteTrip}
                       index={i}
                     />
