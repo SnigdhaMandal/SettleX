@@ -8,7 +8,7 @@ import React, {
   useState,
 } from "react";
 import type { Trip } from "@/types/trip";
-import { LS_TRIPS } from "@/lib/utils/constants";
+import { getWalletScopedKey, LS_TRIPS } from "@/lib/utils/constants";
 import {
   getAuthenticatedClient,
   onSessionChange,
@@ -119,12 +119,14 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let isMounted = true;
 
+    const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
+
     async function loadTrips() {
       // Without a proven wallet identity RLS returns nothing, so fall back to
       // whatever this browser cached rather than showing an empty list.
       if (!client) {
         try {
-          const raw = localStorage.getItem(LS_TRIPS);
+          const raw = publicKey ? localStorage.getItem(cacheKey) : null;
           if (raw && isMounted) setTrips(JSON.parse(raw) as Trip[]);
         } catch {
           // ignore
@@ -144,12 +146,12 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         if (isMounted && data) {
           const trips = data.map(dbRowToTrip);
           setTrips(trips);
-          localStorage.setItem(LS_TRIPS, JSON.stringify(trips));
+          localStorage.setItem(cacheKey, JSON.stringify(trips));
         }
       } catch (err) {
         console.warn("Failed to load trips from Supabase, using localStorage:", err);
         try {
-          const raw = localStorage.getItem(LS_TRIPS);
+          const raw = localStorage.getItem(cacheKey);
           if (raw && isMounted) {
             setTrips(JSON.parse(raw) as Trip[]);
           }
@@ -168,13 +170,15 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isMounted = false;
     };
-  }, [client]);
+  }, [client, publicKey]);
 
 
   // Realtime authorizes on the socket's own JWT, so the feed has to run on the
   // authenticated client too — the anon client would receive nothing.
   useEffect(() => {
-    if (!client) return;
+    if (!client || !publicKey) return;
+
+    const cacheKey = getWalletScopedKey(LS_TRIPS, publicKey);
 
     const channel = client
       .channel("trips-changes")
@@ -186,7 +190,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
           setTrips((prev) => {
             if (prev.some((t) => t.id === newTrip.id)) return prev;
             const updated = [newTrip, ...prev];
-            localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+            localStorage.setItem(cacheKey, JSON.stringify(updated));
             return updated;
           });
         }
@@ -200,7 +204,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
             const updated = prev.map((t) =>
               t.id === updatedTrip.id ? updatedTrip : t
             );
-            localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+            localStorage.setItem(cacheKey, JSON.stringify(updated));
             return updated;
           });
         }
@@ -213,7 +217,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
           if (!deletedId) return;
           setTrips((prev) => {
             const updated = prev.filter((t) => t.id !== deletedId);
-            localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+            localStorage.setItem(cacheKey, JSON.stringify(updated));
             return updated;
           });
         }
@@ -223,14 +227,16 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     return () => {
       void client.removeChannel(channel);
     };
-  }, [client]);
+  }, [client, publicKey]);
 
   const addTrip = useCallback(async (trip: Trip) => {
     if (!publicKey) throw new Error("Wallet not connected");
 
+    const cacheKey = getWalletScopedKey(LS_TRIPS, publicKey);
+
     setTrips((prev) => {
       const updated = [trip, ...prev];
-      localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+      localStorage.setItem(cacheKey, JSON.stringify(updated));
       return updated;
     });
 
@@ -243,7 +249,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     if (error) {
       setTrips((prev) => {
         const rolled = prev.filter((t) => t.id !== trip.id);
-        localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+        localStorage.setItem(cacheKey, JSON.stringify(rolled));
         return rolled;
       });
       throw error;
@@ -255,13 +261,14 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       const current = trips.find((t) => t.id === id);
       if (!current) return;
 
+      const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
       const merged = { ...current, ...updates };
       const dbRow = tripToDbRow(merged, publicKey || "");
 
       // Optimistic update
       setTrips((prev) => {
         const updated = prev.map((t) => (t.id === id ? merged : t));
-        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -278,7 +285,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         // Roll back optimistic update on error
         setTrips((prev) => {
           const rolled = prev.map((t) => (t.id === id ? current : t));
-          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
@@ -292,10 +299,12 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       const current = trips.find((t) => t.id === id);
       if (!current) return;
 
+      const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
+
       // Optimistic deletion
       setTrips((prev) => {
         const updated = prev.filter((t) => t.id !== id);
-        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -310,7 +319,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         setTrips((prev) => {
           if (prev.some((t) => t.id === id)) return prev;
           const rolled = [current, ...prev];
-          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
@@ -324,6 +333,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       const current = trips.find((t) => t.id === tripId);
       if (!current || current.expenseIds.includes(expenseId)) return;
 
+      const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
       const expenseIds = [...current.expenseIds, expenseId];
 
       // Optimistic update
@@ -331,7 +341,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         const updated = prev.map((t) =>
           t.id === tripId ? { ...t, expenseIds } : t
         );
-        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -348,7 +358,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         // Roll back optimistic update on error
         setTrips((prev) => {
           const rolled = prev.map((t) => (t.id === tripId ? current : t));
-          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
@@ -362,10 +372,12 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       const current = trips.find((t) => t.id === id);
       if (!current || current.settled) return;
 
+      const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
+
       // Optimistic update
       setTrips((prev) => {
         const updated = prev.map((t) => (t.id === id ? { ...t, settled: true } : t));
-        localStorage.setItem(LS_TRIPS, JSON.stringify(updated));
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -382,7 +394,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         // Roll back optimistic update on error
         setTrips((prev) => {
           const rolled = prev.map((t) => (t.id === id ? current : t));
-          localStorage.setItem(LS_TRIPS, JSON.stringify(rolled));
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
