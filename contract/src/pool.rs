@@ -7,15 +7,15 @@ use soroban_sdk::{
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 #[repr(u32)]
 pub enum PoolError {
-    AlreadyInitialized = 1,
-    NotInitialized = 2,
-    Unauthorized = 3,
-    InvalidAmount = 4,
-    InsufficientBalance = 5,
-    BalanceOverflow = 6,
-    VersionMismatch = 7,
-    InvalidActor = 8,
-    AmountTooLarge = 9,
+    AlreadyInitialized = 101,
+    NotInitialized = 102,
+    Unauthorized = 103,
+    InvalidAmount = 104,
+    InsufficientBalance = 105,
+    BalanceOverflow = 106,
+    VersionMismatch = 107,
+    InvalidActor = 108,
+    AmountTooLarge = 109,
 }
 
 #[contracttype]

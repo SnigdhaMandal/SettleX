@@ -19,7 +19,7 @@ import type {
   GetPaymentsResult,
   IsPaidResult,
 } from "@/types/contract";
-import { ContractErrorCode } from "@/types/contract";
+import { ContractErrorCode, PoolErrorCode } from "@/types/contract";
 
 const SOROBAN_BASE_FEE  = "1000";
 const MAX_POLL_ATTEMPTS  = 20;
@@ -29,6 +29,32 @@ export function decodeContractError(raw: string): string {
   const match = raw.match(/Error\(Contract,\s*#(\d+)\)/);
   if (match) {
     const code = Number(match[1]);
+
+    if (code >= 100) {
+      switch (code) {
+        case PoolErrorCode.AlreadyInitialized:
+          return "Pool is already initialized.";
+        case PoolErrorCode.NotInitialized:
+          return "Pool contract is not initialized yet.";
+        case PoolErrorCode.Unauthorized:
+          return "Pool authorization failed.";
+        case PoolErrorCode.InvalidAmount:
+          return "Pool payment amount must be greater than zero.";
+        case PoolErrorCode.InsufficientBalance:
+          return "Pool balance is insufficient for this transfer.";
+        case PoolErrorCode.BalanceOverflow:
+          return "Pool balance overflowed.";
+        case PoolErrorCode.VersionMismatch:
+          return "Pool storage version mismatch.";
+        case PoolErrorCode.InvalidActor:
+          return "Invalid pool actor for this operation.";
+        case PoolErrorCode.AmountTooLarge:
+          return "Pool amount is above the allowed limit.";
+        default:
+          return `Pool error #${code}.`;
+      }
+    }
+
     switch (code) {
       case ContractErrorCode.InvalidAmount:
         return "Payment amount must be greater than zero.";

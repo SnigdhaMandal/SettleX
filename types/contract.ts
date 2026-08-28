@@ -41,6 +41,18 @@ export enum ContractErrorCode {
   TxHashTooLong = 10,
 }
 
+export enum PoolErrorCode {
+  AlreadyInitialized = 101,
+  NotInitialized = 102,
+  Unauthorized = 103,
+  InvalidAmount = 104,
+  InsufficientBalance = 105,
+  BalanceOverflow = 106,
+  VersionMismatch = 107,
+  InvalidActor = 108,
+  AmountTooLarge = 109,
+}
+
 export interface ContractPaymentEvent {
   ledger: number;
   ledgerClosedAt: string;
