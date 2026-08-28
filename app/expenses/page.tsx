@@ -46,6 +46,15 @@ function ExpenseCard({
     payerMember.walletAddress === currentUserPublicKey;
   const { payShare, paymentState, reset, retryOnChainRecord } = usePayment({ expenseId: expense.id });
 
+  const paidCount = expense.shares.filter((s) => s.paid).length;
+  const total = parseFloat(expense.totalAmount);
+  const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
+  const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+
   const handlePay = async (share: SplitShare) => {
     setPayingShareId(share.memberId);
     await payShare({
@@ -55,14 +64,6 @@ function ExpenseCard({
     });
     setPayingShareId(null);
   };
-  const paidCount = expense.shares.filter((s) => s.paid).length;
-  const total = parseFloat(expense.totalAmount);
-  const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
-  const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    year: "numeric",
-  });
 
   return (
     <motion.div
@@ -151,6 +152,13 @@ function ExpenseCard({
                 payingShareId={payingShareId ?? undefined}
                 connectedWalletAddress={currentUserPublicKey}
               />
+
+              <div className="mt-3 px-3 py-2 bg-amber-50 rounded-xl border border-amber-100 flex items-start gap-2">
+                <Inbox size={14} className="text-amber-600 mt-0.5 shrink-0" />
+                <p className="text-xs text-amber-700 leading-relaxed">
+                  <strong>Not linked to a trip</strong> — Payments for standalone expenses are processed peer-to-peer but do not generate an on-chain record.
+                </p>
+              </div>
 
               {paymentState.status !== "idle" && (
                 <div className="mt-3">
