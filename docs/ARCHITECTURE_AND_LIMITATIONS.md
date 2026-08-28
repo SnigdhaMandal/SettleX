@@ -31,7 +31,11 @@ SettleX uses:
 - A wallet proves key ownership by signing a server-issued challenge
   transaction built with sequence number 0, which the network can never accept.
 - The challenge nonce is bound to the wallet and an expiry by an HMAC, so the
-  handshake needs no shared session store.
+  handshake needs no shared session store. Single use is enforced separately in
+  Postgres (`auth_nonces`) so the guard holds across serverless instances.
+- The auth routes are rate limited through a shared Postgres window
+  (`auth_rate_limits`), so the configured 30 requests/minute is the real limit
+  rather than 30 per running instance.
 - On success the server mints a Supabase JWT carrying `wallet_address`. Every
   RLS policy reads it through `public.settlex_wallet()`; requests without a
   valid token match no rows.
@@ -45,11 +49,16 @@ SettleX uses:
 - CI merge protection enforcement is a GitHub repository setting and must be enabled manually in repo settings.
 - Wallet UX depends on extension behavior and user approval flow, including the
   one-per-session signature that establishes an authenticated session.
-- Challenge nonces are burned in process memory, so the single-use guard is
-  per-instance. On a multi-instance deployment a captured challenge could be
-  replayed against a sibling instance within its 5-minute window; TLS and that
-  short TTL are what bound the exposure. A shared store (Redis, a Postgres
-  table) would close it.
+- The replay guard and the rate limiter need `SUPABASE_SERVICE_ROLE_KEY` set and
+  `supabase-setup.sql` applied. Without them both fall back to process memory
+  and are per-instance: a captured challenge can be replayed against a sibling
+  instance for the rest of the (60-second) challenge TTL, and the real
+  throughput becomes 30 requests/minute times the instance count. Verify the key
+  is set before any multi-instance deployment.
+- The replay guard fails closed — if the shared store is configured but
+  unreachable, `/api/auth/verify` returns 503 rather than minting a token it
+  cannot prove is single-use. The rate limiter fails open onto the in-memory
+  window, so a database blip throttles harder instead of blocking sign-in.
 - Issued access tokens are bearer tokens with no revocation list. Signing out
   clears the browser's copy but a leaked token stays valid until it expires —
   shorten `AUTH_SESSION_TTL_SECONDS` if that matters for your deployment.
@@ -93,7 +102,9 @@ SettleX uses:
 - Consider requiring the payer to co-sign `record_payment` as a second source of
   truth. Not done here because the frontend signs with a single wallet, so it
   would break every payment until a co-signature flow is built.
-- Move challenge nonces and a token revocation list into a shared store so the
-  replay guard and sign-out hold across instances.
+- Add a token revocation list to the shared auth store so sign-out holds across
+  instances (challenge nonces already live there).
+- Sweep expired `auth_nonces` / `auth_rate_limits` rows on a schedule (pg_cron)
+  as well as opportunistically inside the RPCs.
 - Narrow the expense/trip UPDATE policies so membership and creator columns can
   only be changed by the creator.

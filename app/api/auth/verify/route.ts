@@ -7,15 +7,16 @@
  * a claimed wallet becomes an authenticated one.
  */
 import { NextResponse } from "next/server";
-import { isValidWalletAddress, verifyChallenge } from "@/lib/auth/challenge";
+import { isValidWalletAddress, verifyChallengeShared } from "@/lib/auth/challenge";
 import { issueAccessToken } from "@/lib/auth/jwt";
-import { clientKey, rateLimit } from "@/lib/auth/rateLimit";
+import { clientKey, enforceRateLimit } from "@/lib/auth/rateLimit";
 import {
   AuthConfigError,
   getChallengeSecret,
   getJwtSecret,
   getSessionTtlSeconds,
 } from "@/lib/auth/serverConfig";
+import { SharedStoreUnavailable } from "@/lib/auth/sharedStore";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -23,7 +24,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 export async function POST(request: Request) {
-  const limit = rateLimit(`verify:${clientKey(request)}`, 30, 60_000);
+  const limit = await enforceRateLimit(`verify:${clientKey(request)}`, 30, 60_000);
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many authentication attempts. Please wait a moment." },
@@ -59,7 +60,7 @@ export async function POST(request: Request) {
   }
 
   try {
-    const result = verifyChallenge({
+    const result = await verifyChallengeShared({
       walletAddress,
       signedTransactionXdr,
       challengeToken,
@@ -81,6 +82,15 @@ export async function POST(request: Request) {
       { headers: NO_STORE },
     );
   } catch (err) {
+    if (err instanceof SharedStoreUnavailable) {
+      // Fail closed: without the shared nonce store the single-use guard is
+      // unenforceable, and minting a token anyway would reopen the replay hole.
+      console.error("Shared replay store unavailable:", err.message);
+      return NextResponse.json(
+        { error: "Wallet authentication is temporarily unavailable. Please try again." },
+        { status: 503, headers: { ...NO_STORE, "Retry-After": "5" } },
+      );
+    }
     if (err instanceof AuthConfigError) {
       console.error("Wallet auth is not configured:", err.message);
       return NextResponse.json(

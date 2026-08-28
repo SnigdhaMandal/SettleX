@@ -1,11 +1,18 @@
 /**
- * Fixed-window, in-memory rate limiter for the unauthenticated auth routes.
+ * Fixed-window rate limiter for the unauthenticated auth routes.
  *
  * Both routes do public-key cryptography on caller-supplied input, so they are
- * worth throttling. State lives in the process, which means the limit applies
- * per serverless instance — enough to blunt casual abuse, not a substitute for
- * an edge/WAF rate limit in front of the deployment.
+ * worth throttling. `enforceRateLimit` counts against a window shared by every
+ * instance (Postgres, via `lib/auth/sharedStore`) so the configured limit is
+ * the real limit rather than the limit times the instance count. The in-memory
+ * `rateLimit` below is the fallback for deployments with no shared store
+ * configured; it applies per process and only blunts casual abuse.
+ *
+ * Neither is a substitute for an edge/WAF rate limit in front of the
+ * deployment.
  */
+import { isSharedStoreConfigured, rateLimitShared } from "@/lib/auth/sharedStore";
+
 interface Window {
   count: number;
   resetAt: number;
@@ -45,6 +52,29 @@ export function rateLimit(
 /** Test hook — drops every tracked window. */
 export function resetRateLimits(): void {
   windows.clear();
+}
+
+/**
+ * Counts one request against the shared window, falling back to the in-memory
+ * window when no shared store is configured or it cannot be reached.
+ *
+ * Unlike the replay guard this fails *open* onto the local limiter: a database
+ * blip should throttle harder than usual, not lock every caller out of signing
+ * in.
+ */
+export async function enforceRateLimit(
+  key: string,
+  limit: number,
+  windowMs: number,
+): Promise<RateLimitResult> {
+  if (isSharedStoreConfigured()) {
+    try {
+      return await rateLimitShared(key, limit, windowMs);
+    } catch (err) {
+      console.error("Shared rate limit unavailable, falling back to in-memory:", err);
+    }
+  }
+  return rateLimit(key, limit, windowMs);
 }
 
 /**
