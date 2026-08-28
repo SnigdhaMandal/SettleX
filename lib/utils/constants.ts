@@ -13,9 +13,11 @@ export const NETWORK_PASSPHRASE =
     ? "Public Global Stellar Network ; September 2015"
     : "Test SDF Network ; September 2015";
 
-export const MEMO_PREFIX    = "SettleX";
-export const TX_BASE_FEE    = 100;
-export const MEMO_MAX_BYTES = 28;
+export const MEMO_PREFIX        = "SettleX";
+export const TX_BASE_FEE        = 100;
+export const TX_TIMEOUT_SECONDS = 180;
+export const TX_MAX_FEE_STROOPS = 10_000;
+export const MEMO_MAX_BYTES     = 28;
 
 export const LS_PUBLIC_KEY = "settlex:publicKey";
 export const LS_WALLET_ID  = "settlex:walletId";
