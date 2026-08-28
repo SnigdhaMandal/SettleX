@@ -44,7 +44,9 @@ function deriveRawDebts(expenses: Expense[], onChainEvents: ContractPaymentEvent
       
       debts.push({
         from:       share.name,
+        fromId:     share.memberId,
         to:         payer.name,
+        toId:       payer.id,
         amount:     parseFloat(share.amount),
         fromWallet: share.walletAddress,
         toWallet:   payer.walletAddress,
@@ -93,9 +95,9 @@ function NetPaymentRow({
 
       for (const expense of expenses) {
         const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
-        if (!payer || payer.name !== payment.to) continue;
+        if (!payer || payer.id !== payment.toId) continue;
         for (const share of expense.shares) {
-          if (share.name === payment.from && !share.paid) {
+          if (share.memberId === payment.fromId && !share.paid) {
             try { await markSharePaid(expense.id, share.memberId, hash); } catch { /* non-fatal */ }
           }
         }
@@ -207,7 +209,7 @@ export function SettlementSummary({ trip, expenses, onChainEvents = [] }: Settle
 
       {netPayments.map((p, i) => (
         <NetPaymentRow
-          key={`${p.from}-${p.to}-${i}`}
+          key={`${p.fromId}-${p.toId}-${i}`}
           payment={p}
           index={i}
           tripName={trip.name}
