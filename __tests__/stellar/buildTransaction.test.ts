@@ -1,4 +1,7 @@
-import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
+import {
+  buildPaymentTransaction,
+  fetchSuggestedFee,
+} from "@/lib/stellar/buildTransaction";
 import { MEMO_MAX_BYTES, MEMO_PREFIX } from "@/lib/utils/constants";
 
 const sourcePublicKey = "GCUOC6KXBSOHRIMBWAHOOHLNJVHJGDPVMCMRXDKKUYQ4AUO5PNX2WYVF";
@@ -9,10 +12,20 @@ describe("buildPaymentTransaction", () => {
     jest.resetAllMocks();
   });
 
-  it("builds xdr and prefixes memo", async () => {
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ sequence: "12345" }),
+  it("builds xdr, dynamic fee, and prefixes memo", async () => {
+    const fetchMock = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/fee_stats")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({
+            fee_charged: { p70: "200", mode: "150" },
+          }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ sequence: "12345" }),
+      });
     });
     (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
@@ -26,13 +39,22 @@ describe("buildPaymentTransaction", () => {
     expect(typeof result.xdr).toBe("string");
     expect(result.xdr.length).toBeGreaterThan(20);
     expect(result.memo).toBe(`${MEMO_PREFIX}|Dinner`);
-    expect(fetchMock).toHaveBeenCalledTimes(1);
+    // 200 * 1.5 = 300
+    expect(result.fee).toBe("300");
   });
 
   it("trims long memo text to byte limit", async () => {
-    const fetchMock = jest.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({ sequence: "54321" }),
+    const fetchMock = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/fee_stats")) {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ fee_charged: { mode: "100" } }),
+        });
+      }
+      return Promise.resolve({
+        ok: true,
+        json: async () => ({ sequence: "54321" }),
+      });
     });
     (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
@@ -50,7 +72,12 @@ describe("buildPaymentTransaction", () => {
   });
 
   it("throws when horizon account lookup fails", async () => {
-    const fetchMock = jest.fn().mockResolvedValue({ ok: false, status: 404 });
+    const fetchMock = jest.fn().mockImplementation((url: string) => {
+      if (url.includes("/fee_stats")) {
+        return Promise.resolve({ ok: true, json: async () => ({}) });
+      }
+      return Promise.resolve({ ok: false, status: 404 });
+    });
     (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
     await expect(
