@@ -36,6 +36,25 @@ interface TripContextType {
 const TripContext = createContext<TripContextType | null>(null);
 TripContext.displayName = "TripContext";
 
+function isRowForWallet(row: any, walletAddress: string | null): boolean {
+  if (!walletAddress) return false;
+
+  const memberWallets = new Set<string>();
+  const rowMembers = Array.isArray(row?.members) ? row.members : [];
+  const rowMemberWallets = Array.isArray(row?.member_wallets) ? row.member_wallets : [];
+
+  for (const member of rowMembers) {
+    if (member?.walletAddress) memberWallets.add(member.walletAddress);
+  }
+
+  for (const wallet of rowMemberWallets) {
+    if (wallet) memberWallets.add(wallet);
+  }
+
+  if (row?.created_by_wallet) memberWallets.add(row.created_by_wallet);
+
+  return memberWallets.has(walletAddress);
+}
 
 function dbRowToTrip(row: any): Trip {
   return {
@@ -186,7 +205,9 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         "postgres_changes",
         { event: "INSERT", schema: "public", table: "trips" },
         (payload: RealtimePostgresChangesPayload<any>) => {
-          const newTrip = dbRowToTrip(payload.new);
+          const row = payload.new;
+          if (!row || !isRowForWallet(row, publicKey)) return;
+          const newTrip = dbRowToTrip(row);
           setTrips((prev) => {
             if (prev.some((t) => t.id === newTrip.id)) return prev;
             const updated = [newTrip, ...prev];
@@ -199,7 +220,9 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         "postgres_changes",
         { event: "UPDATE", schema: "public", table: "trips" },
         (payload: RealtimePostgresChangesPayload<any>) => {
-          const updatedTrip = dbRowToTrip(payload.new);
+          const row = payload.new;
+          if (!row || !isRowForWallet(row, publicKey)) return;
+          const updatedTrip = dbRowToTrip(row);
           setTrips((prev) => {
             const updated = prev.map((t) =>
               t.id === updatedTrip.id ? updatedTrip : t
@@ -213,7 +236,9 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         "postgres_changes",
         { event: "DELETE", schema: "public", table: "trips" },
         (payload: RealtimePostgresChangesPayload<any>) => {
-          const deletedId = (payload.old as any)?.id;
+          const row = payload.old;
+          if (!row || !isRowForWallet(row, publicKey)) return;
+          const deletedId = row?.id;
           if (!deletedId) return;
           setTrips((prev) => {
             const updated = prev.filter((t) => t.id !== deletedId);
@@ -222,7 +247,11 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
           });
         }
       )
-      .subscribe();
+      .subscribe((status, err) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
+          console.error("Trips realtime subscription failed", { status, err });
+        }
+      });
 
     return () => {
       void client.removeChannel(channel);
