@@ -2,7 +2,9 @@ import { stroopsToXlm, xlmToStroops } from "@/lib/split/calculator";
 
 export interface NetPayment {
   from: string;
+  fromId: string;
   to: string;
+  toId: string;
   amount: string;
   fromWallet?: string;
   toWallet?: string;
@@ -10,6 +12,7 @@ export interface NetPayment {
 
 export interface RawDebt {
   from: string;
+  fromId: string;
   to: string;
   amount: number | string | bigint;
   fromWallet?: string;
@@ -19,6 +22,7 @@ export interface RawDebt {
 export function computeNetPayments(debts: RawDebt[]): NetPayment[] {
   const balance = new Map<string, bigint>();
   const wallets = new Map<string, string>();
+  const names = new Map<string, string>();
 
   debts.forEach(({ from, to, amount, fromWallet, toWallet }) => {
     const stroops = typeof amount === "bigint" ? amount : xlmToStroops(amount);
@@ -51,6 +55,7 @@ export function computeNetPayments(debts: RawDebt[]): NetPayment[] {
     if (settle > 0n) {
       result.push({
         from:       debtor.name,
+        fromId:     debtor.id,
         to:         creditor.name,
         amount:     stroopsToXlm(settle),
         fromWallet: wallets.get(debtor.name),
