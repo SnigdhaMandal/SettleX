@@ -92,13 +92,21 @@ function NetPaymentRow({
       const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE);
       const { hash }  = await submitSignedTransaction(signedXDR);
 
-      for (const expense of expenses) {
+      // Only close shares up to the net amount actually transferred.
+      // A netted payment may be smaller than the gross obligations it represents
+      // (e.g. A owes B 10 XLM and B owes A 4 XLM → net 6 XLM transfer). Marking
+      // ALL of A's shares paid would write off 10 XLM while only 6 XLM moved.
+      let budgetRemaining = parseFloat(payment.amount);
+      outer: for (const expense of expenses) {
         const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
         if (!payer || payer.id !== payment.toId) continue;
         for (const share of expense.shares) {
-          if (share.memberId === payment.fromId && !share.paid) {
-            try { await markSharePaid(expense.id, share.memberId, hash); } catch { /* non-fatal */ }
-          }
+          if (share.memberId !== payment.fromId || share.paid) continue;
+          const shareAmt = parseFloat(share.amount);
+          if (budgetRemaining < shareAmt - 0.0000001) break outer; // can't cover this share
+          budgetRemaining -= shareAmt;
+          try { await markSharePaid(expense.id, share.memberId, hash); } catch { /* non-fatal */ }
+          if (budgetRemaining < 0.0000001) break outer;
         }
       }
 
