@@ -13,7 +13,7 @@ import {
   requireAuthenticatedClient,
 } from "@/lib/supabase/session";
 import { useWalletContext } from "./WalletContext";
-import { LS_USER } from "@/lib/utils/constants";
+import { getWalletScopedKey, LS_USER } from "@/lib/utils/constants";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -67,18 +67,26 @@ function dbRowToUser(row: any): User {
 // ─── localStorage helpers ────────────────────────────────────────────────────
 
 function saveUserToCache(user: User) {
-  try { localStorage.setItem(LS_USER, JSON.stringify(user)); } catch {}
+  try {
+    localStorage.setItem(getWalletScopedKey(LS_USER, user.walletAddress), JSON.stringify(user));
+  } catch {}
 }
 
-function loadUserFromCache(): User | null {
+function loadUserFromCache(walletAddress?: string | null): User | null {
   try {
-    const raw = localStorage.getItem(LS_USER);
+    const scopedKey = walletAddress ? getWalletScopedKey(LS_USER, walletAddress) : LS_USER;
+    const raw = localStorage.getItem(scopedKey) ?? localStorage.getItem(LS_USER);
     return raw ? (JSON.parse(raw) as User) : null;
   } catch { return null; }
 }
 
-function clearUserCache() {
-  try { localStorage.removeItem(LS_USER); } catch {}
+function clearUserCache(walletAddress?: string | null) {
+  try {
+    if (walletAddress) {
+      localStorage.removeItem(getWalletScopedKey(LS_USER, walletAddress));
+    }
+    localStorage.removeItem(LS_USER);
+  } catch {}
 }
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
@@ -113,7 +121,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     if (!publicKey) {
       setUser(null);
-      clearUserCache();
+      clearUserCache(publicKey);
       clearWalletSession();
       setVerifiedWallet(null);
       setSessionError(null);
@@ -159,7 +167,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           if (error.code === "PGRST116") {
             // No user found - user needs to sign up
             setUser(null);
-            clearUserCache();
+            clearUserCache(wallet);
           }
           // On network errors, keep the cached user (don't log out)
         } else if (data) {
@@ -279,11 +287,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const signOut = useCallback(() => {
     setUser(null);
-    clearUserCache();
+    clearUserCache(publicKey);
     clearWalletSession();
     setVerifiedWallet(null);
     setSessionError(null);
-  }, []);
+    if (typeof window !== "undefined") {
+      window.localStorage.removeItem(LS_USER);
+    }
+  }, [publicKey]);
 
   // ── Refresh session: re-run the wallet signing handshake ──────────────────
 

@@ -8,7 +8,7 @@ import React, {
   useState,
 } from "react";
 import type { Expense, SplitShare } from "@/types/expense";
-import { LS_EXPENSES } from "@/lib/utils/constants";
+import { getWalletScopedKey, LS_EXPENSES } from "@/lib/utils/constants";
 import {
   getAuthenticatedClient,
   onSessionChange,
@@ -129,12 +129,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     let isMounted = true;
 
+    const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
+
     async function loadExpenses() {
       // Without a proven wallet identity RLS returns nothing, so fall back to
       // whatever this browser cached rather than showing an empty list.
       if (!client) {
         try {
-          const raw = localStorage.getItem(LS_EXPENSES);
+          const raw = publicKey ? localStorage.getItem(cacheKey) : null;
           if (raw && isMounted) setExpenses(JSON.parse(raw) as Expense[]);
         } catch {
           // ignore
@@ -155,12 +157,12 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         if (isMounted && data) {
           const expenses = data.map(dbRowToExpense);
           setExpenses(expenses);
-          localStorage.setItem(LS_EXPENSES, JSON.stringify(expenses));
+          localStorage.setItem(cacheKey, JSON.stringify(expenses));
         }
       } catch (err) {
         console.warn("Failed to load from Supabase, using localStorage:", err);
         try {
-          const raw = localStorage.getItem(LS_EXPENSES);
+          const raw = localStorage.getItem(cacheKey);
           if (raw && isMounted) setExpenses(JSON.parse(raw) as Expense[]);
         } catch {
           // ignore
@@ -177,12 +179,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     return () => {
       isMounted = false;
     };
-  }, [client]);
+  }, [client, publicKey]);
 
   // Realtime authorizes on the socket's own JWT, so the feed has to run on the
   // authenticated client too — the anon client would receive nothing.
   useEffect(() => {
-    if (!client) return;
+    if (!client || !publicKey) return;
+
+    const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
 
     const channel = client
       .channel("expenses-changes")
@@ -194,7 +198,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           setExpenses((prev) => {
             if (prev.some((e) => e.id === newExpense.id)) return prev;
             const updated = [newExpense, ...prev];
-            localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+            localStorage.setItem(cacheKey, JSON.stringify(updated));
             return updated;
           });
         }
@@ -208,7 +212,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
             const updated = prev.map((e) =>
               e.id === updatedExpense.id ? updatedExpense : e
             );
-            localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+            localStorage.setItem(cacheKey, JSON.stringify(updated));
             return updated;
           });
         }
@@ -221,7 +225,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           if (!deletedId) return;
           setExpenses((prev) => {
             const updated = prev.filter((e) => e.id !== deletedId);
-            localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+            localStorage.setItem(cacheKey, JSON.stringify(updated));
             return updated;
           });
         }
@@ -231,14 +235,16 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     return () => {
       void client.removeChannel(channel);
     };
-  }, [client]);
+  }, [client, publicKey]);
 
   const addExpense = useCallback(async (expense: Expense) => {
     if (!publicKey) throw new Error("Wallet not connected");
 
+    const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
+
     setExpenses((prev) => {
       const updated = [expense, ...prev];
-      localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+      localStorage.setItem(cacheKey, JSON.stringify(updated));
       return updated;
     });
 
@@ -251,7 +257,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     if (error) {
       setExpenses((prev) => {
         const rolled = prev.filter((e) => e.id !== expense.id);
-        localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
+        localStorage.setItem(cacheKey, JSON.stringify(rolled));
         return rolled;
       });
       throw error;
@@ -263,13 +269,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const current = expenses.find((e) => e.id === id);
       if (!current) return;
 
+      const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
       const merged = { ...current, ...updates };
       const dbRow = expenseToDbRow(merged, publicKey || "");
 
       // Optimistic update
       setExpenses((prev) => {
         const updated = prev.map((e) => (e.id === id ? merged : e));
-        localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -309,7 +316,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         // Roll back optimistic update on error
         setExpenses((prev) => {
           const rolled = prev.map((e) => (e.id === id ? current : e));
-          localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
@@ -323,10 +330,12 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const current = expenses.find((e) => e.id === id);
       if (!current) return;
 
+      const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
+
       // Optimistic deletion
       setExpenses((prev) => {
         const updated = prev.filter((e) => e.id !== id);
-        localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -341,7 +350,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setExpenses((prev) => {
           if (prev.some((e) => e.id === id)) return prev;
           const rolled = [current, ...prev];
-          localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
@@ -355,6 +364,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const current = expenses.find((e) => e.id === expenseId);
       if (!current) throw new Error("Expense not found in state — please refresh and try again.");
 
+      const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
+
       // Optimistic local state update
       setExpenses((prev) => {
         const updated = prev.map((e) => {
@@ -365,7 +376,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           const settled = shares.every((s) => s.paid);
           return { ...e, shares, settled };
         });
-        localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -386,7 +397,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
             const updatedRow = dbRowToExpense(rpcData[0]);
             setExpenses((prev) => {
               const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
-              localStorage.setItem(LS_EXPENSES, JSON.stringify(synced));
+              localStorage.setItem(cacheKey, JSON.stringify(synced));
               return synced;
             });
             rpcSucceeded = true;
@@ -449,7 +460,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
                 const updatedExpense = dbRowToExpense(fallbackRows[0]);
                 setExpenses((prev) => {
                   const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
-                  localStorage.setItem(LS_EXPENSES, JSON.stringify(synced));
+                  localStorage.setItem(cacheKey, JSON.stringify(synced));
                   return synced;
                 });
                 return;
@@ -461,7 +472,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
             const updatedExpense = dbRowToExpense(rowsUpdated[0]);
             setExpenses((prev) => {
               const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
-              localStorage.setItem(LS_EXPENSES, JSON.stringify(synced));
+              localStorage.setItem(cacheKey, JSON.stringify(synced));
               return synced;
             });
             return;
@@ -478,7 +489,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         console.error("Failed to persist markSharePaid to Supabase:", err);
         setExpenses((prev) => {
           const rolled = prev.map((e) => (e.id === expenseId ? current : e));
-          localStorage.setItem(LS_EXPENSES, JSON.stringify(rolled));
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;

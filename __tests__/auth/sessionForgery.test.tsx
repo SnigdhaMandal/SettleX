@@ -10,8 +10,15 @@
  */
 import React from "react";
 import { AuthProvider, useAuth } from "@/context/AuthContext";
-import { WalletProvider } from "@/context/WalletContext";
-import { LS_PUBLIC_KEY, LS_USER, LS_WALLET_ID } from "@/lib/utils/constants";
+import { WalletProvider, useWalletContext } from "@/context/WalletContext";
+import {
+  LS_EXPENSES,
+  LS_PUBLIC_KEY,
+  LS_TRIPS,
+  LS_USER,
+  LS_WALLET_ID,
+  getWalletScopedKey,
+} from "@/lib/utils/constants";
 
 const { render, screen, waitFor, act } = require("@testing-library/react");
 
@@ -109,6 +116,16 @@ function Probe() {
   );
 }
 
+function WalletProbe() {
+  const { disconnect } = useWalletContext();
+
+  return (
+    <button type="button" onClick={disconnect} data-testid="disconnect-wallet">
+      Disconnect
+    </button>
+  );
+}
+
 let mounted: { unmount: () => void } | null = null;
 
 function renderApp() {
@@ -192,6 +209,33 @@ describe("forged localStorage session", () => {
     expect(screen.getByTestId("name").textContent).toBe("Totally Legit");
     // … but it grants nothing.
     expect(screen.getByTestId("authed").textContent).toBe("false");
+  });
+});
+
+describe("wallet-scoped cache cleanup", () => {
+  it("uses a wallet-scoped cache and clears stale app data when disconnected", () => {
+    const staleWallet = VICTIM;
+    localStorage.setItem(LS_PUBLIC_KEY, staleWallet);
+    localStorage.setItem(LS_WALLET_ID, "freighter");
+    localStorage.setItem(LS_USER, JSON.stringify({ walletAddress: staleWallet, displayName: "Stale user" }));
+    localStorage.setItem(getWalletScopedKey(LS_EXPENSES, staleWallet), JSON.stringify([{ id: "e1" }]));
+    localStorage.setItem(getWalletScopedKey(LS_TRIPS, staleWallet), JSON.stringify([{ id: "t1" }]));
+
+    render(
+      <WalletProvider>
+        <WalletProbe />
+      </WalletProvider>,
+    );
+
+    act(() => {
+      screen.getByTestId("disconnect-wallet").click();
+    });
+
+    expect(localStorage.getItem(LS_PUBLIC_KEY)).toBeNull();
+    expect(localStorage.getItem(LS_WALLET_ID)).toBeNull();
+    expect(localStorage.getItem(LS_USER)).toBeNull();
+    expect(localStorage.getItem(getWalletScopedKey(LS_EXPENSES, staleWallet))).toBeNull();
+    expect(localStorage.getItem(getWalletScopedKey(LS_TRIPS, staleWallet))).toBeNull();
   });
 });
 

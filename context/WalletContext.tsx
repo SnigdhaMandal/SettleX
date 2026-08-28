@@ -11,7 +11,11 @@ import React, {
 import { getFreighterNetwork, isFreighterInstalled } from "@/lib/freighter";
 import { getWalletsKit, FREIGHTER_ID, type WalletId } from "@/lib/stellar/walletsKit";
 import { getXLMBalance } from "@/lib/stellar/getBalance";
-import { LS_PUBLIC_KEY, LS_WALLET_ID } from "@/lib/utils/constants";
+import {
+  clearAppCaches,
+  LS_PUBLIC_KEY,
+  LS_WALLET_ID,
+} from "@/lib/utils/constants";
 import { clearWalletSession } from "@/lib/supabase/session";
 import type { WalletContextType } from "@/types/wallet";
 import { useToast } from "@/components/ui/Toast";
@@ -25,13 +29,14 @@ WalletContext.displayName = "WalletContext";
  * token. Anything derived from an address we can no longer vouch for has to go
  * with it, or the next request would carry a token for the wrong account.
  */
-function clearStoredWallet() {
+function clearStoredWallet(walletAddress?: string | null) {
   try {
     localStorage.removeItem(LS_PUBLIC_KEY);
     localStorage.removeItem(LS_WALLET_ID);
   } catch {
     // Private-mode browsers refuse writes — in-memory state is still cleared.
   }
+  clearAppCaches(walletAddress);
   clearWalletSession();
 }
 
@@ -119,7 +124,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
         .catch(() => null);
 
       if (liveKey && liveKey !== restoredKey) {
-        clearStoredWallet();
+        clearStoredWallet(restoredKey);
         setIsHydrated(true);
         toastInfo(
           "Wallet account changed",
@@ -163,7 +168,7 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
 
       if (cancelled || !liveKey || liveKey === publicKey) return;
 
-      clearStoredWallet();
+      clearStoredWallet(publicKey);
       setPublicKey(null);
       setBalance(null);
       setNetwork(null);
@@ -273,8 +278,8 @@ export function WalletProvider({ children }: { children: React.ReactNode }) {
     toastInfo("Wallet disconnected");
     // Also drops LS_WALLET_ID and the verified session token — leaving either
     // behind would let the next load restore a half-session.
-    clearStoredWallet();
-  }, [toastInfo]);
+    clearStoredWallet(publicKey);
+  }, [publicKey, toastInfo]);
 
 
   const refreshBalance = useCallback(async () => {
