@@ -48,6 +48,7 @@ function dbRowToExpense(row: any): Expense {
     shares: row.shares,
     createdAt: row.created_at,
     settled: row.settled,
+    version: row.version ?? 1,
   };
 }
 
@@ -73,6 +74,7 @@ function expenseToDbRow(expense: Expense, creatorWallet: string) {
     shares: expense.shares,
     created_at: expense.createdAt,
     settled: expense.settled,
+    version: expense.version ?? 1,
     created_by_wallet: creatorWallet,
     member_wallets: allMemberWallets,
   };
@@ -263,18 +265,40 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         if (!current) return;
 
         const merged = { ...current, ...updates };
-        const dbRow = expenseToDbRow(merged, publicKey || '');
-
         const client = await getClient();
-        const { error } = await client
+
+        // Build partial update payload so we don't accidentally overwrite shares or other concurrent fields
+        const dbUpdates: Record<string, any> = {};
+        if (updates.title !== undefined) dbUpdates.title = updates.title;
+        if (updates.description !== undefined) dbUpdates.description = updates.description ?? null;
+        if (updates.totalAmount !== undefined) dbUpdates.total_amount = updates.totalAmount;
+        if (updates.currency !== undefined) dbUpdates.currency = updates.currency;
+        if (updates.splitMode !== undefined) dbUpdates.split_mode = updates.splitMode;
+        if (updates.paidByMemberId !== undefined) dbUpdates.paid_by_member_id = updates.paidByMemberId;
+        if (updates.members !== undefined) {
+          dbUpdates.members = updates.members;
+          const memberWallets = updates.members
+            .map((m) => m.walletAddress)
+            .filter((addr): addr is string => !!addr);
+          if (publicKey && !memberWallets.includes(publicKey)) {
+            memberWallets.unshift(publicKey);
+          }
+          dbUpdates.member_wallets = memberWallets;
+        }
+        if (updates.shares !== undefined) dbUpdates.shares = updates.shares;
+        if (updates.settled !== undefined) dbUpdates.settled = updates.settled;
+
+        const { data, error } = await client
           .from("expenses")
-          .update(dbRow)
-          .eq("id", id);
+          .update(dbUpdates)
+          .eq("id", id)
+          .select("*");
 
         if (error) throw error;
 
+        const updatedExpense = data && data.length > 0 ? dbRowToExpense(data[0]) : merged;
         setExpenses((prev) => {
-          const updated = prev.map((e) => (e.id === id ? merged : e));
+          const updated = prev.map((e) => (e.id === id ? updatedExpense : e));
           localStorage.setItem(LS_EXPENSES, JSON.stringify(updated));
           return updated;
         });
@@ -319,6 +343,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       const current = expenses.find((e) => e.id === expenseId);
       if (!current) throw new Error("Expense not found in state — please refresh and try again.");
 
+      // Optimistic local state update
       setExpenses((prev) => {
         const updated = prev.map((e) => {
           if (e.id !== expenseId) return e;
@@ -335,40 +360,108 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       try {
         const client = await getClient();
 
-        const { data: freshData, error: fetchErr } = await client
-          .from("expenses")
-          .select("shares")
-          .eq("id", expenseId)
-          .single();
+        // 1. Primary path: Atomic server-side RPC (row-locked in Postgres)
+        let rpcSucceeded = false;
+        try {
+          const { data: rpcData, error: rpcErr } = await client
+            .rpc("mark_share_paid", {
+              p_expense_id: expenseId,
+              p_member_id: memberId,
+              p_tx_hash: txHash,
+            });
 
-        if (fetchErr) throw fetchErr;
-
-        const freshShares = (freshData.shares as SplitShare[]).map((s: SplitShare) =>
-          s.memberId === memberId ? { ...s, paid: true, txHash } : s
-        );
-        const freshSettled = freshShares.every((s: SplitShare) => s.paid);
-
-        const { data: rowsUpdated, error: updateErr } = await client
-          .from("expenses")
-          .update({ shares: freshShares, settled: freshSettled })
-          .eq("id", expenseId)
-          .select("id");
-
-        if (updateErr) throw updateErr;
-        if (!rowsUpdated || rowsUpdated.length === 0) {
-          throw new Error(
-            "Payment sent on Stellar but could not be recorded. " +
-            "Make sure your Stellar wallet address is entered correctly in the expense member list."
-          );
+          if (!rpcErr && rpcData && rpcData.length > 0) {
+            const updatedRow = dbRowToExpense(rpcData[0]);
+            setExpenses((prev) => {
+              const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
+              localStorage.setItem(LS_EXPENSES, JSON.stringify(synced));
+              return synced;
+            });
+            rpcSucceeded = true;
+          }
+        } catch (rpcErr) {
+          console.warn("mark_share_paid RPC failed or not installed, falling back to OCC retry:", rpcErr);
         }
 
-        setExpenses((prev) => {
-          const synced = prev.map((e) =>
-            e.id !== expenseId ? e : { ...e, shares: freshShares, settled: freshSettled }
+        if (rpcSucceeded) return;
+
+        // 2. Fallback path: Optimistic Concurrency Control (OCC) with Retry Loop
+        const MAX_RETRIES = 5;
+        let lastError: unknown = null;
+
+        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
+          const { data: freshData, error: fetchErr } = await client
+            .from("expenses")
+            .select("*")
+            .eq("id", expenseId)
+            .single();
+
+          if (fetchErr) throw fetchErr;
+
+          const currentVersion = freshData.version ?? 1;
+          const existingShares = (freshData.shares as SplitShare[]) || [];
+
+          // Merge: preserve any other members marked paid concurrently
+          const freshShares = existingShares.map((s: SplitShare) =>
+            s.memberId === memberId ? { ...s, paid: true, txHash } : s
           );
-          localStorage.setItem(LS_EXPENSES, JSON.stringify(synced));
-          return synced;
-        });
+          const freshSettled = freshShares.every((s: SplitShare) => s.paid);
+
+          // Update conditionally matching the version token
+          const { data: rowsUpdated, error: updateErr } = await client
+            .from("expenses")
+            .update({
+              shares: freshShares,
+              settled: freshSettled,
+              version: currentVersion + 1,
+            })
+            .eq("id", expenseId)
+            .eq("version", currentVersion)
+            .select("*");
+
+          if (updateErr) {
+            lastError = updateErr;
+            // If column 'version' does not exist in db, fallback to direct update
+            if (String(updateErr.message || "").includes("version")) {
+              const { data: fallbackRows, error: fallbackErr } = await client
+                .from("expenses")
+                .update({
+                  shares: freshShares,
+                  settled: freshSettled,
+                })
+                .eq("id", expenseId)
+                .select("*");
+
+              if (fallbackErr) throw fallbackErr;
+              if (fallbackRows && fallbackRows.length > 0) {
+                const updatedExpense = dbRowToExpense(fallbackRows[0]);
+                setExpenses((prev) => {
+                  const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
+                  localStorage.setItem(LS_EXPENSES, JSON.stringify(synced));
+                  return synced;
+                });
+                return;
+              }
+            }
+          }
+
+          if (rowsUpdated && rowsUpdated.length > 0) {
+            const updatedExpense = dbRowToExpense(rowsUpdated[0]);
+            setExpenses((prev) => {
+              const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
+              localStorage.setItem(LS_EXPENSES, JSON.stringify(synced));
+              return synced;
+            });
+            return;
+          }
+
+          // Conflict detected (version changed by concurrent writer) - backoff and retry
+          if (attempt < MAX_RETRIES - 1) {
+            await new Promise((r) => setTimeout(r, 40 * (attempt + 1) + Math.random() * 40));
+          }
+        }
+
+        throw lastError || new Error("Failed to record payment due to concurrent updates. Please try again.");
       } catch (err) {
         console.error("Failed to persist markSharePaid to Supabase:", err);
         setExpenses((prev) => {
