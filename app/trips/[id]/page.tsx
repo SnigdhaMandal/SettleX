@@ -29,6 +29,8 @@ import { SettlementSummary } from "@/components/trips/SettlementSummary";
 import { PaymentStatus } from "@/components/payment/PaymentStatus";
 import { useWallet } from "@/hooks/useWallet";
 import { useAuth } from "@/context/AuthContext";
+import { formatXLM } from "@/lib/utils";
+import { xlmToStroops, stroopsToXlm } from "@/lib/split/calculator";
 import type { Expense, Member, SplitShare } from "@/types/expense";
 
 type Tab = "expenses" | "settle";
@@ -49,7 +51,6 @@ function TripExpenseCard({
   const { payShare, paymentState, reset, retryOnChainRecord } = usePayment({ expenseId: expense.id });
 
   const paidCount = expense.shares.filter((s) => s.paid).length;
-  const total = parseFloat(expense.totalAmount);
   const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
   const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
     month: "short",
@@ -88,7 +89,7 @@ function TripExpenseCard({
           <div className="min-w-0">
             <p className="text-sm font-bold text-[#0F0F14] truncate">{expense.title}</p>
             <p className="text-xs text-[#AAA] leading-relaxed">
-              {total.toFixed(4)} XLM &middot; {expense.members.length} members &middot; {createdAt}
+              {formatXLM(expense.totalAmount)} XLM &middot; {expense.members.length} members &middot; {createdAt}
             </p>
           </div>
         </div>
@@ -211,9 +212,15 @@ export default function TripDetailPage() {
   }
 
   const tripExpenses = expenses.filter((e) => trip.expenseIds.includes(e.id));
-  const totalXLM = tripExpenses.reduce(
-    (sum, e) => sum + parseFloat(e.totalAmount),
-    0
+  const totalStroops = tripExpenses.reduce(
+    (sum, e) => {
+      try {
+        return sum + xlmToStroops(e.totalAmount || "0");
+      } catch {
+        return sum;
+      }
+    },
+    0n
   );
   const paidShares = tripExpenses.flatMap((e) => e.shares).filter((s) => s.paid).length;
   const totalShares = tripExpenses.flatMap((e) => e.shares).length;
@@ -272,9 +279,9 @@ export default function TripDetailPage() {
                     <ReceiptText size={11} />
                     {tripExpenses.length} expense{tripExpenses.length !== 1 ? "s" : ""}
                   </span>
-                  {totalXLM > 0 && (
+                  {totalStroops > 0n && (
                     <span className="font-semibold text-[#555]">
-                      {totalXLM.toFixed(4)} XLM total
+                      {formatXLM(stroopsToXlm(totalStroops))} XLM total
                     </span>
                   )}
                   {totalShares > 0 && (

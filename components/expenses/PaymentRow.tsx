@@ -3,10 +3,8 @@
 import React, { useState } from "react";
 import { motion } from "framer-motion";
 import { ExternalLink, ReceiptIcon } from "lucide-react";
-import type { SplitShare } from "@/types/expense";
-import { formatAddress } from "@/lib/utils";
+import { formatAddress, formatXLM, cn } from "@/lib/utils";
 import { STELLAR_EXPLORER } from "@/lib/utils/constants";
-import { cn } from "@/lib/utils";
 import { PayButton } from "@/components/payment/PayButton";
 import { QRToggle } from "@/components/payment/QRCodeDisplay";
 import { ReceiptModal } from "@/components/expenses/ReceiptModal";
@@ -117,7 +115,7 @@ export function PaymentRow({
           {/* Amount + action */}
           <div className="flex items-center justify-between sm:justify-end gap-2">
             <span className="text-sm font-bold text-[#0F0F14]">
-              {parseFloat(share.amount).toFixed(4)}{" "}
+              {formatXLM(share.amount)}{" "}
               <span className="text-[10px] font-normal text-[#888]">XLM</span>
             </span>
 

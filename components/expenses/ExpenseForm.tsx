@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from "framer-motion";
 import { Plus, Trash2, Zap, Users, ChevronDown } from "lucide-react";
 import { Input, Textarea } from "@/components/ui/Input";
 import { SplitCalculator } from "./SplitCalculator";
-import { calculateSplit, isValidXLMAmount, isValidStellarAddress } from "@/lib/split/calculator";
+import { calculateSplit, isValidXLMAmount, isValidStellarAddress, stroopsToXlm, xlmToStroops } from "@/lib/split/calculator";
 import { useExpense } from "@/hooks/useExpense";
 import { useToast } from "@/components/ui/Toast";
 import type { Expense, ExpenseFormData, Member, SplitMode } from "@/types/expense";
@@ -72,12 +72,14 @@ export function ExpenseForm({
   const namedMembers = members.filter((m) => m.name.trim());
 
   const shares = useMemo(() => {
-    const amount = parseFloat(totalAmount);
-    if (isNaN(amount) || amount <= 0) return [];
+    if (!totalAmount || !isValidXLMAmount(totalAmount)) return [];
     const named = members.filter((m) => m.name.trim());
     if (named.length < 2) return [];
-    // Use named members for the preview (unnamed slots are ignored)
-    return calculateSplit(amount, named, paidByMemberId, splitMode);
+    try {
+      return calculateSplit(totalAmount, named, paidByMemberId, splitMode);
+    } catch {
+      return [];
+    }
   }, [totalAmount, members, paidByMemberId, splitMode]);
 
   const payerName =
@@ -142,7 +144,7 @@ export function ExpenseForm({
         }));
 
         const calculatedShares = calculateSplit(
-          parseFloat(totalAmount),
+          totalAmount,
           cleanMembers,
           paidByMemberId,
           splitMode
@@ -152,7 +154,7 @@ export function ExpenseForm({
           id: crypto.randomUUID(),
           title: title.trim(),
           description: description.trim() || undefined,
-          totalAmount: parseFloat(totalAmount).toFixed(7),
+          totalAmount: stroopsToXlm(xlmToStroops(totalAmount)),
           currency: "XLM",
           splitMode,
           paidByMemberId,

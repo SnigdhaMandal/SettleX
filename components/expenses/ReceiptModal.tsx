@@ -5,7 +5,7 @@ import { CheckCircle2, ExternalLink, Layers } from "lucide-react";
 import { Modal } from "@/components/ui/Modal";
 import { TransactionHash } from "@/components/payment/TransactionHash";
 import { STELLAR_EXPLORER } from "@/lib/utils/constants";
-import { cn } from "@/lib/utils";
+import { cn, formatXLM } from "@/lib/utils";
 
 export interface ReceiptModalProps {
   open: boolean;
@@ -28,7 +28,7 @@ export function ReceiptModal({
   ledger,
 }: ReceiptModalProps) {
   const explorerUrl = `${STELLAR_EXPLORER}/tx/${txHash}`;
-  const displayAmount = parseFloat(amount).toFixed(4);
+  const displayAmount = formatXLM(amount);
 
   return (
     <Modal
