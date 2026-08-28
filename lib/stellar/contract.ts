@@ -75,20 +75,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-function xlmToStroops(xlm: string): bigint {
-  const parts = xlm.split(".");
-  const whole = BigInt(parts[0] ?? "0");
-  const fracStr = (parts[1] ?? "").padEnd(7, "0").slice(0, 7);
-  const frac = BigInt(fracStr);
-  return whole * 10_000_000n + frac;
-}
-
-export function stroopsToXlm(stroops: bigint | string): string {
-  const n = BigInt(stroops);
-  const whole = n / 10_000_000n;
-  const frac  = n % 10_000_000n;
-  return `${whole}.${frac.toString().padStart(7, "0")}`;
-}
+export { xlmToStroops, stroopsToXlm } from "@/lib/split/calculator";
 
 function contractReady(caller: string): boolean {
   if (!CONTRACT_ID) {

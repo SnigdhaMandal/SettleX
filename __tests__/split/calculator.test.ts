@@ -4,6 +4,8 @@ import {
   calculateSplit,
   isValidXLMAmount,
   isValidStellarAddress,
+  xlmToStroops,
+  stroopsToXlm,
 } from "@/lib/split/calculator";
 import type { Member } from "@/types/expense";
 
@@ -12,6 +14,24 @@ import type { Member } from "@/types/expense";
 function mkMembers(names: string[]): Member[] {
   return names.map((name, i) => ({ id: `m-${i}`, name }));
 }
+
+// ─── xlmToStroops & stroopsToXlm ──────────────────────────────────────────────
+
+describe("xlmToStroops & stroopsToXlm", () => {
+  it("converts XLM strings to exact stroops", () => {
+    expect(xlmToStroops("1")).toBe(10_000_000n);
+    expect(xlmToStroops("0.0000001")).toBe(1n);
+    expect(xlmToStroops("100.5")).toBe(1_005_000_000n);
+    expect(xlmToStroops("0")).toBe(0n);
+  });
+
+  it("converts stroops to exact 7-decimal XLM strings", () => {
+    expect(stroopsToXlm(10_000_000n)).toBe("1.0000000");
+    expect(stroopsToXlm(1n)).toBe("0.0000001");
+    expect(stroopsToXlm(1_005_000_000n)).toBe("100.5000000");
+    expect(stroopsToXlm(0n)).toBe("0.0000000");
+  });
+});
 
 // ─── calculateEqualSplit ──────────────────────────────────────────────────────
 
@@ -59,6 +79,13 @@ describe("calculateEqualSplit", () => {
     expect(shares[0].name).toBe("Bob");
     expect(shares[0].memberId).toBe(members[1].id);
   });
+
+  it("throws an error when total amount is negative", () => {
+    const members = mkMembers(["Alice", "Bob"]);
+    expect(() => calculateEqualSplit(-50, members, members[0].id)).toThrow(
+      "Total XLM amount cannot be negative"
+    );
+  });
 });
 
 // ─── calculateCustomSplit ─────────────────────────────────────────────────────
@@ -88,6 +115,48 @@ describe("calculateCustomSplit", () => {
 
   it("returns empty array when members is empty", () => {
     expect(calculateCustomSplit(100, [], "none")).toHaveLength(0);
+  });
+
+  it("reconciles remainders so shares sum back to intended total exactly", () => {
+    const members: Member[] = [
+      { id: "p", name: "Payer", weight: 1 },
+      { id: "a", name: "Alice", weight: 1 },
+      { id: "b", name: "Bob", weight: 1 },
+    ];
+    const shares = calculateCustomSplit(100, members, "p");
+    const totalNonPayerStroops = shares.reduce(
+      (acc, s) => acc + xlmToStroops(s.amount),
+      0n
+    );
+    // Total is 100 XLM = 1,000,000,000 stroops.
+    // 3 equal weights of 1 -> 333,333,334 + 333,333,333 + 333,333,333 = 1,000,000,000.
+    // 2 non-payers have 666,666,666 stroops.
+    expect(totalNonPayerStroops).toBe(666_666_666n);
+  });
+
+  it("throws an error when member weight is zero or negative", () => {
+    const members: Member[] = [
+      { id: "p", name: "Payer", weight: 1 },
+      { id: "a", name: "Alice", weight: 0 },
+    ];
+    expect(() => calculateCustomSplit(100, members, "p")).toThrow(
+      "weight must be a positive number"
+    );
+
+    const negativeMembers: Member[] = [
+      { id: "p", name: "Payer", weight: 1 },
+      { id: "a", name: "Alice", weight: -2 },
+    ];
+    expect(() => calculateCustomSplit(100, negativeMembers, "p")).toThrow(
+      "weight must be a positive number"
+    );
+  });
+
+  it("throws an error when total amount is negative", () => {
+    const members = mkMembers(["Payer", "Bob"]);
+    expect(() => calculateCustomSplit(-10, members, members[0].id)).toThrow(
+      "Total XLM amount cannot be negative"
+    );
   });
 });
 

@@ -14,6 +14,7 @@ import { Modal } from "@/components/ui/Modal";
 import { TripCard } from "@/components/trips/TripCard";
 import { TripForm } from "@/components/trips/TripForm";
 import { useToast } from "@/components/ui/Toast";
+import { stroopsToXlm, xlmToStroops } from "@/lib/split/calculator";
 import type { TripFormData, Trip } from "@/types/trip";
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
@@ -84,6 +85,15 @@ export default function TripsPage() {
     }
   };
 
+  const handleDeleteTrip = async (id: string) => {
+    try {
+      await deleteTrip(id);
+      toastSuccess("Trip deleted", "The trip was removed successfully.");
+    } catch (err: any) {
+      toastError("Delete failed", err?.message || "Could not delete trip. Check your permissions or connection.");
+    }
+  };
+
   return (
     <AuthGuard>
       <div className="min-h-screen bg-[#F6F6F6]">
@@ -139,17 +149,20 @@ export default function TripsPage() {
                   const tripExpenses = expenses.filter((e) =>
                     trip.expenseIds.includes(e.id)
                   );
-                  const totalXLM = tripExpenses.reduce(
-                    (sum, e) => sum + parseFloat(e.totalAmount),
-                    0
-                  );
+                  const totalStroops = tripExpenses.reduce((sum, e) => {
+                    try {
+                      return sum + xlmToStroops(e.totalAmount || "0");
+                    } catch {
+                      return sum;
+                    }
+                  }, 0n);
                   return (
                     <TripCard
                       key={trip.id}
                       trip={trip}
                       expenseCount={tripExpenses.length}
                       totalXLM={totalXLM}
-                      onDelete={deleteTrip}
+                      onDelete={handleDeleteTrip}
                       index={i}
                     />
                   );

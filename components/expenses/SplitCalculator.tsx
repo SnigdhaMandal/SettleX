@@ -2,7 +2,8 @@
 
 import React from "react";
 import { Users, Calculator } from "lucide-react";
-import type { SplitShare } from "@/types/expense";
+import { formatXLM } from "@/lib/utils";
+import { xlmToStroops, stroopsToXlm } from "@/lib/split/calculator";
 import { PaymentRow } from "./PaymentRow";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -37,8 +38,12 @@ export function SplitCalculator({
   connectedWalletAddress,
   payerWalletAddress,
 }: SplitCalculatorProps) {
-  const total = parseFloat(totalAmount) || 0;
-  const splitTotal = shares.reduce((s, x) => s + parseFloat(x.amount), 0);
+  const totalStroops = (() => {
+    try { return xlmToStroops(totalAmount || "0"); } catch { return 0n; }
+  })();
+  const splitTotalStroops = shares.reduce((s, x) => {
+    try { return s + xlmToStroops(x.amount || "0"); } catch { return s; }
+  }, 0n);
   const paidCount = shares.filter((s) => s.paid).length;
 
   if (shares.length === 0) {
@@ -61,7 +66,7 @@ export function SplitCalculator({
           <span className="leading-relaxed">
             <strong className="text-[#0F0F14]">{payerName}</strong> paid{" "}
             <strong className="text-[#0F0F14]">
-              {total.toFixed(4)} XLM
+              {formatXLM(totalAmount)} XLM
             </strong>
           </span>
         </div>
@@ -103,10 +108,10 @@ export function SplitCalculator({
         <span>Split total</span>
         <span
           className={
-            Math.abs(splitTotal - total) < 0.0001 ? "text-[#2D6600]" : "text-orange-500"
+            splitTotalStroops <= totalStroops ? "text-[#2D6600]" : "text-orange-500"
           }
         >
-          {splitTotal.toFixed(7)} XLM
+          {formatXLM(stroopsToXlm(splitTotalStroops))} XLM
         </span>
       </div>
     </div>
