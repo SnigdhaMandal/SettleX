@@ -35,16 +35,19 @@ export function parsePaymentEvent(raw: rpc.Api.EventResponse): ContractPaymentEv
     let expenseId     = "";
     let member        = "";
     let amountStroops = "0";
+    let attested      = false;
 
     if (Array.isArray(valueNative) && valueNative.length >= 3) {
       expenseId     = String(valueNative[0] ?? "");
       member        = String(valueNative[1] ?? "");
       amountStroops = String(valueNative[2] ?? "0");
+      attested      = valueNative[6] === true;
     } else if (valueNative && typeof valueNative === "object") {
       const obj = valueNative as Record<string, unknown>;
       expenseId = String(obj.expense_id ?? obj.expenseId ?? "");
       member = String(obj.member ?? "");
       amountStroops = String(obj.amount ?? obj.amount_stroops ?? "0");
+      attested = obj.attested === true;
     }
 
     return {
@@ -55,6 +58,7 @@ export function parsePaymentEvent(raw: rpc.Api.EventResponse): ContractPaymentEv
       member,
       amountStroops,
       txHash:         String(raw.txHash ?? ""),
+      attested,
     };
   } catch {
     return null;

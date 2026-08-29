@@ -2,7 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import { motion } from "framer-motion";
-import { ArrowRight, Scale, CheckCircle2, Database } from "lucide-react";
+import { AlertCircle, ArrowRight, Scale, CheckCircle2, Database } from "lucide-react";
 import type { Expense } from "@/types/expense";
 import type { Trip } from "@/types/trip";
 import type { ContractPaymentEvent } from "@/types/contract";
@@ -31,7 +31,11 @@ type RowState =
   | { status: "done"; txHash: string };
 
 function deriveRawDebts(expenses: Expense[], onChainEvents: ContractPaymentEvent[] = []): RawDebt[] {
-  const onChainSet = new Set(onChainEvents.map(e => `${e.expenseId}-${e.member.toLowerCase()}`));
+  const attestedOnChainSet = new Set(
+    onChainEvents
+      .filter((e) => e.attested === true)
+      .map((e) => `${e.expenseId}-${e.member.toLowerCase()}`),
+  );
   
   const debts: RawDebt[] = [];
   for (const expense of expenses) {
@@ -39,7 +43,9 @@ function deriveRawDebts(expenses: Expense[], onChainEvents: ContractPaymentEvent
       const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
       if (!payer || share.memberId === expense.paidByMemberId) continue;
       
-      const isPaidOnChain = share.walletAddress && onChainSet.has(`${expense.id}-${share.walletAddress.toLowerCase()}`);
+      const isPaidOnChain =
+        share.walletAddress &&
+        attestedOnChainSet.has(`${expense.id}-${share.walletAddress.toLowerCase()}`);
       if (share.paid || isPaidOnChain) continue;
       
       debts.push({
@@ -55,16 +61,45 @@ function deriveRawDebts(expenses: Expense[], onChainEvents: ContractPaymentEvent
   return debts;
 }
 
+function deriveUnverifiedClaims(
+  expenses: Expense[],
+  onChainEvents: ContractPaymentEvent[] = [],
+): Map<string, number> {
+  const unverifiedOnChainSet = new Set(
+    onChainEvents
+      .filter((e) => e.attested !== true)
+      .map((e) => `${e.expenseId}-${e.member.toLowerCase()}`),
+  );
+
+  const claims = new Map<string, number>();
+  for (const expense of expenses) {
+    const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
+    if (!payer?.walletAddress) continue;
+
+    for (const share of expense.shares) {
+      if (share.paid || share.memberId === expense.paidByMemberId || !share.walletAddress) continue;
+      if (!unverifiedOnChainSet.has(`${expense.id}-${share.walletAddress.toLowerCase()}`)) continue;
+
+      const key = `${share.walletAddress.toLowerCase()}-${payer.walletAddress.toLowerCase()}`;
+      claims.set(key, (claims.get(key) ?? 0) + 1);
+    }
+  }
+
+  return claims;
+}
+
 function NetPaymentRow({
   payment,
   index,
   tripName,
   expenses,
+  unverifiedClaimCount,
 }: {
   payment: NetPayment;
   index: number;
   tripName: string;
   expenses: Expense[];
+  unverifiedClaimCount?: number;
 }) {
   const { publicKey } = useWallet();
   const { markSharePaid } = useExpense();
@@ -174,6 +209,13 @@ function NetPaymentRow({
         </div>
       )}
 
+      {!done && !!unverifiedClaimCount && (
+        <p className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#8A5A00] pl-1">
+          <AlertCircle size={11} className="shrink-0" />
+          {payment.from} reports paid - unverified
+        </p>
+      )}
+
       {!done && rowState.status === "idle" && publicKey && publicKey !== payment.fromWallet && (
         <p className="text-[10px] text-[#AAA] pl-1">
           Connect {payment.from}&apos;s wallet to pay
@@ -184,8 +226,16 @@ function NetPaymentRow({
 }
 
 export function SettlementSummary({ trip, expenses, onChainEvents = [] }: SettlementSummaryProps) {
-  const rawDebts    = useMemo(() => deriveRawDebts(expenses, onChainEvents), [expenses, onChainEvents]);
-  const netPayments = useMemo(() => computeNetPayments(rawDebts), [rawDebts]);
+  const rawDebts         = useMemo(() => deriveRawDebts(expenses, onChainEvents), [expenses, onChainEvents]);
+  const unverifiedClaims = useMemo(() => deriveUnverifiedClaims(expenses, onChainEvents), [expenses, onChainEvents]);
+  const netPayments      = useMemo(() => computeNetPayments(rawDebts), [rawDebts]);
+  const eventCounts      = useMemo(
+    () => ({
+      attested:     onChainEvents.filter((event) => event.attested === true).length,
+      selfReported: onChainEvents.filter((event) => event.attested !== true).length,
+    }),
+    [onChainEvents],
+  );
 
   if (netPayments.length === 0) {
     return (
@@ -206,12 +256,20 @@ export function SettlementSummary({ trip, expenses, onChainEvents = [] }: Settle
             Settlement ({netPayments.length} payment{netPayments.length !== 1 ? "s" : ""})
           </h3>
         </div>
-        {onChainEvents.length > 0 && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#2D6600] bg-[#B9FF66]/20 px-2 py-0.5 rounded-full">
-            <Database size={9} />
-            {onChainEvents.length} on-chain
-          </span>
-        )}
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {eventCounts.attested > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#2D6600] bg-[#B9FF66]/20 px-2 py-0.5 rounded-full">
+              <Database size={9} />
+              {eventCounts.attested} verified on-chain
+            </span>
+          )}
+          {eventCounts.selfReported > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#8A5A00] bg-[#FFF2CC] px-2 py-0.5 rounded-full">
+              <AlertCircle size={9} />
+              {eventCounts.selfReported} self-reported
+            </span>
+          )}
+        </div>
       </div>
 
       {netPayments.map((p, i) => (
@@ -221,6 +279,11 @@ export function SettlementSummary({ trip, expenses, onChainEvents = [] }: Settle
           index={i}
           tripName={trip.name}
           expenses={expenses}
+          unverifiedClaimCount={
+            p.fromWallet && p.toWallet
+              ? unverifiedClaims.get(`${p.fromWallet.toLowerCase()}-${p.toWallet.toLowerCase()}`)
+              : undefined
+          }
         />
       ))}
     </div>
