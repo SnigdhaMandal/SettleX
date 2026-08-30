@@ -44,8 +44,12 @@ Server-only env vars, all listed in
 `NEXT_PUBLIC_`:
 
 - `SUPABASE_JWT_SECRET` — signs the access tokens RLS authorizes on.
-- `AUTH_CHALLENGE_SECRET` — optional, binds a nonce to its wallet; falls back to
-  the JWT secret.
+- `AUTH_CHALLENGE_SECRET` — binds a nonce to its wallet. **Required in
+  production**, where it must differ from `SUPABASE_JWT_SECRET`: the server
+  refuses to boot otherwise. Keeping the keys separate means a leak in one path
+  does not compromise the other, and rotating the JWT secret does not silently
+  invalidate every outstanding challenge. Outside production it falls back to
+  the JWT secret so a local checkout runs with one value set.
 - `AUTH_SESSION_TTL_SECONDS` — optional session lifetime, default 12h.
 - `SUPABASE_SERVICE_ROLE_KEY` — **required on any multi-instance deployment.**
   It backs the shared replay guard and rate limiter (`auth_nonces`,
