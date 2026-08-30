@@ -12,7 +12,9 @@ import {
   CHALLENGE_ENDPOINT,
   LS_SESSION,
   SESSION_REFRESH_SKEW_SECONDS,
+  SIGNOUT_ENDPOINT,
   VERIFY_ENDPOINT,
+  WALLET_CLAIM,
 } from "@/lib/auth/constants";
 import { signXDR } from "@/lib/freighter";
 
@@ -29,21 +31,107 @@ export interface WalletSession {
 /** Raised when the handshake could not complete (rejected signature, etc.). */
 export class WalletSessionError extends Error {}
 
-// ─── Cached session ───────────────────────────────────────────────────────────
+// ─── Token claims ─────────────────────────────────────────────────────────────
 
-function isFresh(session: WalletSession, now = Date.now()): boolean {
-  return session.expiresAt - SESSION_REFRESH_SKEW_SECONDS * 1000 > now;
+/**
+ * The parts of the token this client trusts. They come from the JWT payload
+ * itself, never from the JSON fields stored beside it.
+ */
+interface TokenClaims {
+  walletAddress: string;
+  /** Expiry in milliseconds since the epoch. */
+  expiresAt: number;
 }
 
+/**
+ * Decodes a JWT payload without verifying the signature.
+ *
+ * The signature cannot be checked here — the secret is server-side, which is
+ * the whole point. That is fine: this is not an authorization decision. The
+ * server re-verifies the token on every request and RLS authorizes on the real
+ * claim, so a forged token gets the browser nothing. What reading the claims
+ * *does* buy is that the UI shows the identity the token actually carries,
+ * instead of a sibling JSON field an attacker could set to any address.
+ */
+function decodeTokenClaims(accessToken: string): TokenClaims | null {
+  try {
+    const parts = accessToken.split(".");
+    if (parts.length !== 3) return null;
+
+    const padded = parts[1].replace(/-/g, "+").replace(/_/g, "/");
+    const json = atob(padded + "=".repeat((4 - (padded.length % 4)) % 4));
+    const claims: unknown = JSON.parse(json);
+    if (!claims || typeof claims !== "object") return null;
+
+    const record = claims as Record<string, unknown>;
+    const walletAddress = record[WALLET_CLAIM];
+    const exp = record.exp;
+    if (typeof walletAddress !== "string" || !walletAddress) return null;
+    if (typeof exp !== "number") return null;
+
+    return { walletAddress, expiresAt: exp * 1000 };
+  } catch {
+    return null;
+  }
+}
+
+// ─── Cached session ───────────────────────────────────────────────────────────
+
+/**
+ * Freshness measured against the token's own `exp`, so editing the stored
+ * `expiresAt` cannot make a dead token look alive.
+ */
+function isFresh(session: WalletSession, now = Date.now()): boolean {
+  const claims = decodeTokenClaims(session.accessToken);
+  if (!claims) return false;
+  return claims.expiresAt - SESSION_REFRESH_SKEW_SECONDS * 1000 > now;
+}
+
+/**
+ * Returns the stored session only if the token itself proves it belongs to
+ * `walletAddress` and has not expired.
+ *
+ * The stored `walletAddress`/`expiresAt` fields are a cache hint and nothing
+ * more: pairing a victim's address with an attacker's valid token used to make
+ * the UI mark the victim's wallet as verified, because these checks read the
+ * JSON beside the token rather than the claims inside it.
+ */
 export function readStoredSession(walletAddress: string): WalletSession | null {
   if (typeof window === "undefined") return null;
   try {
     const raw = window.localStorage.getItem(LS_SESSION);
     if (!raw) return null;
-    const session = JSON.parse(raw) as WalletSession;
-    if (session.walletAddress !== walletAddress) return null;
-    if (!session.accessToken || !isFresh(session)) return null;
+    const stored = JSON.parse(raw) as WalletSession;
+    if (!stored?.accessToken || typeof stored.accessToken !== "string") return null;
+
+    const claims = decodeTokenClaims(stored.accessToken);
+    if (!claims) return null;
+    if (claims.walletAddress !== walletAddress) return null;
+
+    // Rebuild from the claims so nothing downstream can read a forged field.
+    const session: WalletSession = {
+      walletAddress: claims.walletAddress,
+      accessToken: stored.accessToken,
+      expiresAt: claims.expiresAt,
+    };
+    if (!isFresh(session)) return null;
     return session;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Reads the stored session without checking which wallet it belongs to. Only
+ * for sign-out, where the point is to revoke whatever token this browser holds.
+ */
+function readAnyStoredSession(): WalletSession | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LS_SESSION);
+    if (!raw) return null;
+    const session = JSON.parse(raw) as WalletSession;
+    return session?.accessToken ? session : null;
   } catch {
     return null;
   }
@@ -57,8 +145,48 @@ function storeSession(session: WalletSession): void {
   }
 }
 
-/** Drops the cached token so the next authenticated call re-runs the handshake. */
-export function clearWalletSession(): void {
+/**
+ * Tells the server to revoke the current token, so it stops working everywhere
+ * rather than only in this browser.
+ *
+ * Fire-and-forget by design: the local session is cleared either way, because a
+ * user who clicked "sign out" must never be left holding a live session just
+ * because the network failed. The token stays denied server-side once the call
+ * lands; if it never lands, the short TTL is the backstop.
+ */
+function revokeOnServer(session: WalletSession, everywhere: boolean): void {
+  try {
+    const body = JSON.stringify({ everywhere });
+    void fetch(SIGNOUT_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.accessToken}`,
+      },
+      body,
+      keepalive: true,
+    }).catch(() => {
+      // Already logged out locally; nothing useful to show the user here.
+    });
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Drops the cached token and revokes it server-side, so the next authenticated
+ * call re-runs the handshake and the old token is dead rather than merely
+ * forgotten.
+ *
+ * Pass `everywhere` to also deny every other token issued to this wallet.
+ */
+export function clearWalletSession(options: { everywhere?: boolean } = {}): void {
+  // After a reload the in-memory copy is gone but localStorage still holds a
+  // live token — read it back, or sign-out would revoke nothing in exactly the
+  // case that matters most.
+  const revoking = memoizedSession ?? readAnyStoredSession();
+  if (revoking) revokeOnServer(revoking, options.everywhere === true);
+
   memoizedSession = null;
   inFlight = null;
   if (memoizedClient) {
@@ -158,10 +286,17 @@ async function runHandshake(walletAddress: string): Promise<WalletSession> {
     challengeToken: challenge.challengeToken,
   });
 
+  // Derive identity and expiry from the token, not the surrounding JSON, so
+  // the stored blob always agrees with what the token actually says.
+  const claims = decodeTokenClaims(verified.accessToken);
+  if (!claims || claims.walletAddress !== walletAddress) {
+    throw new WalletSessionError("The server returned a token for a different wallet.");
+  }
+
   const session: WalletSession = {
-    walletAddress,
+    walletAddress: claims.walletAddress,
     accessToken: verified.accessToken,
-    expiresAt: new Date(verified.expiresAt).getTime(),
+    expiresAt: claims.expiresAt,
   };
 
   memoizedSession = session;
@@ -189,12 +324,15 @@ export async function getWalletSession(
 ): Promise<WalletSession | null> {
   if (!walletAddress) throw new WalletSessionError("Wallet not connected.");
 
-  const cached =
+  // The memoized copy is rebuilt from claims when it is stored, but re-check
+  // ownership against the token so this path cannot drift from the stored one.
+  const memoized =
     memoizedSession &&
-    memoizedSession.walletAddress === walletAddress &&
+    decodeTokenClaims(memoizedSession.accessToken)?.walletAddress === walletAddress &&
     isFresh(memoizedSession)
       ? memoizedSession
-      : readStoredSession(walletAddress);
+      : null;
+  const cached = memoized ?? readStoredSession(walletAddress);
 
   if (cached) {
     memoizedSession = cached;

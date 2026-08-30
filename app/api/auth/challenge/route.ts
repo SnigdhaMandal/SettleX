@@ -7,7 +7,7 @@
  */
 import { NextResponse } from "next/server";
 import { createChallenge, isValidWalletAddress } from "@/lib/auth/challenge";
-import { clientKey, rateLimit } from "@/lib/auth/rateLimit";
+import { clientKey, enforceRateLimit } from "@/lib/auth/rateLimit";
 import { AuthConfigError, getChallengeSecret } from "@/lib/auth/serverConfig";
 
 export const runtime = "nodejs";
@@ -16,7 +16,7 @@ export const dynamic = "force-dynamic";
 const NO_STORE = { "Cache-Control": "no-store" } as const;
 
 export async function POST(request: Request) {
-  const limit = rateLimit(`challenge:${clientKey(request)}`, 30, 60_000);
+  const limit = await enforceRateLimit(`challenge:${clientKey(request)}`, 30, 60_000);
   if (!limit.allowed) {
     return NextResponse.json(
       { error: "Too many authentication attempts. Please wait a moment." },

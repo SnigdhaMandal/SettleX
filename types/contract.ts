@@ -62,8 +62,8 @@ export interface ContractPaymentEvent {
   amountStroops: string;
   txHash: string;
   /**
-   * Only literal `true` means an attestor co-signed the record. Missing/false
-   * events are self-reported claims, not verified proof of payment.
+   * Only literal `true` means the event can be treated as verified payment
+   * evidence. Missing/false events are self-attested claims.
    */
   attested?: boolean;
 }
