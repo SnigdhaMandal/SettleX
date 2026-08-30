@@ -4,7 +4,7 @@ pub mod pool;
 
 use soroban_sdk::{
     contract, contractimpl, contracterror, contracttype, panic_with_error, symbol_short,
-    Address, Env, String, Vec,
+    Address, BytesN, Env, String, Vec,
 };
 
 #[contracterror]
@@ -23,6 +23,17 @@ pub enum ContractError {
     TxHashTooLong      = 10,
     NotPaid            = 11,
     Unauthorized       = 12,
+}
+
+#[contracttype]
+#[derive(Clone)]
+pub struct PaymentRecordV1 {
+    pub expense_id: String,
+    pub payer:      Address,
+    pub member:     Address,
+    pub amount:     i128,
+    pub tx_hash:    String,
+    pub timestamp:  u64,
 }
 
 #[contracttype]
@@ -84,6 +95,7 @@ const LEDGERS_PER_DAY:        u32 = 17_280;
 const STORAGE_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 30;
 const STORAGE_BUMP_AMOUNT:    u32 = LEDGERS_PER_DAY * 365;
 const CONTRACT_VERSION:       u32 = 2;
+const MIN_MIGRATABLE_VERSION:  u32 = 1;
 const MAX_ID_LEN:             u32 = 64;
 const MAX_TX_HASH_LEN:        u32 = 128;
 const MAX_AMOUNT_STROOPS:     i128 = 10_000_000_000_000_000;
@@ -112,15 +124,43 @@ impl SettleXContract {
         env.events().publish((symbol_short!("stx_ini"),), CONTRACT_VERSION);
     }
 
-    pub fn set_pool_contract(env: Env, pool_contract: Address) {
-        let version: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::Version)
-            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
-        if version != CONTRACT_VERSION {
+    /// Installs new WASM for this contract. If the replacement changes storage
+    /// shape or bumps `CONTRACT_VERSION`, call `migrate` after upgrading.
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin = Self::require_admin_at_supported_version(&env);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        env.events().publish(
+            (symbol_short!("upgrade"),),
+            (CONTRACT_VERSION, admin, env.ledger().timestamp()),
+        );
+    }
+
+    /// Bumps instance state from a supported older version to the current one.
+    ///
+    /// v1 payment vectors remain readable through `get_payments`, which maps
+    /// them to v2 records with `attested: false`. v1 did not keep a global trip
+    /// index, so this avoids an impossible full-ledger enumeration.
+    pub fn migrate(env: Env) {
+        let old_version = Self::read_version(&env);
+        if old_version == CONTRACT_VERSION {
+            return;
+        }
+        if old_version < MIN_MIGRATABLE_VERSION || old_version > CONTRACT_VERSION {
             panic_with_error!(&env, ContractError::VersionMismatch);
         }
+
+        let admin = Self::require_admin_at_supported_version(&env);
+        env.storage().instance().set(&DataKey::Version, &CONTRACT_VERSION);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        env.events().publish(
+            (symbol_short!("migrate"),),
+            (old_version, CONTRACT_VERSION, admin, env.ledger().timestamp()),
+        );
+    }
+
+    pub fn set_pool_contract(env: Env, pool_contract: Address) {
+        Self::require_current_version(&env);
 
         let admin: Address = env
             .storage()
@@ -148,14 +188,7 @@ impl SettleXContract {
     }
 
     pub fn get_pool_contract(env: Env) -> Address {
-        let version: u32 = env
-            .storage()
-            .instance()
-            .get(&DataKey::Version)
-            .unwrap_or_else(|| panic_with_error!(&env, ContractError::NotInitialized));
-        if version != CONTRACT_VERSION {
-            panic_with_error!(&env, ContractError::VersionMismatch);
-        }
+        Self::require_current_version(&env);
 
         let pool = env.storage()
             .instance()
@@ -169,15 +202,28 @@ impl SettleXContract {
     /// Reads the admin, panicking if the contract is uninitialized or on a
     /// different version.
     fn require_admin(env: &Env) -> Address {
-        let version: u32 = env
-            .storage()
+        Self::require_current_version(env);
+        Self::require_admin_at_supported_version(env)
+    }
+
+    fn read_version(env: &Env) -> u32 {
+        env.storage()
             .instance()
             .get(&DataKey::Version)
-            .unwrap_or_else(|| panic_with_error!(env, ContractError::NotInitialized));
-        if version != CONTRACT_VERSION {
+            .unwrap_or_else(|| panic_with_error!(env, ContractError::NotInitialized))
+    }
+
+    fn require_current_version(env: &Env) {
+        if Self::read_version(env) != CONTRACT_VERSION {
             panic_with_error!(env, ContractError::VersionMismatch);
         }
+    }
 
+    fn require_admin_at_supported_version(env: &Env) -> Address {
+        let version = Self::read_version(env);
+        if version < MIN_MIGRATABLE_VERSION || version > CONTRACT_VERSION {
+            panic_with_error!(env, ContractError::VersionMismatch);
+        }
         let admin: Address = env
             .storage()
             .instance()
@@ -669,6 +715,29 @@ mod test {
         }]);
 
         client.record_payment(&trip_id, &expense_id, &payer, &member, &amount, &tx_hash);
+    }
+
+    #[test]
+    fn test_migrate_from_v1_to_v2_updates_version() {
+        let env = Env::default();
+        let settlement_contract_id = env.register_contract(None, SettleXContract);
+        let pool_contract_id = env.register_contract(None, SettlementPoolContract);
+        let client = SettleXContractClient::new(&env, &settlement_contract_id);
+        let pool_client = SettlementPoolContractClient::new(&env, &pool_contract_id);
+
+        let admin = Address::generate(&env);
+        env.mock_all_auths();
+        pool_client.init_pool(&admin, &settlement_contract_id);
+        client.init(&admin, &pool_contract_id);
+
+        env.as_contract(&settlement_contract_id, || {
+            env.storage().instance().set(&DataKey::Version, &1_u32);
+        });
+
+        client.migrate();
+        let stored_version: u32 = env
+            .as_contract(&settlement_contract_id, || env.storage().instance().get(&DataKey::Version).unwrap());
+        assert_eq!(stored_version, 2_u32);
     }
 
     #[test]
