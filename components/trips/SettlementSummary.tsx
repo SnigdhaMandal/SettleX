@@ -249,12 +249,20 @@ export function SettlementSummary({ trip, expenses, onChainEvents = [] }: Settle
             Settlement ({netPayments.length} payment{netPayments.length !== 1 ? "s" : ""})
           </h3>
         </div>
-        {onChainEvents.length > 0 && (
-          <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#2D6600] bg-[#B9FF66]/20 px-2 py-0.5 rounded-full">
-            <Database size={9} />
-            {onChainEvents.length} on-chain
-          </span>
-        )}
+        <div className="flex flex-wrap items-center justify-end gap-1.5">
+          {eventCounts.attested > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#2D6600] bg-[#B9FF66]/20 px-2 py-0.5 rounded-full">
+              <Database size={9} />
+              {eventCounts.attested} verified on-chain
+            </span>
+          )}
+          {eventCounts.selfReported > 0 && (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#8A5A00] bg-[#FFF2CC] px-2 py-0.5 rounded-full">
+              <AlertCircle size={9} />
+              {eventCounts.selfReported} self-reported
+            </span>
+          )}
+        </div>
       </div>
 
       {netPayments.map((p, i) => (

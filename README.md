@@ -75,6 +75,7 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 | Transaction hash receipt linked to Stellar Explorer          | Live   |
 | Soroban contract: append-only on-chain settlement records     | Live   |
 | Real-time event listening from contract (`pmt_rec` events)   | Live   |
+| Attestor-backed payment verification                         | Not live yet |
 | Trip mode — group expenses with net-balance settle-up        | Live   |
 | Live cross-user sync via Supabase Realtime                   | Live   |
 | Net-balance algorithm (minimises transactions needed)        | Live   |
@@ -218,7 +219,7 @@ The final proof transaction above is verifiable evidence of the inter-contract p
 Security hardening note:
 - Pool credits are now admin-managed in the pool contract to prevent untrusted self-crediting.
 - Pool `withdraw` requires auth from **both** the configured settlement contract and the member. Credits can therefore only be consumed as part of a `record_payment` call — a member cannot drain their own credits directly, and no other contract can spend them. Rotating `set_settlement_contract` immediately revokes the previous contract's ability to withdraw.
-- Settlement records now carry an `attested` flag. With no attestor configured a record is **self-attested** — it proves only that a member wrote a string, and the contract verifies neither the `payer`, the `amount`, nor the `tx_hash` against Horizon. Treat the Stellar transaction on the explorer as the evidence, not the in-app record. `set_attestor` makes a verifier's co-signature mandatory and marks records `attested: true`; the verifier service itself is not yet built.
+- Settlement records now carry an `attested` flag. With no attestor configured a record is **self-attested** — it proves only that a member wrote a string, and the contract verifies neither the `payer`, the `amount`, nor the `tx_hash` against Horizon. Treat the Stellar transaction on the explorer as the evidence, not the in-app record. `set_attestor` makes a verifier's co-signature mandatory and marks records `attested: true`; the verifier service itself is not yet built, so attestor-backed verification is not live in this repo.
 - `clear_paid` (admin-only) clears the `ExpensePaid` flag, so a bogus or mistaken record can no longer permanently block the legitimate one. It preserves the original entry in trip history.
 
 > **Redeploy required.** `PaymentRecord` gained a field and `CONTRACT_VERSION` is now `2`. Records written by a v1 deployment cannot be read by this build — deploy fresh contracts and update `NEXT_PUBLIC_CONTRACT_ID`.
