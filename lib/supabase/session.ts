@@ -9,6 +9,7 @@
  */
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
+  AUTH_REQUEST_TIMEOUT_MS,
   CHALLENGE_ENDPOINT,
   LS_SESSION,
   SESSION_REFRESH_SKEW_SECONDS,
@@ -250,24 +251,65 @@ export function onSessionChange(listener: () => void): () => void {
 // ─── Handshake ────────────────────────────────────────────────────────────────
 
 async function postJson<T>(url: string, body: unknown): Promise<T> {
+  // A hung connection must not park the handshake forever. `AbortSignal.timeout`
+  // is not in older Safari, so drive an AbortController on a timer instead --
+  // an unsupported browser would otherwise throw here rather than time out.
+  const controller = new AbortController();
+  const timedOutRef = { value: false };
+  let fireTimeout!: () => void;
+  // Resolves when the deadline passes, so the body read below can race against
+  // it. Aborting the request does not reject a body promise that has already
+  // been handed back, so the deadline needs its own settleable handle.
+  const deadline = new Promise<"timeout">((resolve) => {
+    fireTimeout = () => resolve("timeout");
+  });
+  const timer = setTimeout(() => {
+    timedOutRef.value = true;
+    controller.abort();
+    fireTimeout();
+  }, AUTH_REQUEST_TIMEOUT_MS);
+  const cancelTimeout = () => clearTimeout(timer);
+
   let response: Response;
   try {
     response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
+      signal: controller.signal,
     });
-  } catch {
+  } catch (err) {
+    cancelTimeout();
+    // Distinguish "we gave up waiting" from "the network refused us": the
+    // first is worth retrying as-is, the second usually is not.
+    const timedOut = timedOutRef.value || (err as Error | null)?.name === "TimeoutError";
     throw new WalletSessionError(
-      "Cannot reach the SettleX server to sign in. Please check your connection.",
+      timedOut
+        ? "The SettleX server took too long to respond. Please try signing in again."
+        : "Cannot reach the SettleX server to sign in. Please check your connection.",
     );
   }
 
+  // The deadline has to cover reading the body too: a server that sends headers
+  // and then stalls would otherwise hang here, past the fetch that the abort
+  // signal was watching.
   let payload: unknown = null;
   try {
-    payload = await response.json();
-  } catch {
-    // fall through to the status-based message below
+    const read = await Promise.race([
+      response.json().then((value: unknown) => ({ value })),
+      deadline,
+    ]);
+    if (read === "timeout") {
+      throw new WalletSessionError(
+        "The SettleX server took too long to respond. Please try signing in again.",
+      );
+    }
+    payload = read.value;
+  } catch (err) {
+    if (err instanceof WalletSessionError) throw err;
+    // A malformed body falls through to the status-based message below.
+  } finally {
+    cancelTimeout();
   }
 
   if (!response.ok) {
