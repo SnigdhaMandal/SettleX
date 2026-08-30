@@ -61,6 +61,11 @@ export interface ContractPaymentEvent {
   member: string;
   amountStroops: string;
   txHash: string;
+  /**
+   * Only literal `true` means the event can be treated as verified payment
+   * evidence. Missing/false events are self-attested claims.
+   */
+  attested?: boolean;
 }
 
 export interface GetPaymentsResult {
