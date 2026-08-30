@@ -13,7 +13,7 @@ import {
   requireAuthenticatedClient,
 } from "@/lib/supabase/session";
 import { useWalletContext } from "./WalletContext";
-import { getWalletScopedKey, LS_USER } from "@/lib/utils/constants";
+import { getWalletScopedKey, LS_PUBLIC_KEY, LS_USER } from "@/lib/utils/constants";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -72,10 +72,19 @@ function saveUserToCache(user: User) {
   } catch {}
 }
 
+/**
+ * Reads the cached profile for one wallet, and only that wallet.
+ *
+ * There is deliberately no fallback to the legacy unscoped `LS_USER` key: that
+ * entry may have been written by a different account on this browser, and
+ * serving it to whoever connects next is the cross-wallet leak this scoping
+ * exists to prevent. With no wallet address there is nothing to scope to, so
+ * there is nothing safe to return.
+ */
 function loadUserFromCache(walletAddress?: string | null): User | null {
+  if (!walletAddress) return null;
   try {
-    const scopedKey = walletAddress ? getWalletScopedKey(LS_USER, walletAddress) : LS_USER;
-    const raw = localStorage.getItem(scopedKey) ?? localStorage.getItem(LS_USER);
+    const raw = localStorage.getItem(getWalletScopedKey(LS_USER, walletAddress));
     return raw ? (JSON.parse(raw) as User) : null;
   } catch { return null; }
 }
@@ -94,8 +103,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     // Render hint only — shows the user's name instead of a flash of empty UI
     // on refresh. It is NOT evidence of anything: `isAuthenticated` below
     // ignores it entirely, and every request is authorized by the signed token.
-    if (typeof window !== "undefined") return loadUserFromCache();
-    return null;
+    //
+    // The wallet context has not run yet at this point, so the address comes
+    // straight from storage. It only ever selects *which* wallet's cache to
+    // read, so a hand-edited value surfaces that wallet's own cached profile
+    // and nothing else.
+    if (typeof window === "undefined") return null;
+    try {
+      return loadUserFromCache(localStorage.getItem(LS_PUBLIC_KEY));
+    } catch {
+      return null;
+    }
   });
   const [isLoading, setIsLoading] = useState(true);
   const [sessionError, setSessionError] = useState<string | null>(null);

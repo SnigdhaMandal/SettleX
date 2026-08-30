@@ -12,6 +12,7 @@ import { getWalletScopedKey, LS_TRIPS } from "@/lib/utils/constants";
 import {
   getAuthenticatedClient,
   onSessionChange,
+  readStoredSession,
   requireAuthenticatedClient,
 } from "@/lib/supabase/session";
 import type {
@@ -19,6 +20,26 @@ import type {
   SupabaseClient,
 } from "@supabase/supabase-js";
 import { useWalletContext } from "./WalletContext";
+
+
+/**
+ * True only when this browser holds an unexpired session token minted for this
+ * exact wallet — i.e. the wallet has signed a server challenge at some point.
+ *
+ * The offline cache is readable by anyone at this keyboard, so possession of an
+ * address alone must not unlock it: otherwise a wallet that connects and never
+ * signs (or declines to) would be shown the rows of whichever account cached
+ * them. Proof of ownership gates the read; the token still authorizes nothing
+ * on its own, because the server re-verifies it on every request.
+ */
+function hasProvenOwnership(walletAddress: string | null): boolean {
+  if (!walletAddress) return false;
+  try {
+    return !!readStoredSession(walletAddress);
+  } catch {
+    return false;
+  }
+}
 
 
 interface TripContextType {
@@ -144,8 +165,17 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
       // Without a proven wallet identity RLS returns nothing, so fall back to
       // whatever this browser cached rather than showing an empty list.
       if (!client) {
+        // No proven ownership means no cached rows — not even this wallet's own
+        // key, which a previous holder of this browser may have populated.
+        if (!hasProvenOwnership(publicKey)) {
+          if (isMounted) {
+            setTrips([]);
+            setIsLoading(false);
+          }
+          return;
+        }
         try {
-          const raw = publicKey ? localStorage.getItem(cacheKey) : null;
+          const raw = localStorage.getItem(cacheKey);
           if (raw && isMounted) setTrips(JSON.parse(raw) as Trip[]);
         } catch {
           // ignore
