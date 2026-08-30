@@ -1,6 +1,6 @@
 use soroban_sdk::{
     contract, contracterror, contractimpl, contracttype, panic_with_error, symbol_short,
-    Address, Env,
+    Address, BytesN, Env,
 };
 
 #[contracterror]
@@ -55,6 +55,7 @@ const LEDGERS_PER_DAY: u32 = 17_280;
 const STORAGE_BUMP_THRESHOLD: u32 = LEDGERS_PER_DAY * 30;
 const STORAGE_BUMP_AMOUNT: u32 = LEDGERS_PER_DAY * 365;
 const CONTRACT_VERSION: u32 = 1;
+const MIN_MIGRATABLE_VERSION: u32 = 1;
 const MAX_AMOUNT_STROOPS: i128 = 10_000_000_000_000_000;
 
 #[contract]
@@ -93,15 +94,63 @@ impl SettlementPoolContract {
         );
     }
 
-    pub fn get_config(env: Env) -> PoolConfig {
-        let version: u32 = env
-            .storage()
-            .instance()
-            .get(&PoolDataKey::Version)
-            .unwrap_or_else(|| panic_with_error!(&env, PoolError::NotInitialized));
-        if version != CONTRACT_VERSION {
+    pub fn upgrade(env: Env, new_wasm_hash: BytesN<32>) {
+        let admin = Self::require_admin_at_supported_version(&env);
+        env.deployer().update_current_contract_wasm(new_wasm_hash);
+        env.events().publish(
+            (symbol_short!("upgrade"),),
+            (CONTRACT_VERSION, admin, env.ledger().timestamp()),
+        );
+    }
+
+    pub fn migrate(env: Env) {
+        let old_version = Self::read_version(&env);
+        if old_version == CONTRACT_VERSION {
+            return;
+        }
+        if old_version < MIN_MIGRATABLE_VERSION || old_version > CONTRACT_VERSION {
             panic_with_error!(&env, PoolError::VersionMismatch);
         }
+
+        let admin = Self::require_admin_at_supported_version(&env);
+        env.storage().instance().set(&PoolDataKey::Version, &CONTRACT_VERSION);
+        env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
+        env.events().publish(
+            (symbol_short!("migrate"),),
+            (old_version, CONTRACT_VERSION, admin, env.ledger().timestamp()),
+        );
+    }
+
+    fn read_version(env: &Env) -> u32 {
+        env.storage()
+            .instance()
+            .get(&PoolDataKey::Version)
+            .unwrap_or_else(|| panic_with_error!(env, PoolError::NotInitialized))
+    }
+
+    fn require_current_version(env: &Env) {
+        if Self::read_version(env) != CONTRACT_VERSION {
+            panic_with_error!(env, PoolError::VersionMismatch);
+        }
+    }
+
+    fn require_admin_at_supported_version(env: &Env) -> Address {
+        let version = Self::read_version(env);
+        if version < MIN_MIGRATABLE_VERSION || version > CONTRACT_VERSION {
+            panic_with_error!(env, PoolError::VersionMismatch);
+        }
+        let cfg: PoolConfig = env
+            .storage()
+            .instance()
+            .get(&PoolDataKey::Config)
+            .unwrap_or_else(|| panic_with_error!(env, PoolError::NotInitialized));
+        cfg.admin.require_auth();
+        cfg.admin
+    }
+
+    pub fn get_config(env: Env) -> PoolConfig {
+        Self::require_current_version(&env);
 
         let cfg = env.storage()
             .instance()
