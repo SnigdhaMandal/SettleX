@@ -55,8 +55,12 @@ describe("getSessionTtlSeconds", () => {
     expect(getSessionTtlSeconds()).toBe(3600);
   });
 
-  it("caps a typo at 24 hours", () => {
+  it("caps a typo at 12 hours", () => {
     process.env.AUTH_SESSION_TTL_SECONDS = "99999999";
-    expect(getSessionTtlSeconds()).toBe(24 * 60 * 60);
+    expect(getSessionTtlSeconds()).toBe(12 * 60 * 60);
+  });
+
+  it("keeps the default well under the cap so a leaked token ages out fast", () => {
+    expect(DEFAULT_SESSION_TTL_SECONDS).toBeLessThanOrEqual(60 * 60);
   });
 });

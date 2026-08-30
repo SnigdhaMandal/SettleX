@@ -190,15 +190,88 @@ ALTER TABLE trips ENABLE ROW LEVEL SECURITY;
 -- request carries no verified wallet. NULL never equals anything, so every
 -- policy below denies by default for unauthenticated callers.
 
+-- Revoked token ids. A row here means the token was signed out (or revoked
+-- for the whole wallet) before its `exp`, so it must stop working immediately.
+-- Rows are purged once the token they deny would have expired anyway.
+CREATE TABLE IF NOT EXISTS public.revoked_tokens (
+    jti TEXT PRIMARY KEY,
+    wallet_address TEXT NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL,
+    revoked_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_expires_at ON public.revoked_tokens (expires_at);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_tokens_wallet ON public.revoked_tokens (wallet_address);
+
+-- "Sign out everywhere" tombstones. A token is denied when it was issued at or
+-- before `revoked_before`, which covers tokens this server never saw the id of.
+CREATE TABLE IF NOT EXISTS public.revoked_wallets (
+    wallet_address TEXT PRIMARY KEY,
+    revoked_before TIMESTAMPTZ NOT NULL,
+    expires_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_revoked_wallets_expires_at ON public.revoked_wallets (expires_at);
+
+ALTER TABLE public.revoked_wallets ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON public.revoked_wallets FROM anon, authenticated;
+
+-- Written only by the server (service role key). RLS on with no policies means
+-- anon and authenticated match no rows, so a stolen token cannot un-revoke
+-- itself by deleting its own row.
+ALTER TABLE public.revoked_tokens ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON public.revoked_tokens FROM anon, authenticated;
+
+-- Reading the denylist has to work for callers who cannot read the table, so
+-- the lookup is wrapped in a SECURITY DEFINER function that exposes exactly one
+-- boolean and nothing else.
+CREATE OR REPLACE FUNCTION public.settlex_token_revoked (
+    p_jti TEXT,
+    p_wallet_address TEXT,
+    p_issued_at BIGINT
+) RETURNS BOOLEAN LANGUAGE SQL STABLE SECURITY DEFINER
+SET
+    search_path = public AS $$
+  SELECT
+    -- This exact token was signed out...
+    EXISTS (SELECT 1 FROM public.revoked_tokens WHERE jti = p_jti)
+    -- ...or it predates a "sign out everywhere" for the same wallet.
+    OR EXISTS (
+        SELECT 1 FROM public.revoked_wallets w
+        WHERE w.wallet_address = p_wallet_address
+          AND p_issued_at IS NOT NULL
+          AND TO_TIMESTAMP(p_issued_at) <= w.revoked_before
+    );
+$$;
+
+GRANT
+EXECUTE ON FUNCTION public.settlex_token_revoked (TEXT, TEXT, BIGINT) TO anon,
+authenticated;
+
 CREATE OR REPLACE FUNCTION public.settlex_wallet()
 RETURNS TEXT
 LANGUAGE SQL
 STABLE
-PARALLEL SAFE
+-- No longer PARALLEL SAFE: the revocation check reads a table through a
+-- SECURITY DEFINER function.
 AS $$
+  -- Every RLS policy routes through this one function, so the revocation check
+  -- lives here: a revoked token resolves to NULL, and NULL equals nothing, so
+  -- it matches no row on any table. Tokens minted before `jti` existed have no
+  -- id to deny and stay valid until they expire.
   SELECT NULLIF(
     COALESCE(
-      NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address',
+      CASE
+        WHEN public.settlex_token_revoked(
+          NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'jti',
+          NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address',
+          (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'iat')::BIGINT
+        ) THEN ''
+        ELSE NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address'
+      END,
       ''
     ),
     ''
@@ -206,6 +279,87 @@ AS $$
 $$;
 
 GRANT EXECUTE ON FUNCTION public.settlex_wallet() TO anon, authenticated;
+
+-- Revokes one token id. Idempotent: signing out twice is not an error.
+CREATE OR REPLACE FUNCTION public.settlex_revoke_token (
+    p_jti TEXT,
+    p_wallet_address TEXT,
+    p_expires_at TIMESTAMPTZ
+) RETURNS VOID LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = public AS $$
+BEGIN
+    DELETE FROM public.revoked_tokens WHERE expires_at <= NOW();
+
+    INSERT INTO public.revoked_tokens (jti, wallet_address, expires_at)
+    VALUES (p_jti, p_wallet_address, p_expires_at)
+    ON CONFLICT (jti) DO NOTHING;
+END;
+$$;
+
+-- Revokes every currently-live token for a wallet ("sign out everywhere").
+-- Tokens are stateless, so there is no list of outstanding ids to walk; instead
+-- a wallet-wide tombstone is written and `settlex_wallet()` denies any token
+-- issued at or before it.
+CREATE OR REPLACE FUNCTION public.settlex_revoke_wallet (p_wallet_address TEXT) RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = public AS $$
+DECLARE
+    -- Must outlive the longest token AUTH_SESSION_TTL_SECONDS can mint (12h),
+    -- or the tombstone would lapse while a denied token is still valid.
+    v_max_ttl INTERVAL := INTERVAL '13 hours';
+BEGIN
+    INSERT INTO public.revoked_wallets (wallet_address, revoked_before, expires_at)
+    VALUES (p_wallet_address, NOW(), NOW() + v_max_ttl)
+    ON CONFLICT (wallet_address) DO UPDATE
+    SET revoked_before = NOW(),
+        expires_at = NOW() + v_max_ttl;
+
+    DELETE FROM public.revoked_wallets WHERE expires_at <= NOW();
+    RETURN 1;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.settlex_revoke_token (TEXT, TEXT, TIMESTAMPTZ)
+FROM
+    PUBLIC,
+    anon,
+    authenticated;
+
+REVOKE ALL ON FUNCTION public.settlex_revoke_wallet (TEXT)
+FROM
+    PUBLIC,
+    anon,
+    authenticated;
+
+GRANT
+EXECUTE ON FUNCTION public.settlex_revoke_token (TEXT, TEXT, TIMESTAMPTZ) TO service_role;
+
+GRANT
+EXECUTE ON FUNCTION public.settlex_revoke_wallet (TEXT) TO service_role;
+
+-- Purges denylist rows whose tokens have expired on their own. Called by the
+-- server on sign-out; safe to also run from pg_cron.
+CREATE OR REPLACE FUNCTION public.settlex_purge_revoked_tokens () RETURNS INTEGER LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = public AS $$
+DECLARE
+    v_deleted INTEGER;
+BEGIN
+    DELETE FROM public.revoked_tokens WHERE expires_at <= NOW();
+    GET DIAGNOSTICS v_deleted = ROW_COUNT;
+    RETURN v_deleted;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.settlex_purge_revoked_tokens ()
+FROM
+    PUBLIC,
+    anon,
+    authenticated;
+
+GRANT
+EXECUTE ON FUNCTION public.settlex_purge_revoked_tokens () TO service_role;
 
 -- Drop existing policies if they exist
 DROP POLICY IF EXISTS "Anyone can view users" ON users;

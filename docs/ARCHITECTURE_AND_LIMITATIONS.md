@@ -39,8 +39,14 @@ SettleX uses:
 - On success the server mints a Supabase JWT carrying `wallet_address`. Every
   RLS policy reads it through `public.settlex_wallet()`; requests without a
   valid token match no rows.
-- Sessions are cached in `localStorage` and last 12 hours by default
-  (`AUTH_SESSION_TTL_SECONDS`, capped at 24 hours).
+- Sessions are cached in `localStorage` and last 1 hour by default
+  (`AUTH_SESSION_TTL_SECONDS`, capped at 12 hours). They re-sign silently before
+  expiry, so the short lifetime is invisible in normal use.
+- Every token carries a `jti`. Signing out writes that id to
+  `public.revoked_tokens`, and `settlex_wallet()` — the one function every RLS
+  policy resolves identity through — returns NULL for a revoked token, so it
+  matches no row on any table. "Sign out everywhere" writes a wallet-wide
+  tombstone that denies every token issued at or before that moment.
 
 ## Known Limitations
 
