@@ -39,6 +39,20 @@ requires a small backend route (challenge issue + verify) and is the foundation
 for trustworthy RLS ([SUPABASE_SETUP.md](./SUPABASE_SETUP.md)).
 
 ## Configuration
-No extra env beyond Supabase ([SUPABASE_SETUP.md](./SUPABASE_SETUP.md)). Ensure
-the `users` table and its RLS policies from
+Server-only env vars, all listed in
+[.env.local.example](../.env.local.example) — none may be prefixed
+`NEXT_PUBLIC_`:
+
+- `SUPABASE_JWT_SECRET` — signs the access tokens RLS authorizes on.
+- `AUTH_CHALLENGE_SECRET` — optional, binds a nonce to its wallet; falls back to
+  the JWT secret.
+- `AUTH_SESSION_TTL_SECONDS` — optional session lifetime, default 12h.
+- `SUPABASE_SERVICE_ROLE_KEY` — **required on any multi-instance deployment.**
+  It backs the shared replay guard and rate limiter (`auth_nonces`,
+  `auth_rate_limits`). Without it both fall back to per-process memory, so a
+  captured challenge can be replayed against another serverless instance within
+  the 60-second challenge TTL and the 30/min limit becomes 30/min *per
+  instance*.
+
+Ensure the `users` table, its RLS policies and the auth shared-state tables from
 [supabase-setup.sql](../supabase-setup.sql) are loaded.

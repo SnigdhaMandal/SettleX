@@ -10,11 +10,14 @@ export const CHALLENGE_ENDPOINT = "/api/auth/challenge";
 /** Route that verifies a signed challenge and mints a Supabase access token. */
 export const VERIFY_ENDPOINT = "/api/auth/verify";
 
-/** Route that revokes an access token server-side. */
-export const SIGNOUT_ENDPOINT = "/api/auth/signout";
-
-/** How long a challenge stays signable, in seconds. */
-export const CHALLENGE_TTL_SECONDS = 300;
+/**
+ * How long a challenge stays signable, in seconds.
+ *
+ * This is also the replay window on any deployment running without a shared
+ * nonce store (see `lib/auth/sharedStore`), so it is kept short — long enough
+ * for a wallet extension prompt, not long enough to be worth capturing.
+ */
+export const CHALLENGE_TTL_SECONDS = 60;
 
 /**
   * Default lifetime of an issued Supabase access token, in seconds.

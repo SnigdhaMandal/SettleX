@@ -687,6 +687,112 @@ $$;
 GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT) TO authenticated, anon;
 
 -- ============================================================================
+-- 5.6. AUTH SHARED STATE (Replay Guard + Rate Limiting Across Instances)
+-- ============================================================================
+-- The auth routes run on serverless instances that do not share memory, so a
+-- challenge nonce burned in one process means nothing to its siblings and a
+-- per-process rate limiter multiplies the real limit by the instance count.
+-- Both tables below are written only by the server, using the service role key
+-- (SUPABASE_SERVICE_ROLE_KEY) — never the anon key.
+
+CREATE TABLE IF NOT EXISTS public.auth_nonces (
+    nonce TEXT PRIMARY KEY,
+    expires_at TIMESTAMPTZ NOT NULL,
+    created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_nonces_expires_at ON public.auth_nonces (expires_at);
+
+CREATE TABLE IF NOT EXISTS public.auth_rate_limits (
+    key TEXT PRIMARY KEY,
+    hits INTEGER NOT NULL,
+    reset_at TIMESTAMPTZ NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_auth_rate_limits_reset_at ON public.auth_rate_limits (reset_at);
+
+-- RLS on with no policies: anon and authenticated match no rows at all. The
+-- service role bypasses RLS, which is exactly the access the auth routes need.
+ALTER TABLE public.auth_nonces ENABLE ROW LEVEL SECURITY;
+
+ALTER TABLE public.auth_rate_limits ENABLE ROW LEVEL SECURITY;
+
+REVOKE ALL ON public.auth_nonces FROM anon, authenticated;
+
+REVOKE ALL ON public.auth_rate_limits FROM anon, authenticated;
+
+-- Burns a nonce for every instance at once. Returns TRUE the first time a nonce
+-- is seen and FALSE on every replay; the insert is the atomic check, so two
+-- concurrent verifies of the same challenge cannot both win.
+CREATE OR REPLACE FUNCTION public.auth_consume_nonce (p_nonce TEXT, p_expires_at TIMESTAMPTZ) RETURNS BOOLEAN LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = public AS $
+DECLARE
+    v_inserted INTEGER;
+BEGIN
+    DELETE FROM public.auth_nonces WHERE expires_at <= NOW();
+
+    INSERT INTO public.auth_nonces (nonce, expires_at)
+    VALUES (p_nonce, p_expires_at)
+    ON CONFLICT (nonce) DO NOTHING;
+
+    GET DIAGNOSTICS v_inserted = ROW_COUNT;
+    RETURN v_inserted > 0;
+END;
+$;
+
+-- Fixed-window counter shared by every instance. One statement does the read,
+-- the increment and the window roll-over, so concurrent callers cannot both
+-- read a stale count.
+CREATE OR REPLACE FUNCTION public.auth_rate_limit (
+    p_key TEXT,
+    p_limit INTEGER,
+    p_window_ms INTEGER
+) RETURNS TABLE (allowed BOOLEAN, retry_after INTEGER) LANGUAGE plpgsql SECURITY DEFINER
+SET
+    search_path = public AS $
+DECLARE
+    v_window INTERVAL := (p_window_ms || ' milliseconds')::INTERVAL;
+    v_hits INTEGER;
+    v_reset TIMESTAMPTZ;
+BEGIN
+    DELETE FROM public.auth_rate_limits WHERE reset_at <= NOW();
+
+    INSERT INTO public.auth_rate_limits AS r (key, hits, reset_at)
+    VALUES (p_key, 1, NOW() + v_window)
+    ON CONFLICT (key) DO UPDATE
+    SET hits = CASE WHEN r.reset_at <= NOW() THEN 1 ELSE r.hits + 1 END,
+        reset_at = CASE WHEN r.reset_at <= NOW() THEN NOW() + v_window ELSE r.reset_at END
+    RETURNING r.hits, r.reset_at INTO v_hits, v_reset;
+
+    IF v_hits > p_limit THEN
+        RETURN QUERY SELECT FALSE, GREATEST(1, CEIL(EXTRACT(EPOCH FROM (v_reset - NOW())))::INTEGER);
+    ELSE
+        RETURN QUERY SELECT TRUE, 0;
+    END IF;
+END;
+$;
+
+-- Only the server (service role) may call these.
+REVOKE ALL ON FUNCTION public.auth_consume_nonce (TEXT, TIMESTAMPTZ)
+FROM
+    PUBLIC,
+    anon,
+    authenticated;
+
+REVOKE ALL ON FUNCTION public.auth_rate_limit (TEXT, INTEGER, INTEGER)
+FROM
+    PUBLIC,
+    anon,
+    authenticated;
+
+GRANT
+EXECUTE ON FUNCTION public.auth_consume_nonce (TEXT, TIMESTAMPTZ) TO service_role;
+
+GRANT
+EXECUTE ON FUNCTION public.auth_rate_limit (TEXT, INTEGER, INTEGER) TO service_role;
+
+-- ============================================================================
 -- 6. VERIFICATION QUERIES (Optional - Run to verify setup)
 -- ============================================================================
 
@@ -699,8 +805,8 @@ WHERE
         'users',
         'expenses',
         'trips',
-        'revoked_tokens',
-        'revoked_wallets'
+        'auth_nonces',
+        'auth_rate_limits'
     );
 
 -- Check indexes exist
