@@ -187,8 +187,9 @@ export function clearWalletSession(options: { everywhere?: boolean } = {}): void
   const revoking = memoizedSession ?? readAnyStoredSession();
   if (revoking) revokeOnServer(revoking, options.everywhere === true);
 
+  sessionEpoch += 1;
   memoizedSession = null;
-  inFlight = null;
+  inFlight.clear();
   if (memoizedClient) {
     void memoizedClient.client.removeAllChannels();
     memoizedClient = null;
@@ -204,7 +205,25 @@ export function clearWalletSession(options: { everywhere?: boolean } = {}): void
 }
 
 let memoizedSession: WalletSession | null = null;
-let inFlight: Promise<WalletSession> | null = null;
+
+/**
+ * In-flight handshakes, keyed by the wallet they are signing for.
+ *
+ * This was a single slot, which meant a call for wallet B arriving while A's
+ * handshake was pending got handed A's promise -- and therefore A's token.
+ * Nothing downstream re-checked the address, so the UI marked B verified while
+ * every request went out signed as A. Keying by address is what lets two
+ * wallets have distinct handshakes in flight; the per-address entry still
+ * dedupes concurrent callers, so a wallet is asked to sign only once.
+ */
+const inFlight = new Map<string, Promise<WalletSession>>();
+
+/**
+ * Bumped by `clearWalletSession`. A handshake that started before the bump has
+ * been disowned: signing out mid-handshake must not leave the browser holding
+ * the session that lands a moment later.
+ */
+let sessionEpoch = 0;
 
 // ─── Change notifications ─────────────────────────────────────────────────────
 
@@ -262,6 +281,7 @@ async function postJson<T>(url: string, body: unknown): Promise<T> {
 }
 
 async function runHandshake(walletAddress: string): Promise<WalletSession> {
+  const epoch = sessionEpoch;
   const challenge = await postJson<{
     transactionXdr: string;
     networkPassphrase: string;
@@ -298,6 +318,14 @@ async function runHandshake(walletAddress: string): Promise<WalletSession> {
     accessToken: verified.accessToken,
     expiresAt: claims.expiresAt,
   };
+
+  // A sign-out (or account switch) landed while we were signing. The token is
+  // real, but nobody is waiting for it any more -- caching it would resurrect a
+  // session the user just ended. Revoke it and report the handshake as void.
+  if (epoch !== sessionEpoch) {
+    revokeOnServer(session, false);
+    throw new WalletSessionError("Sign-in was cancelled.");
+  }
 
   memoizedSession = session;
   storeSession(session);
@@ -341,12 +369,27 @@ export async function getWalletSession(
 
   if (options.interactive === false) return null;
 
-  if (!inFlight) {
-    inFlight = runHandshake(walletAddress).finally(() => {
-      inFlight = null;
+  let pending = inFlight.get(walletAddress);
+  if (!pending) {
+    pending = runHandshake(walletAddress).finally(() => {
+      // Only drop our own entry: a later handshake for this address may have
+      // replaced it while this one was settling.
+      if (inFlight.get(walletAddress) === pending) inFlight.delete(walletAddress);
     });
+    inFlight.set(walletAddress, pending);
   }
-  return inFlight;
+
+  const session = await pending;
+
+  // Belt and braces. runHandshake already refuses a token minted for another
+  // wallet, but this is the single choke point every caller passes through, so
+  // returning a mismatched session here must be impossible by construction
+  // rather than by the good behaviour of everything upstream.
+  if (session.walletAddress !== walletAddress) {
+    throw new WalletSessionError("The session does not belong to the connected wallet.");
+  }
+
+  return session;
 }
 
 // ─── Authenticated client ─────────────────────────────────────────────────────
