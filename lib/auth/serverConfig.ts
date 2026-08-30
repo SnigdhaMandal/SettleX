@@ -40,6 +40,8 @@ export function getSessionTtlSeconds(): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SESSION_TTL_SECONDS;
 
-  // Cap at 24h so a typo cannot mint a near-permanent token.
-  return Math.min(Math.floor(parsed), 24 * 60 * 60);
+  // Cap at 12h so a typo cannot mint a near-permanent token. Tokens are
+  // bearer credentials for a money app; the denylist only helps for sessions
+  // the user explicitly signs out of, so the ceiling stays low.
+  return Math.min(Math.floor(parsed), 12 * 60 * 60);
 }

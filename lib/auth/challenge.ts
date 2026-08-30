@@ -7,8 +7,10 @@
  * claimed address into a proven one.
  *
  * The nonce is bound to the wallet and an expiry by an HMAC (`challengeToken`),
- * so the handshake stays stateless and works across serverless instances
- * without a shared session store.
+ * so the handshake itself needs no session store. Single use is the one part
+ * that does need shared state: `verifyChallengeShared` burns the nonce in
+ * Postgres so a captured challenge cannot be replayed against a sibling
+ * serverless instance.
  *
  * Server-side only — it needs `AUTH_CHALLENGE_SECRET`.
  */
@@ -28,6 +30,7 @@ import {
   CLOCK_SKEW_SECONDS,
 } from "@/lib/auth/constants";
 import { safeEqual } from "@/lib/auth/jwt";
+import { consumeNonceShared, isSharedStoreConfigured } from "@/lib/auth/sharedStore";
 import { NETWORK_PASSPHRASE } from "@/lib/utils/constants";
 
 export interface Challenge {
@@ -96,9 +99,9 @@ function readChallengeToken(token: string, secret: string): ChallengePayload | n
 // ─── Single-use nonce tracking ────────────────────────────────────────────────
 
 /**
- * Best-effort replay guard. Serverless deployments run several instances, so a
- * nonce burned here may still be unknown to a sibling instance — the short
- * challenge TTL is what bounds the exposure. See
+ * Process-local replay guard. It only holds within one instance, so it is the
+ * fallback used when no shared store is configured — `verifyChallengeShared`
+ * burns the nonce in Postgres instead, which does hold across instances. See
  * `docs/ARCHITECTURE_AND_LIMITATIONS.md`.
  */
 const usedNonces = new Map<string, number>();
@@ -161,13 +164,24 @@ export function createChallenge(
 
 // ─── Challenge verification ───────────────────────────────────────────────────
 
-export function verifyChallenge(params: {
+export interface VerifyParams {
   walletAddress: string;
   signedTransactionXdr: string;
   challengeToken: string;
   secret: string;
   now?: number;
-}): VerifyResult {
+}
+
+type CheckResult =
+  | { ok: true; walletAddress: string; nonce: string; expiresAt: number }
+  | { ok: false; reason: string };
+
+/**
+ * Every check except the single-use one: HMAC, wallet binding, expiry, the
+ * shape of the transaction and the Ed25519 signature. Burning the nonce is left
+ * to the caller, because that is the only part that needs shared state.
+ */
+function checkChallenge(params: VerifyParams): CheckResult {
   const { walletAddress, signedTransactionXdr, challengeToken, secret } = params;
   const now = params.now ?? Date.now();
   const nowSeconds = Math.floor(now / 1000);
@@ -241,9 +255,43 @@ export function verifyChallenge(params: {
     return { ok: false, reason: "The signature does not match this wallet address." };
   }
 
-  if (!consumeNonce(payload.n, payload.exp, now)) {
-    return { ok: false, reason: "This challenge has already been used." };
-  }
+  return { ok: true, walletAddress, nonce: payload.n, expiresAt: payload.exp };
+}
 
-  return { ok: true, walletAddress };
+const REPLAYED = "This challenge has already been used.";
+
+/**
+ * Synchronous verification that burns the nonce in process memory. The guard is
+ * per-instance — prefer `verifyChallengeShared` on any deployment that runs
+ * more than one process.
+ */
+export function verifyChallenge(params: VerifyParams): VerifyResult {
+  const checked = checkChallenge(params);
+  if (!checked.ok) return checked;
+
+  if (!consumeNonce(checked.nonce, checked.expiresAt, params.now ?? Date.now())) {
+    return { ok: false, reason: REPLAYED };
+  }
+  return { ok: true, walletAddress: checked.walletAddress };
+}
+
+/**
+ * Verification that burns the nonce in the shared store, so a captured
+ * challenge cannot be replayed against a sibling serverless instance.
+ *
+ * With no store configured it degrades to the in-memory guard rather than
+ * locking out a local or single-instance deployment. A store that is configured
+ * but unreachable fails closed — the guard would be worthless if it could be
+ * bypassed by making the database unavailable.
+ */
+export async function verifyChallengeShared(params: VerifyParams): Promise<VerifyResult> {
+  const checked = checkChallenge(params);
+  if (!checked.ok) return checked;
+
+  if (!isSharedStoreConfigured()) return verifyChallenge(params);
+
+  if (!(await consumeNonceShared(checked.nonce, checked.expiresAt))) {
+    return { ok: false, reason: REPLAYED };
+  }
+  return { ok: true, walletAddress: checked.walletAddress };
 }

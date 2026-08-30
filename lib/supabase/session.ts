@@ -12,6 +12,7 @@ import {
   CHALLENGE_ENDPOINT,
   LS_SESSION,
   SESSION_REFRESH_SKEW_SECONDS,
+  SIGNOUT_ENDPOINT,
   VERIFY_ENDPOINT,
   WALLET_CLAIM,
 } from "@/lib/auth/constants";
@@ -120,6 +121,22 @@ export function readStoredSession(walletAddress: string): WalletSession | null {
   }
 }
 
+/**
+ * Reads the stored session without checking which wallet it belongs to. Only
+ * for sign-out, where the point is to revoke whatever token this browser holds.
+ */
+function readAnyStoredSession(): WalletSession | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(LS_SESSION);
+    if (!raw) return null;
+    const session = JSON.parse(raw) as WalletSession;
+    return session?.accessToken ? session : null;
+  } catch {
+    return null;
+  }
+}
+
 function storeSession(session: WalletSession): void {
   try {
     window.localStorage.setItem(LS_SESSION, JSON.stringify(session));
@@ -128,8 +145,48 @@ function storeSession(session: WalletSession): void {
   }
 }
 
-/** Drops the cached token so the next authenticated call re-runs the handshake. */
-export function clearWalletSession(): void {
+/**
+ * Tells the server to revoke the current token, so it stops working everywhere
+ * rather than only in this browser.
+ *
+ * Fire-and-forget by design: the local session is cleared either way, because a
+ * user who clicked "sign out" must never be left holding a live session just
+ * because the network failed. The token stays denied server-side once the call
+ * lands; if it never lands, the short TTL is the backstop.
+ */
+function revokeOnServer(session: WalletSession, everywhere: boolean): void {
+  try {
+    const body = JSON.stringify({ everywhere });
+    void fetch(SIGNOUT_ENDPOINT, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Authorization: `Bearer ${session.accessToken}`,
+      },
+      body,
+      keepalive: true,
+    }).catch(() => {
+      // Already logged out locally; nothing useful to show the user here.
+    });
+  } catch {
+    // ignore
+  }
+}
+
+/**
+ * Drops the cached token and revokes it server-side, so the next authenticated
+ * call re-runs the handshake and the old token is dead rather than merely
+ * forgotten.
+ *
+ * Pass `everywhere` to also deny every other token issued to this wallet.
+ */
+export function clearWalletSession(options: { everywhere?: boolean } = {}): void {
+  // After a reload the in-memory copy is gone but localStorage still holds a
+  // live token — read it back, or sign-out would revoke nothing in exactly the
+  // case that matters most.
+  const revoking = memoizedSession ?? readAnyStoredSession();
+  if (revoking) revokeOnServer(revoking, options.everywhere === true);
+
   memoizedSession = null;
   inFlight = null;
   if (memoizedClient) {

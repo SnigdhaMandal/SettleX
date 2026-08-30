@@ -33,6 +33,17 @@ Date: 2026-03-29
 - [x] README includes submission checklist evidence section
 - [x] Final docs package added under `docs/`
 
+## Auth Shared State (required before any multi-instance deploy)
+
+- [ ] `supabase-setup.sql` re-applied so `auth_nonces` and `auth_rate_limits`
+      exist (section 5.6)
+- [ ] `SUPABASE_SERVICE_ROLE_KEY` set as a server-only env var (never
+      `NEXT_PUBLIC_`) in every deployment environment
+- [ ] Verified a signed challenge cannot be replayed: post the same
+      `/api/auth/verify` body twice and confirm the second attempt is rejected
+- [ ] Confirmed `CHALLENGE_TTL_SECONDS` is 60 — it is the replay window whenever
+      the shared store is unavailable
+
 ## Submission Gate
 
 - [x] Public GitHub repository ready
