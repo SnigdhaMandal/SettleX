@@ -1,5 +1,6 @@
 import { DEFAULT_SESSION_TTL_SECONDS } from "@/lib/auth/constants";
 import {
+  assertAuthConfig,
   AuthConfigError,
   getChallengeSecret,
   getJwtSecret,
@@ -24,6 +25,14 @@ describe("getJwtSecret", () => {
   });
 });
 
+/**
+ * NODE_ENV is read-only in the Next/Jest type defs, so set it through the
+ * indexed signature.
+ */
+function setNodeEnv(value: string): void {
+  (process.env as Record<string, string>).NODE_ENV = value;
+}
+
 describe("getChallengeSecret", () => {
   it("prefers its own secret", () => {
     process.env.SUPABASE_JWT_SECRET = "jwt";
@@ -31,10 +40,59 @@ describe("getChallengeSecret", () => {
     expect(getChallengeSecret()).toBe("challenge");
   });
 
-  it("falls back to the JWT secret", () => {
+  it("falls back to the JWT secret outside production", () => {
+    setNodeEnv("development");
     process.env.SUPABASE_JWT_SECRET = "jwt";
     delete process.env.AUTH_CHALLENGE_SECRET;
     expect(getChallengeSecret()).toBe("jwt");
+  });
+
+  it("refuses to reuse the JWT secret in production", () => {
+    // One key serving two cryptographic purposes means a leak in the challenge
+    // path also compromises token signing, and rotating the JWT secret
+    // silently invalidates every outstanding challenge.
+    setNodeEnv("production");
+    process.env.SUPABASE_JWT_SECRET = "jwt";
+    delete process.env.AUTH_CHALLENGE_SECRET;
+    expect(() => getChallengeSecret()).toThrow(AuthConfigError);
+  });
+
+  it("uses its own secret in production when configured", () => {
+    setNodeEnv("production");
+    process.env.SUPABASE_JWT_SECRET = "jwt";
+    process.env.AUTH_CHALLENGE_SECRET = "challenge";
+    expect(getChallengeSecret()).toBe("challenge");
+  });
+});
+
+describe("assertAuthConfig", () => {
+  it("passes when both secrets are set and distinct", () => {
+    setNodeEnv("production");
+    process.env.SUPABASE_JWT_SECRET = "jwt";
+    process.env.AUTH_CHALLENGE_SECRET = "challenge";
+    expect(() => assertAuthConfig()).not.toThrow();
+  });
+
+  it("fails a production boot with no challenge secret", () => {
+    setNodeEnv("production");
+    process.env.SUPABASE_JWT_SECRET = "jwt";
+    delete process.env.AUTH_CHALLENGE_SECRET;
+    expect(() => assertAuthConfig()).toThrow(AuthConfigError);
+  });
+
+  it("fails when both secrets are set to the same value", () => {
+    // Satisfying the check by copy-pasting the JWT secret would defeat it.
+    setNodeEnv("production");
+    process.env.SUPABASE_JWT_SECRET = "same";
+    process.env.AUTH_CHALLENGE_SECRET = "same";
+    expect(() => assertAuthConfig()).toThrow(AuthConfigError);
+  });
+
+  it("fails when the JWT secret is missing", () => {
+    setNodeEnv("production");
+    delete process.env.SUPABASE_JWT_SECRET;
+    process.env.AUTH_CHALLENGE_SECRET = "challenge";
+    expect(() => assertAuthConfig()).toThrow(AuthConfigError);
   });
 });
 

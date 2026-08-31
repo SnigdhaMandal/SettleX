@@ -45,6 +45,13 @@ const nextConfig = {
     ];
   },
 
+  // ── Startup checks ────────────────────────────────────────────────────────
+  // Enables instrumentation.ts, which fails a misconfigured production boot
+  // rather than letting it come up healthy and break on the first sign-in.
+  experimental: {
+    instrumentationHook: true,
+  },
+
   // ── Compiler options ──────────────────────────────────────────────────────
   compiler: {
     // Remove console.log in production

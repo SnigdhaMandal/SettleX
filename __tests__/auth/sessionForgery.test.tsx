@@ -69,17 +69,18 @@ const ATTACKER = "GBRPYHIL2CI3FNQ4BXLFMNDLFJUNPU2HY3ZMFSHONUCEOASW7QC7OX2H";
 function forgeLocalStorage(walletAddress: string) {
   localStorage.setItem(LS_PUBLIC_KEY, walletAddress);
   localStorage.setItem(LS_WALLET_ID, "freighter");
-  localStorage.setItem(
-    LS_USER,
-    JSON.stringify({
-      id: "forged-id",
-      walletAddress,
-      displayName: "Totally Legit",
-      createdAt: "2026-01-01T00:00:00Z",
-      updatedAt: "2026-01-01T00:00:00Z",
-      lastLoginAt: "2026-01-01T00:00:00Z",
-    }),
-  );
+  const forgedProfile = JSON.stringify({
+    id: "forged-id",
+    walletAddress,
+    displayName: "Totally Legit",
+    createdAt: "2026-01-01T00:00:00Z",
+    updatedAt: "2026-01-01T00:00:00Z",
+    lastLoginAt: "2026-01-01T00:00:00Z",
+  });
+  // A forger writes whatever key the app reads, so plant both: the legacy
+  // unscoped key and the wallet-scoped one the app actually consults now.
+  localStorage.setItem(LS_USER, forgedProfile);
+  localStorage.setItem(getWalletScopedKey(LS_USER, walletAddress), forgedProfile);
 }
 
 /** Stands in for a Supabase client that successfully returns a profile row. */

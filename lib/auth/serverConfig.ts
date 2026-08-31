@@ -25,11 +25,28 @@ export function getJwtSecret(): string {
 }
 
 /**
- * Key used to bind a challenge nonce to a wallet. Falls back to the JWT secret
- * so a minimal deployment only has to configure one value.
+ * Key used to bind a challenge nonce to a wallet.
+ *
+ * Required in production, because sharing a key across two cryptographic
+ * purposes gives up cheap insurance: a bug or leak in the challenge path would
+ * then also compromise token signing, and rotating the Supabase JWT secret
+ * would silently invalidate every outstanding challenge. Outside production the
+ * JWT secret is still accepted so a local checkout runs with one value
+ * configured.
  */
 export function getChallengeSecret(): string {
-  return process.env.AUTH_CHALLENGE_SECRET || getJwtSecret();
+  const secret = process.env.AUTH_CHALLENGE_SECRET;
+  if (secret) return secret;
+
+  if (process.env.NODE_ENV === "production") {
+    throw new AuthConfigError(
+      "AUTH_CHALLENGE_SECRET is not set. It must be distinct from " +
+        "SUPABASE_JWT_SECRET so the challenge and token-signing keys stay " +
+        "separate. Generate one with: openssl rand -base64 48",
+    );
+  }
+
+  return getJwtSecret();
 }
 
 /** Lifetime of an issued access token, in seconds. */
@@ -44,4 +61,23 @@ export function getSessionTtlSeconds(): number {
   // bearer credentials for a money app; the denylist only helps for sessions
   // the user explicitly signs out of, so the ceiling stays low.
   return Math.min(Math.floor(parsed), 12 * 60 * 60);
+}
+
+/**
+ * Validates every auth secret at once, for the boot-time check in
+ * `instrumentation.ts`. Throws on the first problem it finds.
+ */
+export function assertAuthConfig(): void {
+  getJwtSecret();
+  getChallengeSecret();
+
+  if (
+    process.env.AUTH_CHALLENGE_SECRET &&
+    process.env.AUTH_CHALLENGE_SECRET === process.env.SUPABASE_JWT_SECRET
+  ) {
+    throw new AuthConfigError(
+      "AUTH_CHALLENGE_SECRET must not be the same value as SUPABASE_JWT_SECRET — " +
+        "setting both to one key defeats the point of separating them.",
+    );
+  }
 }

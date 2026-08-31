@@ -46,5 +46,16 @@ export const CHALLENGE_DATA_NAME = `${APP_NAME} auth`.slice(0, 64);
 /** JWT claim that carries the proven Stellar address. */
 export const WALLET_CLAIM = "wallet_address";
 
+/**
+ * How long to wait on a single auth request before aborting it, in ms.
+ *
+ * Without a deadline a hung connection leaves the handshake promise pending
+ * forever, and since it is shared by every concurrent caller the whole app
+ * sits on its loading state with no way back. Generous enough to survive a
+ * slow mobile network, short enough that a dead connection surfaces as an
+ * error the user can retry.
+ */
+export const AUTH_REQUEST_TIMEOUT_MS = 15_000;
+
 /** localStorage key holding the cached access token. */
 export const LS_SESSION = "settlex:session";
