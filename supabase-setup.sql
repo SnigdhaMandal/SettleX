@@ -366,6 +366,8 @@ DROP POLICY IF EXISTS "Anyone can view users" ON users;
 
 DROP POLICY IF EXISTS "Authenticated wallets can view users" ON users;
 
+DROP POLICY IF EXISTS "Users can view their own profile or counterparties" ON users;
+
 DROP POLICY IF EXISTS "Users can insert their own profile" ON users;
 
 DROP POLICY IF EXISTS "Users can update their own profile" ON users;
@@ -406,13 +408,39 @@ DROP POLICY IF EXISTS "Creator can delete trip" ON trips;
 
 -- USERS POLICIES --
 
--- Any wallet that has proven key ownership can read the member directory
--- (needed to resolve display names when picking members for a split).
--- Signing in does not require an existing profile, so a brand-new wallet can
--- still authenticate and then create one.
-CREATE POLICY "Authenticated wallets can view users" ON users FOR
+-- A user can only view their own profile or the profiles of counterparties
+-- with whom they share at least one expense or trip. This prevents directory
+-- scraping and mass enumeration of user profiles and balances.
+CREATE POLICY "Users can view their own profile or counterparties" ON users FOR
 SELECT USING (
-    public.settlex_wallet() IS NOT NULL
+    -- 1. Caller viewing their own profile
+    wallet_address = public.settlex_wallet()
+    OR
+    -- 2. Caller shares an expense with this user (both appear in member_wallets or shares)
+    EXISTS (
+        SELECT 1 FROM public.expenses e
+        WHERE (
+            public.settlex_wallet() = ANY(e.member_wallets)
+            OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(e.shares) AS s1
+                WHERE s1->>'walletAddress' = public.settlex_wallet()
+            )
+        )
+        AND (
+            users.wallet_address = ANY(e.member_wallets)
+            OR EXISTS (
+                SELECT 1 FROM jsonb_array_elements(e.shares) AS s2
+                WHERE s2->>'walletAddress' = users.wallet_address
+            )
+        )
+    )
+    OR
+    -- 3. Caller shares a trip with this user
+    EXISTS (
+        SELECT 1 FROM public.trips t
+        WHERE public.settlex_wallet() = ANY(t.member_wallets)
+          AND users.wallet_address = ANY(t.member_wallets)
+    )
 );
 
 -- Users can insert their own profile during signup (wallet must match)
@@ -523,50 +551,45 @@ USING (
 -- ============================================================================
 -- 4. ENABLE REALTIME (for live updates across browsers)
 -- ============================================================================
--- Safely add tables to realtime publication (only if not already added)
+-- Safely add tables to realtime publication (expenses and trips only).
+-- The users table is deliberately excluded from realtime replication to prevent
+-- malicious callers from streaming all new signups in real time.
 
 DO $$
 BEGIN
-    -- Add users table to realtime if not already added
-    IF NOT EXISTS (
+    -- Remove users table from realtime if previously added
+    IF EXISTS (
         SELECT 1 FROM pg_publication_tables 
         WHERE pubname = 'supabase_realtime' 
         AND schemaname = 'public' 
         AND tablename = 'users'
     ) THEN
-        ALTER PUBLICATION supabase_realtime ADD TABLE users;
+        ALTER PUBLICATION supabase_realtime DROP TABLE users;
+    END IF;
 
-END IF;
+    -- Add expenses table to realtime if not already added
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_publication_tables
+        WHERE
+            pubname = 'supabase_realtime'
+            AND schemaname = 'public'
+            AND tablename = 'expenses'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE expenses;
+    END IF;
 
--- Add expenses table to realtime if not already added
-IF NOT EXISTS (
-    SELECT 1
-    FROM pg_publication_tables
-    WHERE
-        pubname = 'supabase_realtime'
-        AND schemaname = 'public'
-        AND tablename = 'expenses'
-) THEN
-ALTER PUBLICATION supabase_realtime
-ADD
-TABLE expenses;
-
-END IF;
-
--- Add trips table to realtime if not already added
-IF NOT EXISTS (
-    SELECT 1
-    FROM pg_publication_tables
-    WHERE
-        pubname = 'supabase_realtime'
-        AND schemaname = 'public'
-        AND tablename = 'trips'
-) THEN
-ALTER PUBLICATION supabase_realtime
-ADD
-TABLE trips;
-
-END IF;
+    -- Add trips table to realtime if not already added
+    IF NOT EXISTS (
+        SELECT 1
+        FROM pg_publication_tables
+        WHERE
+            pubname = 'supabase_realtime'
+            AND schemaname = 'public'
+            AND tablename = 'trips'
+    ) THEN
+        ALTER PUBLICATION supabase_realtime ADD TABLE trips;
+    END IF;
 
 END $$;
 
@@ -712,6 +735,36 @@ END;
 $$;
 
 GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT) TO authenticated, anon;
+
+-- Narrow helper function to resolve a specific known wallet address to its display name.
+-- Authenticated only; prevents mass enumeration while allowing single lookups by address.
+CREATE OR REPLACE FUNCTION public.resolve_user_profile(p_wallet_address TEXT)
+RETURNS TABLE (
+    wallet_address TEXT,
+    display_name TEXT
+)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    IF public.settlex_wallet() IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    IF p_wallet_address IS NULL OR trim(p_wallet_address) = '' THEN
+        RETURN;
+    END IF;
+
+    RETURN QUERY
+    SELECT u.wallet_address, u.display_name
+    FROM public.users u
+    WHERE u.wallet_address = p_wallet_address
+    LIMIT 1;
+END;
+$$;
+
+GRANT EXECUTE ON FUNCTION public.resolve_user_profile(TEXT) TO authenticated, anon;
 
 -- ============================================================================
 -- 5.6. AUTH SHARED STATE (Replay Guard + Rate Limiting Across Instances)
