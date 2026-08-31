@@ -435,6 +435,13 @@ impl SettleXContract {
         );
     }
 
+    /// Reading a trip's history also renews it.
+    ///
+    /// Only `record_payment` used to bump these keys, so a trip that is read
+    /// often but written rarely could have its entries archived once the bump
+    /// window elapsed -- leaving the history unreadable until someone paid a
+    /// restore fee. Extending on read keeps live data live, the same way
+    /// `pool::balance_of` does.
     pub fn get_payments(env: Env, trip_id: String) -> Vec<PaymentRecord> {
         let trip_expenses_key = DataKey::TripExpenseIds(trip_id.clone());
         let trip_expenses: Vec<String> = env
@@ -442,6 +449,17 @@ impl SettleXContract {
             .persistent()
             .get(&trip_expenses_key)
             .unwrap_or_else(|| Vec::new(&env));
+
+        // `extend_ttl` traps on a key that does not exist, so every bump here is
+        // guarded by the presence check that precedes it. A trip with no
+        // payments is an ordinary empty read, not an error.
+        if env.storage().persistent().has(&trip_expenses_key) {
+            env.storage().persistent().extend_ttl(
+                &trip_expenses_key,
+                STORAGE_BUMP_THRESHOLD,
+                STORAGE_BUMP_AMOUNT,
+            );
+        }
 
         let mut payments = Vec::new(&env);
         for expense_id in trip_expenses.iter() {
@@ -451,6 +469,18 @@ impl SettleXContract {
                 .persistent()
                 .get(&key)
                 .unwrap_or_else(|| Vec::new(&env));
+
+            // The index and the per-expense entries expire independently, so
+            // renew each one we actually touched rather than assuming the index
+            // outliving them means they survived too.
+            if env.storage().persistent().has(&key) {
+                env.storage().persistent().extend_ttl(
+                    &key,
+                    STORAGE_BUMP_THRESHOLD,
+                    STORAGE_BUMP_AMOUNT,
+                );
+            }
+
             for payment in expense_payments.iter() {
                 payments.push_back(payment);
             }
@@ -459,9 +489,22 @@ impl SettleXContract {
         payments
     }
 
+    /// Checking a member's paid status also renews the record.
+    ///
+    /// Without this a settled share that is only ever read -- the common case
+    /// once a trip winds down -- could be archived, and the UI would then show
+    /// an already-settled share as unpaid.
     pub fn is_paid(env: Env, expense_id: String, member: Address) -> bool {
         let key = DataKey::ExpensePaid(expense_id, member);
-        env.storage().persistent().has(&key)
+        let paid = env.storage().persistent().has(&key);
+
+        if paid {
+            env.storage()
+                .persistent()
+                .extend_ttl(&key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+        }
+
+        paid
     }
 }
 
@@ -1006,6 +1049,102 @@ mod test {
         let tx_hash    = String::from_str(&env, "");
 
         client.record_payment(&trip_id, &expense_id, &payer, &member, &1_i128, &tx_hash);
+    }
+
+    /// Advances the ledger sequence, leaving TTL settings intact.
+    fn advance_ledgers(env: &Env, by: u32) {
+        env.ledger().with_mut(|li| {
+            li.sequence_number += by;
+        });
+    }
+
+    #[test]
+    fn test_get_payments_extends_ttl_so_a_read_only_trip_survives() {
+        setup!(env, client, pool_client);
+
+        // Keep entries alive only as long as a bump grants, so an un-renewed
+        // key is genuinely gone by the time we look for it.
+        env.ledger().with_mut(|li| {
+            li.min_persistent_entry_ttl = 1;
+            li.max_entry_ttl = STORAGE_BUMP_AMOUNT + 1;
+        });
+
+        let trip_id = String::from_str(&env, "trip-read-only");
+        let expense_id = String::from_str(&env, "exp-read-only");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+        let tx_hash = String::from_str(&env, "hash-read-only");
+
+        pool_client.deposit(&member, &10_000_000_i128);
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &10_000_000_i128,
+            &tx_hash,
+        );
+
+        // A trip written once and then only ever read: step most of the way to
+        // expiry, read, and repeat. Each read has to carry the data forward.
+        for _ in 0..3 {
+            advance_ledgers(&env, STORAGE_BUMP_AMOUNT - 1);
+            assert_eq!(
+                client.get_payments(&trip_id).len(),
+                1,
+                "history should survive as long as it keeps being read",
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_paid_extends_ttl_so_a_settled_share_stays_settled() {
+        setup!(env, client, pool_client);
+
+        env.ledger().with_mut(|li| {
+            li.min_persistent_entry_ttl = 1;
+            li.max_entry_ttl = STORAGE_BUMP_AMOUNT + 1;
+        });
+
+        let trip_id = String::from_str(&env, "trip-settled");
+        let expense_id = String::from_str(&env, "exp-settled");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+        let tx_hash = String::from_str(&env, "hash-settled");
+
+        pool_client.deposit(&member, &10_000_000_i128);
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &10_000_000_i128,
+            &tx_hash,
+        );
+
+        // An already-settled share must not read back as unpaid just because
+        // nobody wrote to it again.
+        for _ in 0..3 {
+            advance_ledgers(&env, STORAGE_BUMP_AMOUNT - 1);
+            assert!(
+                client.is_paid(&expense_id, &member),
+                "a settled share should stay settled while it is being read",
+            );
+        }
+    }
+
+    #[test]
+    fn test_is_paid_does_not_trap_on_a_missing_entry() {
+        setup!(env, client, pool_client);
+        let _ = &pool_client;
+
+        // extend_ttl traps on an absent key, so the unpaid path must not bump.
+        let expense_id = String::from_str(&env, "exp-never-paid");
+        let member = Address::generate(&env);
+        assert!(!client.is_paid(&expense_id, &member));
+    }
+
+    #[test]
+    fn test_get_payments_does_not_trap_on_an_unknown_trip() {
+        setup!(env, client, pool_client);
+        let _ = &pool_client;
+
+        let trip_id = String::from_str(&env, "trip-that-never-existed");
+        assert_eq!(client.get_payments(&trip_id).len(), 0);
     }
 
     #[test]
