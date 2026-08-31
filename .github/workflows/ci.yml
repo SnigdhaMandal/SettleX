@@ -43,6 +43,29 @@ jobs:
       - name: Lint
         run: npm run lint
 
+      - name: Lint Supabase SQL (search_path mutable & security checks)
+        run: |
+          node -e "
+            const fs = require('fs');
+            const sql = fs.readFileSync('supabase-setup.sql', 'utf8');
+            const funcs = sql.split(/CREATE OR REPLACE FUNCTION/i).slice(1);
+            let errors = 0;
+            for (const chunk of funcs) {
+              const header = chunk.split(/\$\$|\$body\$/i)[0];
+              const nameMatch = header.match(/^\s*([a-zA-Z0-9_\.]+)/);
+              const funcName = nameMatch ? nameMatch[1] : 'unknown';
+              if (!/search_path\s*=/i.test(header)) {
+                console.error('ERROR: Function ' + funcName + ' is missing SET search_path');
+                errors++;
+              }
+            }
+            if (errors > 0) {
+              console.error('Failed Supabase DB function search_path lint with ' + errors + ' errors.');
+              process.exit(1);
+            }
+            console.log('Passed Supabase DB function search_path lint.');
+          "
+
       - name: Test with coverage gate
         run: npm run test:coverage -- --runInBand
 
