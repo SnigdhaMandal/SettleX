@@ -15,6 +15,15 @@ export interface ContractPaymentRecord {
    * verifying any of it. Never present a self-attested record as proof.
    */
   attested: boolean;
+  /**
+   * `true` when an admin repudiated this record via `clear_paid`.
+   *
+   * The contract keeps voided records in trip history on purpose — the audit
+   * trail is the point — so consumers must not present one as a legitimate
+   * payment. Filter it out or mark it visibly; never render it as though it
+   * still stands.
+   */
+  voided: boolean;
 }
 
 // Contract call status
