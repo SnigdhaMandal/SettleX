@@ -609,10 +609,325 @@ FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
 -- ============================================================================
--- 5.5. ATOMIC RPC FUNCTION FOR MARKING SHARES PAID (Concurrency-Safe)
+-- 5.5. COLUMN-LEVEL INTEGRITY & ACCESS CONTROL TRIGGERS
+-- ============================================================================
+-- Postgres RLS is row-level, not column-level: an UPDATE policy grants write
+-- access to every column once the row predicate passes.
+-- These BEFORE UPDATE triggers enforce strict column-level authorization:
+-- 1. Immutable identifiers (id, created_at, created_by_wallet, wallet_address)
+--    can NEVER be altered by any caller.
+-- 2. Non-creator members cannot tamper with ownership, member lists, total
+--    amounts, currency, split configuration, or other members' shares.
+-- 3. Non-creator share updates are strictly limited to marking their own share
+--    as paid (paid: false -> true) with a valid transaction hash.
+-- 4. Trips cannot be reopened, have expenses removed, or have metadata altered
+--    by non-creators.
+-- ============================================================================
+
+-- Trigger function for column-level validation and authorization on expenses
+CREATE OR REPLACE FUNCTION public.validate_expense_update()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_caller TEXT;
+    v_is_creator BOOLEAN;
+    v_old_share JSONB;
+    v_new_share JSONB;
+    v_old_shares_count INTEGER;
+    v_new_shares_count INTEGER;
+    v_diff_count INTEGER := 0;
+    v_idx INTEGER;
+    v_all_paid BOOLEAN := true;
+    v_share_elem JSONB;
+BEGIN
+    v_caller := public.settlex_wallet();
+    
+    -- If executed without a verified wallet in an authenticated PostgREST request, reject
+    IF v_caller IS NULL THEN
+        IF current_setting('request.jwt.claims', true) IS NOT NULL AND current_setting('request.jwt.claims', true) <> '' THEN
+            RAISE EXCEPTION 'Unauthorized: invalid or missing wallet session';
+        END IF;
+        -- Allow internal DB maintenance / service role
+        RETURN NEW;
+    END IF;
+
+    -- 1. Immutable fields for ALL callers (including creator)
+    IF NEW.id <> OLD.id THEN
+        RAISE EXCEPTION 'Cannot modify expense id';
+    END IF;
+
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'Cannot modify expense created_at';
+    END IF;
+
+    IF NEW.created_by_wallet <> OLD.created_by_wallet THEN
+        RAISE EXCEPTION 'Cannot modify expense creator (created_by_wallet)';
+    END IF;
+
+    v_is_creator := (v_caller = OLD.created_by_wallet);
+
+    -- 2. Creator validations
+    IF v_is_creator THEN
+        -- Creator cannot drop themselves from member_wallets
+        IF NOT (OLD.created_by_wallet = ANY(NEW.member_wallets)) THEN
+            RAISE EXCEPTION 'Creator cannot be removed from member_wallets';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    -- 3. Non-creator member validations: protect sensitive columns from tampering
+    IF NEW.title <> OLD.title THEN
+        RAISE EXCEPTION 'Only the expense creator can modify title';
+    END IF;
+
+    IF NEW.description IS DISTINCT FROM OLD.description THEN
+        RAISE EXCEPTION 'Only the expense creator can modify description';
+    END IF;
+
+    IF NEW.total_amount <> OLD.total_amount THEN
+        RAISE EXCEPTION 'Only the expense creator can modify total_amount';
+    END IF;
+
+    IF NEW.currency <> OLD.currency THEN
+        RAISE EXCEPTION 'Only the expense creator can modify currency';
+    END IF;
+
+    IF NEW.split_mode <> OLD.split_mode THEN
+        RAISE EXCEPTION 'Only the expense creator can modify split_mode';
+    END IF;
+
+    IF NEW.paid_by_member_id <> OLD.paid_by_member_id THEN
+        RAISE EXCEPTION 'Only the expense creator can modify paid_by_member_id';
+    END IF;
+
+    IF NEW.members IS DISTINCT FROM OLD.members THEN
+        RAISE EXCEPTION 'Only the expense creator can modify members';
+    END IF;
+
+    IF NEW.member_wallets IS DISTINCT FROM OLD.member_wallets THEN
+        RAISE EXCEPTION 'Only the expense creator can modify member_wallets';
+    END IF;
+
+    -- Non-creators modifying shares: can ONLY mark their own share as paid (paid: false -> true) with valid txHash
+    IF NEW.shares IS DISTINCT FROM OLD.shares THEN
+        v_old_shares_count := jsonb_array_length(OLD.shares);
+        v_new_shares_count := jsonb_array_length(NEW.shares);
+
+        IF v_old_shares_count <> v_new_shares_count THEN
+            RAISE EXCEPTION 'Cannot add or remove shares';
+        END IF;
+
+        FOR v_idx IN 0 .. (v_old_shares_count - 1) LOOP
+            v_old_share := OLD.shares->v_idx;
+            v_new_share := NEW.shares->v_idx;
+
+            IF v_old_share IS DISTINCT FROM v_new_share THEN
+                v_diff_count := v_diff_count + 1;
+
+                -- Must be caller's own share (matches walletAddress on share or in members array)
+                IF COALESCE(v_old_share->>'walletAddress', '') <> v_caller THEN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM jsonb_array_elements(OLD.members) AS m
+                        WHERE m->>'id' = v_old_share->>'memberId'
+                          AND m->>'walletAddress' = v_caller
+                    ) THEN
+                        RAISE EXCEPTION 'Cannot modify shares belonging to other members';
+                    END IF;
+                END IF;
+
+                -- Immutable fields within the share: memberId, amount, currency, shareType, weight, percentage
+                IF (v_old_share->>'memberId') IS DISTINCT FROM (v_new_share->>'memberId') OR
+                   (v_old_share->>'amount') IS DISTINCT FROM (v_new_share->>'amount') OR
+                   (v_old_share->>'currency') IS DISTINCT FROM (v_new_share->>'currency') OR
+                   (v_old_share->>'shareType') IS DISTINCT FROM (v_new_share->>'shareType') OR
+                   (v_old_share->>'weight') IS DISTINCT FROM (v_new_share->>'weight') OR
+                   (v_old_share->>'percentage') IS DISTINCT FROM (v_new_share->>'percentage') THEN
+                    RAISE EXCEPTION 'Cannot modify share amounts or split allocation';
+                END IF;
+
+                -- Valid status transition: paid false -> true only
+                IF COALESCE((v_old_share->>'paid')::boolean, false) = true AND
+                   COALESCE((v_new_share->>'paid')::boolean, false) = false THEN
+                    RAISE EXCEPTION 'Cannot unmark a paid share';
+                END IF;
+
+                IF COALESCE((v_new_share->>'paid')::boolean, false) = true THEN
+                    IF v_new_share->>'txHash' IS NULL OR trim(v_new_share->>'txHash') = '' THEN
+                        RAISE EXCEPTION 'Valid transaction hash is required when marking share as paid';
+                    END IF;
+                END IF;
+            END IF;
+        END LOOP;
+
+        IF v_diff_count > 1 THEN
+            RAISE EXCEPTION 'Cannot modify multiple shares at once';
+        END IF;
+    END IF;
+
+    -- Validate settled consistency
+    IF NEW.settled IS DISTINCT FROM OLD.settled THEN
+        FOR v_share_elem IN SELECT * FROM jsonb_array_elements(NEW.shares) LOOP
+            IF COALESCE((v_share_elem->>'paid')::boolean, false) = false THEN
+                v_all_paid := false;
+                EXIT;
+            END IF;
+        END LOOP;
+
+        IF NEW.settled = true AND NOT v_all_paid THEN
+            RAISE EXCEPTION 'Cannot mark expense as settled while unpaid shares remain';
+        END IF;
+
+        IF OLD.settled = true AND NEW.settled = false THEN
+            RAISE EXCEPTION 'Cannot reopen a settled expense';
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Trigger function for column-level validation and authorization on trips
+CREATE OR REPLACE FUNCTION public.validate_trip_update()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_caller TEXT;
+    v_is_creator BOOLEAN;
+    v_unsettled_count INTEGER;
+BEGIN
+    v_caller := public.settlex_wallet();
+
+    IF v_caller IS NULL THEN
+        IF current_setting('request.jwt.claims', true) IS NOT NULL AND current_setting('request.jwt.claims', true) <> '' THEN
+            RAISE EXCEPTION 'Unauthorized: invalid or missing wallet session';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    -- 1. Immutable fields for ALL callers
+    IF NEW.id <> OLD.id THEN
+        RAISE EXCEPTION 'Cannot modify trip id';
+    END IF;
+
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'Cannot modify trip created_at';
+    END IF;
+
+    IF NEW.created_by_wallet <> OLD.created_by_wallet THEN
+        RAISE EXCEPTION 'Cannot modify trip creator (created_by_wallet)';
+    END IF;
+
+    v_is_creator := (v_caller = OLD.created_by_wallet);
+
+    -- 2. Creator validations
+    IF v_is_creator THEN
+        IF NOT (OLD.created_by_wallet = ANY(NEW.member_wallets)) THEN
+            RAISE EXCEPTION 'Creator cannot be removed from member_wallets';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    -- 3. Non-creator member validations
+    IF NEW.name <> OLD.name THEN
+        RAISE EXCEPTION 'Only trip creator can modify trip name';
+    END IF;
+
+    IF NEW.description IS DISTINCT FROM OLD.description THEN
+        RAISE EXCEPTION 'Only trip creator can modify trip description';
+    END IF;
+
+    IF NEW.members IS DISTINCT FROM OLD.members THEN
+        RAISE EXCEPTION 'Only trip creator can modify trip members';
+    END IF;
+
+    IF NEW.member_wallets IS DISTINCT FROM OLD.member_wallets THEN
+        RAISE EXCEPTION 'Only trip creator can modify member_wallets';
+    END IF;
+
+    -- Non-creators cannot remove existing expense ids
+    IF NOT (OLD.expense_ids <@ NEW.expense_ids) THEN
+        RAISE EXCEPTION 'Cannot remove existing expenses from trip';
+    END IF;
+
+    -- Settled status transition check
+    IF NEW.settled IS DISTINCT FROM OLD.settled THEN
+        IF OLD.settled = true AND NEW.settled = false THEN
+            RAISE EXCEPTION 'Cannot reopen a settled trip';
+        END IF;
+
+        IF NEW.settled = true THEN
+            IF array_length(OLD.expense_ids, 1) > 0 THEN
+                SELECT COUNT(*) INTO v_unsettled_count
+                FROM public.expenses
+                WHERE id = ANY(OLD.expense_ids::UUID[]) AND settled = false;
+
+                IF v_unsettled_count > 0 THEN
+                    RAISE EXCEPTION 'Cannot mark trip as settled when linked expenses are still unpaid';
+                END IF;
+            END IF;
+        END IF;
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Trigger function for column-level validation on users
+CREATE OR REPLACE FUNCTION public.validate_user_update()
+RETURNS TRIGGER AS $$
+DECLARE
+    v_caller TEXT;
+BEGIN
+    v_caller := public.settlex_wallet();
+
+    IF v_caller IS NULL THEN
+        IF current_setting('request.jwt.claims', true) IS NOT NULL AND current_setting('request.jwt.claims', true) <> '' THEN
+            RAISE EXCEPTION 'Unauthorized: invalid or missing wallet session';
+        END IF;
+        RETURN NEW;
+    END IF;
+
+    IF NEW.id <> OLD.id THEN
+        RAISE EXCEPTION 'Cannot modify user id';
+    END IF;
+
+    IF NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'Cannot modify user created_at';
+    END IF;
+
+    IF NEW.wallet_address <> OLD.wallet_address THEN
+        RAISE EXCEPTION 'Cannot modify user wallet_address';
+    END IF;
+
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER SET search_path = public;
+
+-- Drop existing validation triggers if they exist
+DROP TRIGGER IF EXISTS validate_users_update ON users;
+DROP TRIGGER IF EXISTS validate_expenses_update ON expenses;
+DROP TRIGGER IF EXISTS validate_trips_update ON trips;
+
+-- Create validation triggers
+CREATE TRIGGER validate_users_update
+BEFORE UPDATE ON users
+FOR EACH ROW
+EXECUTE FUNCTION validate_user_update();
+
+CREATE TRIGGER validate_expenses_update
+BEFORE UPDATE ON expenses
+FOR EACH ROW
+EXECUTE FUNCTION validate_expense_update();
+
+CREATE TRIGGER validate_trips_update
+BEFORE UPDATE ON trips
+FOR EACH ROW
+EXECUTE FUNCTION validate_trip_update();
+
+-- ============================================================================
+-- 5.6. ATOMIC RPC FUNCTION FOR MARKING SHARES PAID (Concurrency-Safe & Authenticated)
 -- ============================================================================
 -- Safely patches a single element in the shares JSONB array using row-level locking
--- (FOR UPDATE), preventing concurrent payments from overwriting each other.
+-- (FOR UPDATE), preventing concurrent payments from overwriting each other, and
+-- cryptographically authenticating that only the share owner or creator can mark paid.
 CREATE OR REPLACE FUNCTION public.mark_share_paid(
     p_expense_id UUID,
     p_member_id TEXT,
@@ -621,26 +936,69 @@ CREATE OR REPLACE FUNCTION public.mark_share_paid(
 RETURNS SETOF public.expenses
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = public
 AS $$
 DECLARE
     v_caller_wallet TEXT;
+    v_creator_wallet TEXT;
     v_current_shares JSONB;
+    v_current_members JSONB;
     v_updated_shares JSONB;
     v_settled BOOLEAN;
+    v_target_wallet TEXT;
+    v_is_authorized BOOLEAN := false;
+    v_target_found BOOLEAN := false;
+    v_share_elem JSONB;
 BEGIN
     v_caller_wallet := public.settlex_wallet();
     IF v_caller_wallet IS NULL THEN
         RAISE EXCEPTION 'Not authenticated';
     END IF;
 
+    IF p_tx_hash IS NULL OR trim(p_tx_hash) = '' THEN
+        RAISE EXCEPTION 'Valid transaction hash is required to mark a share as paid';
+    END IF;
+
     -- Lock the expense row for update to eliminate race conditions
-    SELECT shares INTO v_current_shares
+    SELECT shares, members, created_by_wallet 
+    INTO v_current_shares, v_current_members, v_creator_wallet
     FROM public.expenses
     WHERE id = p_expense_id
     FOR UPDATE;
 
     IF v_current_shares IS NULL THEN
         RAISE EXCEPTION 'Expense not found';
+    END IF;
+
+    -- Caller must be either the expense creator OR the owner of this share
+    IF v_caller_wallet = v_creator_wallet THEN
+        v_is_authorized := true;
+    END IF;
+
+    FOR v_share_elem IN SELECT * FROM jsonb_array_elements(v_current_shares) LOOP
+        IF v_share_elem->>'memberId' = p_member_id THEN
+            v_target_found := true;
+            v_target_wallet := v_share_elem->>'walletAddress';
+            
+            -- If share doesn't have walletAddress directly, look up from members array
+            IF v_target_wallet IS NULL OR v_target_wallet = '' THEN
+                SELECT m->>'walletAddress' INTO v_target_wallet
+                FROM jsonb_array_elements(v_current_members) AS m
+                WHERE m->>'id' = p_member_id;
+            END IF;
+
+            IF v_target_wallet = v_caller_wallet THEN
+                v_is_authorized := true;
+            END IF;
+        END IF;
+    END LOOP;
+
+    IF NOT v_target_found THEN
+        RAISE EXCEPTION 'Member share not found in expense';
+    END IF;
+
+    IF NOT v_is_authorized THEN
+        RAISE EXCEPTION 'Not authorized to mark this share as paid';
     END IF;
 
     -- Atomically transform the specific member share inside the JSONB array
@@ -673,13 +1031,6 @@ BEGIN
         version = COALESCE(version, 0) + 1,
         updated_at = NOW()
     WHERE id = p_expense_id
-      AND (
-          v_caller_wallet = ANY(member_wallets)
-          OR EXISTS (
-              SELECT 1 FROM jsonb_array_elements(shares) AS s
-              WHERE s->>'walletAddress' = v_caller_wallet
-          )
-      )
     RETURNING *;
 END;
 $$;
@@ -687,7 +1038,7 @@ $$;
 GRANT EXECUTE ON FUNCTION public.mark_share_paid(UUID, TEXT, TEXT) TO authenticated, anon;
 
 -- ============================================================================
--- 5.6. AUTH SHARED STATE (Replay Guard + Rate Limiting Across Instances)
+-- 5.7. AUTH SHARED STATE (Replay Guard + Rate Limiting Across Instances)
 -- ============================================================================
 -- The auth routes run on serverless instances that do not share memory, so a
 -- challenge nonce burned in one process means nothing to its siblings and a
