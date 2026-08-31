@@ -375,8 +375,9 @@ NEXT_PUBLIC_APP_VERSION=1.0.0
 # ─── Server-only — never prefix these with NEXT_PUBLIC_ ─────────────────────
 # Supabase Dashboard → Settings → API → JWT Secret.
 SUPABASE_JWT_SECRET=your-supabase-jwt-secret
-# Optional. Binds an auth challenge to the wallet it was issued to.
-# Falls back to SUPABASE_JWT_SECRET. Generate with: openssl rand -base64 48
+# Binds an auth challenge to the wallet it was issued to. Required in
+# production and must differ from SUPABASE_JWT_SECRET (the server refuses to
+# boot otherwise); falls back to it in dev. Generate: openssl rand -base64 48
 AUTH_CHALLENGE_SECRET=
 # Optional. Session lifetime in seconds (default 43200 = 12h, max 86400).
 AUTH_SESSION_TTL_SECONDS=43200

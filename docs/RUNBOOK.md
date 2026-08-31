@@ -26,7 +26,10 @@ them in the browser bundle and let anyone mint a token for any wallet):
 
 - `SUPABASE_JWT_SECRET` — Supabase → Settings → API → JWT Secret. Required;
   without it `/api/auth/verify` returns 503 and no database call is authorized.
-- `AUTH_CHALLENGE_SECRET` — optional, falls back to `SUPABASE_JWT_SECRET`.
+- `AUTH_CHALLENGE_SECRET` — **required in production**, and must differ from
+  `SUPABASE_JWT_SECRET`. The server refuses to boot without it, so a missing
+  value fails the deploy rather than the first sign-in. Falls back to the JWT
+  secret outside production only.
 - `AUTH_SESSION_TTL_SECONDS` — optional, default 43200 (12h), capped at 86400.
 
 Set the same server-only values in the deployment environment (Vercel → Project
