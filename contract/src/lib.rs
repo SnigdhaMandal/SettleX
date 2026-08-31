@@ -50,6 +50,14 @@ pub struct PaymentRecord {
     /// `false` means the record is self-attested by the member: the contract
     /// stores the string but verifies nothing about it.
     pub attested:   bool,
+    /// `true` when an admin has repudiated this record via `clear_paid`.
+    ///
+    /// Never persisted on the record itself: history is written once and left
+    /// alone, and rewriting every stored entry on a clear would be unbounded
+    /// work. `get_payments` sets this at read time from the `ClearedPayment`
+    /// marker, so the audit trail stays intact while consumers can still tell
+    /// that the admin disowned the entry.
+    pub voided:     bool,
 }
 
 #[contracttype]
@@ -89,6 +97,10 @@ pub enum DataKey {
     /// Optional off-chain verifier. When set, it must co-sign every
     /// `record_payment`; when unset, records are self-attested.
     Attestor,
+    /// Marks an `(expense_id, member)` pair an admin repudiated with
+    /// `clear_paid`. Kept separately from the payment vectors so clearing a
+    /// flag stays O(1) and never rewrites stored history.
+    ClearedPayment(String, Address),
 }
 
 const LEDGERS_PER_DAY:        u32 = 17_280;
@@ -304,6 +316,17 @@ impl SettleXContract {
         }
 
         env.storage().persistent().remove(&paid_key);
+
+        // Mark the pair repudiated so `get_payments` can flag the original
+        // record. Without this the cleared entry stays in trip history
+        // indistinguishable from a legitimate one, and only the `pmt_clr`
+        // event -- which no consumer reads -- says otherwise.
+        let cleared_key = DataKey::ClearedPayment(expense_id.clone(), member.clone());
+        env.storage().persistent().set(&cleared_key, &true);
+        env.storage()
+            .persistent()
+            .extend_ttl(&cleared_key, STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
+
         env.storage().instance().extend_ttl(STORAGE_BUMP_THRESHOLD, STORAGE_BUMP_AMOUNT);
 
         env.events().publish(
@@ -370,6 +393,14 @@ impl SettleXContract {
             None => false,
         };
 
+        // Re-recording a pair an admin previously cleared is the intended
+        // recovery path, so drop the stale repudiation rather than letting it
+        // void the replacement record too.
+        let cleared_key = DataKey::ClearedPayment(expense_id.clone(), member.clone());
+        if env.storage().persistent().has(&cleared_key) {
+            env.storage().persistent().remove(&cleared_key);
+        }
+
         let record = PaymentRecord {
             expense_id: expense_id.clone(),
             payer: payer.clone(),
@@ -378,6 +409,7 @@ impl SettleXContract {
             tx_hash: tx_hash.clone(),
             timestamp: env.ledger().timestamp(),
             attested,
+            voided: false,
         };
 
         let expense_key = DataKey::ExpensePayments(trip_id.clone(), expense_id.clone());
@@ -451,8 +483,15 @@ impl SettleXContract {
                 .persistent()
                 .get(&key)
                 .unwrap_or_else(|| Vec::new(&env));
+            // The marker is keyed by (expense_id, member), so it takes one
+            // lookup per record. Reads are simulated off-ledger, so this costs
+            // no fees; it is the price of not rewriting stored history.
             for payment in expense_payments.iter() {
-                payments.push_back(payment);
+                let cleared_key =
+                    DataKey::ClearedPayment(expense_id.clone(), payment.member.clone());
+                let voided = env.storage().persistent().has(&cleared_key);
+
+                payments.push_back(PaymentRecord { voided, ..payment });
             }
         }
 
@@ -585,6 +624,118 @@ mod test {
         }]);
 
         client.clear_paid(&expense_id, &member);
+    }
+
+    // ── Voiding: a cleared record must not read as legitimate ─────────────
+
+    /// After an admin clears a bogus flag, the record stays in history but is
+    /// marked repudiated rather than presented as a real payment.
+    #[test]
+    fn test_cleared_payment_is_marked_voided_in_history() {
+        setup!(env, client, pool_client);
+
+        let trip_id = String::from_str(&env, "trip-void");
+        let expense_id = String::from_str(&env, "exp-void");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        pool_client.deposit(&member, &10_000_000_i128);
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &1_000_000_i128,
+            &String::from_str(&env, "bogus-hash"),
+        );
+
+        let before = client.get_payments(&trip_id);
+        assert_eq!(before.len(), 1);
+        assert!(!before.get(0).unwrap().voided);
+
+        client.clear_paid(&expense_id, &member);
+
+        let after = client.get_payments(&trip_id);
+        // The audit trail is preserved ...
+        assert_eq!(after.len(), 1, "cleared records stay in history");
+        // ... but no longer reads as a legitimate payment.
+        assert!(
+            after.get(0).unwrap().voided,
+            "a repudiated record must not be presented as legitimate",
+        );
+    }
+
+    /// Clearing one member's flag must not void another member's payment.
+    #[test]
+    fn test_voiding_is_scoped_to_the_cleared_member() {
+        setup!(env, client, pool_client);
+
+        let trip_id = String::from_str(&env, "trip-scope");
+        let expense_id = String::from_str(&env, "exp-scope");
+        let payer = Address::generate(&env);
+        let member_a = Address::generate(&env);
+        let member_b = Address::generate(&env);
+
+        pool_client.deposit(&member_a, &10_000_000_i128);
+        pool_client.deposit(&member_b, &10_000_000_i128);
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member_a,
+            &1_000_000_i128,
+            &String::from_str(&env, "hash-a"),
+        );
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member_b,
+            &1_000_000_i128,
+            &String::from_str(&env, "hash-b"),
+        );
+
+        client.clear_paid(&expense_id, &member_a);
+
+        let payments = client.get_payments(&trip_id);
+        assert_eq!(payments.len(), 2);
+        for p in payments.iter() {
+            if p.member == member_a {
+                assert!(p.voided, "the cleared member's record should be voided");
+            } else {
+                assert!(!p.voided, "another member's record must be untouched");
+            }
+        }
+    }
+
+    /// Re-recording after a clear is the whole point of the escape hatch, so
+    /// the replacement must not inherit the old repudiation.
+    #[test]
+    fn test_rerecording_after_clear_is_not_voided() {
+        setup!(env, client, pool_client);
+
+        let trip_id = String::from_str(&env, "trip-redo");
+        let expense_id = String::from_str(&env, "exp-redo");
+        let payer = Address::generate(&env);
+        let member = Address::generate(&env);
+
+        pool_client.deposit(&member, &10_000_000_i128);
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &1_000_000_i128,
+            &String::from_str(&env, "bogus-hash"),
+        );
+        client.clear_paid(&expense_id, &member);
+
+        // The real payment is now recorded.
+        client.record_payment(
+            &trip_id, &expense_id, &payer, &member,
+            &1_000_000_i128,
+            &String::from_str(&env, "real-hash"),
+        );
+
+        let payments = client.get_payments(&trip_id);
+        assert_eq!(payments.len(), 2, "both attempts stay in the audit trail");
+        // Neither reads as voided: the marker was consumed by the re-record, so
+        // the legitimate replacement stands on its own.
+        for p in payments.iter() {
+            assert!(
+                !p.voided,
+                "a re-recorded payment must not inherit the cleared marker",
+            );
+        }
+        assert!(client.is_paid(&expense_id, &member));
     }
 
     // ── Attestor: the hook that makes a record mean something ─────────────

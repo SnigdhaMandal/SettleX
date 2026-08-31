@@ -287,6 +287,7 @@ export async function getContractPayments(
       tx_hash: string;
       timestamp: bigint;
       attested?: boolean;
+      voided?: boolean;
     }>;
 
     const payments: ContractPaymentRecord[] = rawPayments.map((r) => ({
@@ -300,6 +301,10 @@ export async function getContractPayments(
       // Default to self-attested: a record from an older contract build that
       // predates the flag has verified nothing, so it must not read as proof.
       attested:      r.attested === true,
+      // Default to not-voided. An older build has no marker to report, and
+      // defaulting the other way would hide every legitimate record behind a
+      // repudiation that never happened.
+      voided:        r.voided === true,
     }));
 
     return { payments, success: true };
