@@ -48,6 +48,8 @@ export enum ContractErrorCode {
   AmountTooLarge = 8,
   VersionMismatch = 9,
   TxHashTooLong = 10,
+  NotPaid = 11,
+  Unauthorized = 12,
 }
 
 export enum PoolErrorCode {

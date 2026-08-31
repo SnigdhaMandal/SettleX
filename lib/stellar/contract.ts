@@ -76,6 +76,10 @@ export function decodeContractError(raw: string): string {
         return "Contract storage version mismatch.";
       case ContractErrorCode.TxHashTooLong:
         return "Transaction hash is too long.";
+      case ContractErrorCode.NotPaid:
+        return "This expense has not been settled on-chain yet.";
+      case ContractErrorCode.Unauthorized:
+        return "Authorization failed for this operation.";
       default:
         return `Contract error #${code}.`;
     }
