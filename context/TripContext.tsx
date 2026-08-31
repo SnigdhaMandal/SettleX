@@ -89,7 +89,7 @@ function dbRowToTrip(row: any): Trip {
   };
 }
 
-function tripToDbRow(trip: Trip, creatorWallet: string) {
+function tripToDbInsertRow(trip: Trip, creatorWallet: string) {
   const memberWallets = trip.members
     .map((m) => m.walletAddress)
     .filter((addr): addr is string => !!addr);
@@ -303,7 +303,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     const client = await getClient();
     const { error } = await client
       .from("trips")
-      .insert([tripToDbRow(trip, publicKey)]);
+      .insert([tripToDbInsertRow(trip, publicKey)]);
 
     if (error) {
       setTrips((prev) => {
@@ -322,7 +322,6 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
       const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
       const merged = { ...current, ...updates };
-      const dbRow = tripToDbRow(merged, publicKey || "");
 
       // Optimistic update
       setTrips((prev) => {
@@ -333,9 +332,25 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const client = await getClient();
+
+        // Build partial update payload containing only mutable fields.
+        // Never send created_by_wallet, created_at, or id in an UPDATE.
+        const dbUpdates: Record<string, any> = {};
+        if (updates.name !== undefined) dbUpdates.name = updates.name;
+        if (updates.description !== undefined) dbUpdates.description = updates.description ?? null;
+        if (updates.members !== undefined) {
+          dbUpdates.members = updates.members;
+          const memberWallets = updates.members
+            .map((m) => m.walletAddress)
+            .filter((addr): addr is string => !!addr);
+          dbUpdates.member_wallets = memberWallets;
+        }
+        if (updates.expenseIds !== undefined) dbUpdates.expense_ids = updates.expenseIds;
+        if (updates.settled !== undefined) dbUpdates.settled = updates.settled;
+
         const { error } = await client
           .from("trips")
-          .update(dbRow)
+          .update(dbUpdates)
           .eq("id", id);
 
         if (error) throw error;

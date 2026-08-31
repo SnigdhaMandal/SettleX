@@ -100,7 +100,7 @@ function dbRowToExpense(row: any): Expense {
   };
 }
 
-function expenseToDbRow(expense: Expense, creatorWallet: string) {
+function expenseToDbInsertRow(expense: Expense, creatorWallet: string) {
   const memberWallets = expense.members
     .map((m) => m.walletAddress)
     .filter((addr): addr is string => !!addr);
@@ -319,7 +319,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     const client = await getClient();
     const { error } = await client
       .from("expenses")
-      .insert([expenseToDbRow(expense, publicKey)]);
+      .insert([expenseToDbInsertRow(expense, publicKey)]);
 
     if (error) {
       setExpenses((prev) => {
@@ -338,7 +338,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
       const merged = { ...current, ...updates };
-      const dbRow = expenseToDbRow(merged, publicKey || "");
 
       // Optimistic update
       setExpenses((prev) => {
@@ -350,7 +349,8 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       try {
         const client = await getClient();
 
-        // Build partial update payload so we don't accidentally overwrite shares or other concurrent fields
+        // Build partial update payload containing only mutable fields.
+        // Never send created_by_wallet, created_at, or id in an UPDATE.
         const dbUpdates: Record<string, any> = {};
         if (updates.title !== undefined) dbUpdates.title = updates.title;
         if (updates.description !== undefined) dbUpdates.description = updates.description ?? null;
@@ -363,9 +363,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           const memberWallets = updates.members
             .map((m) => m.walletAddress)
             .filter((addr): addr is string => !!addr);
-          if (publicKey && !memberWallets.includes(publicKey)) {
-            memberWallets.unshift(publicKey);
-          }
           dbUpdates.member_wallets = memberWallets;
         }
         if (updates.shares !== undefined) dbUpdates.shares = updates.shares;
