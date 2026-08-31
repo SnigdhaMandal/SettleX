@@ -76,6 +76,13 @@ function isRowForWallet(row: any, walletAddress: string | null): boolean {
   return memberWallets.has(walletAddress);
 }
 
+/**
+ * Raised when a write loses to a concurrent one. Distinct from a transport
+ * failure: local state already holds the winning row, so the caller should
+ * reapply its change rather than retry the same stale payload.
+ */
+export class ExpenseConflictError extends Error {}
+
 function dbRowToExpense(row: any): Expense {
   return {
     id: row.id,
@@ -364,21 +371,68 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         if (updates.shares !== undefined) dbUpdates.shares = updates.shares;
         if (updates.settled !== undefined) dbUpdates.settled = updates.settled;
 
+        // Guard the write with the version we based `merged` on. Without this
+        // predicate two concurrent editors both read v1, both write, and the
+        // later write silently discards the earlier one -- including a share
+        // someone just settled on-chain, which would resurface a Pay button for
+        // a payment that already happened.
+        const baseVersion = current.version ?? 1;
+        dbUpdates.version = baseVersion + 1;
+
         const { data, error } = await client
           .from("expenses")
           .update(dbUpdates)
           .eq("id", id)
+          .eq("version", baseVersion)
           .select("*");
 
         if (error) throw error;
+
+        // Zero rows means the predicate did not match: someone else wrote first.
+        // Re-read so the caller sees the winning row rather than a stale local
+        // copy, and fail loudly instead of pretending the edit landed.
+        if (!data || data.length === 0) {
+          const { data: fresh } = await client
+            .from("expenses")
+            .select("*")
+            .eq("id", id)
+            .single();
+
+          if (fresh) {
+            const winner = dbRowToExpense(fresh);
+            setExpenses((prev) => {
+              const synced = prev.map((e) => (e.id === id ? winner : e));
+              localStorage.setItem(cacheKey, JSON.stringify(synced));
+              return synced;
+            });
+          }
+
+          throw new ExpenseConflictError(
+            "This expense was changed by someone else while you were editing. " +
+              "Your view has been refreshed — please reapply your change.",
+          );
+        }
+
+        // Adopt the row the database actually stored, so the local version
+        // token tracks the server's and the next edit is checked against it.
+        const stored = dbRowToExpense(data[0]);
+        setExpenses((prev) => {
+          const synced = prev.map((e) => (e.id === id ? stored : e));
+          localStorage.setItem(cacheKey, JSON.stringify(synced));
+          return synced;
+        });
       } catch (err) {
         console.error("Failed to update expense in Supabase:", err);
-        // Roll back optimistic update on error
-        setExpenses((prev) => {
-          const rolled = prev.map((e) => (e.id === id ? current : e));
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
-          return rolled;
-        });
+        // A conflict already replaced local state with the winning row. Rolling
+        // back to `current` here would overwrite it with the very stale copy
+        // this guard exists to reject.
+        if (!(err instanceof ExpenseConflictError)) {
+          setExpenses((prev) => {
+            const rolled = prev.map((e) => (e.id === id ? current : e));
+            localStorage.setItem(cacheKey, JSON.stringify(rolled));
+            return rolled;
+          });
+        }
         throw err;
       }
     },

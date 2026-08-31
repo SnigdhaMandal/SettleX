@@ -602,6 +602,33 @@ BEFORE UPDATE ON expenses
 FOR EACH ROW
 EXECUTE FUNCTION update_updated_at_column();
 
+-- Optimistic concurrency: every update to an expense advances `version`.
+--
+-- Clients guard writes with `WHERE version = <the value they read>`, which only
+-- detects a lost update if every writer actually moves the token. Enforcing the
+-- bump here rather than trusting each call site means a writer that forgets --
+-- or a hand-run SQL fix -- cannot silently defeat the guard for everyone else.
+CREATE OR REPLACE FUNCTION bump_expense_version()
+RETURNS TRIGGER AS $$
+BEGIN
+  -- Only when the row's contents actually changed, so a no-op write does not
+  -- invalidate another editor's token for nothing.
+  IF NEW IS DISTINCT FROM OLD THEN
+    IF NEW.version IS NOT DISTINCT FROM OLD.version THEN
+      NEW.version = COALESCE(OLD.version, 0) + 1;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS bump_expenses_version ON expenses;
+
+CREATE TRIGGER bump_expenses_version
+BEFORE UPDATE ON expenses
+FOR EACH ROW
+EXECUTE FUNCTION bump_expense_version();
+
 -- Create trigger for trips
 CREATE TRIGGER update_trips_updated_at
 BEFORE UPDATE ON trips
