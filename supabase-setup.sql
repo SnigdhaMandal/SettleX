@@ -255,6 +255,7 @@ CREATE OR REPLACE FUNCTION public.settlex_wallet()
 RETURNS TEXT
 LANGUAGE SQL
 STABLE
+SET search_path = ''
 -- No longer PARALLEL SAFE: the revocation check reads a table through a
 -- SECURITY DEFINER function.
 AS $$
@@ -262,15 +263,15 @@ AS $$
   -- lives here: a revoked token resolves to NULL, and NULL equals nothing, so
   -- it matches no row on any table. Tokens minted before `jti` existed have no
   -- id to deny and stay valid until they expire.
-  SELECT NULLIF(
-    COALESCE(
+  SELECT pg_catalog.nullif(
+    pg_catalog.coalesce(
       CASE
         WHEN public.settlex_token_revoked(
-          NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'jti',
-          NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address',
-          (NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'iat')::BIGINT
+          pg_catalog.nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb ->> 'jti',
+          pg_catalog.nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address',
+          (pg_catalog.nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb ->> 'iat')::BIGINT
         ) THEN ''
-        ELSE NULLIF(current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address'
+        ELSE pg_catalog.nullif(pg_catalog.current_setting('request.jwt.claims', true), '')::jsonb ->> 'wallet_address'
       END,
       ''
     ),
@@ -576,12 +577,15 @@ END $$;
 
 -- Create function to update updated_at timestamp
 CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 BEGIN
-  NEW.updated_at = NOW();
+  NEW.updated_at = pg_catalog.now();
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 -- Drop existing triggers if they exist
 DROP TRIGGER IF EXISTS update_users_updated_at ON users;
@@ -609,18 +613,21 @@ EXECUTE FUNCTION update_updated_at_column();
 -- bump here rather than trusting each call site means a writer that forgets --
 -- or a hand-run SQL fix -- cannot silently defeat the guard for everyone else.
 CREATE OR REPLACE FUNCTION bump_expense_version()
-RETURNS TRIGGER AS $$
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
 BEGIN
   -- Only when the row's contents actually changed, so a no-op write does not
   -- invalidate another editor's token for nothing.
   IF NEW IS DISTINCT FROM OLD THEN
     IF NEW.version IS NOT DISTINCT FROM OLD.version THEN
-      NEW.version = COALESCE(OLD.version, 0) + 1;
+      NEW.version = pg_catalog.coalesce(OLD.version, 0) + 1;
     END IF;
   END IF;
   RETURN NEW;
 END;
-$$ LANGUAGE plpgsql;
+$$;
 
 DROP TRIGGER IF EXISTS bump_expenses_version ON expenses;
 
@@ -648,6 +655,7 @@ CREATE OR REPLACE FUNCTION public.mark_share_paid(
 RETURNS SETOF public.expenses
 LANGUAGE plpgsql
 SECURITY DEFINER
+SET search_path = ''
 AS $$
 DECLARE
     v_caller_wallet TEXT;
@@ -672,38 +680,38 @@ BEGIN
 
     -- Atomically transform the specific member share inside the JSONB array
     SELECT 
-        jsonb_agg(
+        pg_catalog.jsonb_agg(
             CASE 
                 WHEN elem->>'memberId' = p_member_id THEN 
-                    jsonb_set(
-                        jsonb_set(elem, '{paid}', 'true'::jsonb),
+                    pg_catalog.jsonb_set(
+                        pg_catalog.jsonb_set(elem, '{paid}', 'true'::jsonb),
                         '{txHash}', 
-                        to_jsonb(p_tx_hash)
+                        pg_catalog.to_jsonb(p_tx_hash)
                     )
                 ELSE elem 
             END
         ),
-        bool_and(
+        pg_catalog.bool_and(
             CASE 
                 WHEN elem->>'memberId' = p_member_id THEN true
-                ELSE COALESCE((elem->>'paid')::boolean, false)
+                ELSE pg_catalog.coalesce((elem->>'paid')::boolean, false)
             END
         )
     INTO v_updated_shares, v_settled
-    FROM jsonb_array_elements(v_current_shares) AS elem;
+    FROM pg_catalog.jsonb_array_elements(v_current_shares) AS elem;
 
     RETURN QUERY
     UPDATE public.expenses
     SET 
         shares = v_updated_shares,
-        settled = COALESCE(v_settled, false),
-        version = COALESCE(version, 0) + 1,
-        updated_at = NOW()
+        settled = pg_catalog.coalesce(v_settled, false),
+        version = pg_catalog.coalesce(version, 0) + 1,
+        updated_at = pg_catalog.now()
     WHERE id = p_expense_id
       AND (
           v_caller_wallet = ANY(member_wallets)
           OR EXISTS (
-              SELECT 1 FROM jsonb_array_elements(shares) AS s
+              SELECT 1 FROM pg_catalog.jsonb_array_elements(shares) AS s
               WHERE s->>'walletAddress' = v_caller_wallet
           )
       )
