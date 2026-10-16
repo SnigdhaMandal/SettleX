@@ -20,6 +20,13 @@ const STATIC_ASSET_CSP = [
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
+  // ── ESLint ────────────────────────────────────────────────────────────────
+  // Next.js only scans app/, pages/, components/, lib/ and src/ by default.
+  // We also need to lint context/, hooks/, types/ and scripts/.
+  eslint: {
+    dirs: ["app", "components", "context", "hooks", "lib", "types", "scripts"],
+  },
+
   // ── Images ────────────────────────────────────────────────────────────────
   images: {
     remotePatterns: [

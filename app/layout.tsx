@@ -84,22 +84,13 @@ export const viewport: Viewport = {
   viewportFit: "cover",
 };
 
-import { Poppins } from "next/font/google";
-
-const poppins = Poppins({
-  weight: ["300", "400", "500", "600", "700", "800", "900"],
-  subsets: ["latin"],
-  display: "swap",
-  variable: "--font-poppins",
-});
-
 export default function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   return (
-    <html lang="en" className={`scroll-smooth ${poppins.variable}`}>
+    <html lang="en" className={`scroll-smooth ${poppins.variable} ${jetbrainsMono.variable}`}>
       <body className="bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased font-[family-name:var(--font-poppins)]">
         {/* First in the tree: attaches error reporting before any provider
             below it can throw. Renders nothing. */}
