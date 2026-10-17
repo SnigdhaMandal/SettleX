@@ -154,9 +154,16 @@ export function PaymentRow({
             </span>
 
             {share.paid ? (
-              <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#B9FF66]/30 text-[#2D6600] rounded-full">
-                ✓ Paid
-              </span>
+              <div className="flex items-center gap-1.5">
+                {share.manual && (
+                  <span className="inline-flex items-center text-[10px] font-semibold text-[#D97706] bg-[#FEF3C7] border border-[#FDE68A] px-1.5 py-0.5 rounded">
+                    Manual
+                  </span>
+                )}
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#B9FF66]/30 text-[#2D6600] rounded-full">
+                  ✓ Paid
+                </span>
+              </div>
             ) : isMyRow ? (
               <PayButton
                 amount={share.amount}
@@ -195,6 +202,7 @@ export function PaymentRow({
           recipientName={share.name}
           paidBy={share.paidBy}
           markedAt={share.markedAt}
+          manual={share.manual}
         />
       )}
     </>

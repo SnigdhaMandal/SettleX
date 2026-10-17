@@ -16,6 +16,7 @@ export interface SplitShare {
   txHash?: string;
   paidBy?: string;
   markedAt?: string;
+  manual?: boolean;
 }
 
 export interface Expense {

@@ -8,7 +8,7 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgtap;
 
-SELECT plan(15);
+SELECT plan(17);
 
 -- ─── SX-031: Length and Size Constraints ─────────────────────────────────────
 
@@ -141,6 +141,24 @@ SELECT throws_ok(
        ) $$,
     'Transaction hash already used on another payment',
     'SX-028: Global duplicate transaction hash reuse is rejected'
+);
+
+-- Creator manual override marks share paid and flags it with manual: true (SX-028)
+SELECT set_config('request.jwt.claims', '{"wallet_address": "GALICE11111111111111111111111111111111111111111111111111111", "iat": 1700000000}', true);
+
+SELECT lives_ok(
+    $$ SELECT public.mark_share_paid(
+           'e0000000-0000-0000-0000-000000000002'::uuid,
+           'm-charlie',
+           'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc'
+       ) $$,
+    'SX-028: Creator manual override mark_share_paid succeeds'
+);
+
+SELECT results_eq(
+    $$ SELECT (shares->0->>'manual')::boolean FROM public.expenses WHERE id = 'e0000000-0000-0000-0000-000000000002' $$,
+    $$ VALUES (true) $$,
+    'SX-028: Creator override is flagged with manual: true'
 );
 
 -- ─── SX-026: Financial Terms Freeze ──────────────────────────────────────────

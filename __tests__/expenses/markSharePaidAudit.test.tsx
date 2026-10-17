@@ -37,6 +37,9 @@ describe("Issue #130: mark_share_paid audit record (paidBy and markedAt)", () =>
       // Must set markedAt
       expect(body).toMatch(/'\{markedAt\}'/i);
       expect(body).toMatch(/now\(\)/i);
+
+      // Must set manual
+      expect(body).toMatch(/'\{manual\}'/i);
     });
   });
 
@@ -112,6 +115,31 @@ describe("Issue #130: mark_share_paid audit record (paidBy and markedAt)", () =>
 
       expect(screen.queryByText(/marked paid by/i)).toBeNull();
     });
+
+    it("renders 'Manual' badge when share.manual is true", () => {
+      const share: SplitShare = {
+        memberId: "m1",
+        name: "Bob",
+        walletAddress: MEMBER_WALLET,
+        amount: "25.0000000",
+        paid: true,
+        txHash: "mock-tx-hash",
+        paidBy: CREATOR_WALLET,
+        markedAt: "2026-09-29T12:00:00Z",
+        manual: true,
+      };
+
+      render(
+        <PaymentRow
+          share={share}
+          index={0}
+          expenseTitle="Dinner"
+          connectedWalletAddress={MEMBER_WALLET}
+        />
+      );
+
+      expect(screen.getByText("Manual")).toBeDefined();
+    });
   });
 
   describe("ReceiptModal UI rendering", () => {
@@ -132,6 +160,24 @@ describe("Issue #130: mark_share_paid audit record (paidBy and markedAt)", () =>
       expect(screen.getByText("Marked Paid By")).toBeDefined();
       expect(screen.getByTitle(CREATOR_WALLET)).toBeDefined();
       expect(screen.getByText("Marked At")).toBeDefined();
+    });
+
+    it("renders Manual creator override badge when manual is true", () => {
+      render(
+        <ReceiptModal
+          open={true}
+          onClose={() => {}}
+          txHash="0123456789abcdef"
+          memo="SettleX|Test"
+          amount="50.0000000"
+          recipientName="Alice"
+          paidBy={CREATOR_WALLET}
+          markedAt="2026-09-29T12:00:00Z"
+          manual={true}
+        />
+      );
+
+      expect(screen.getByText("Manual creator override")).toBeDefined();
     });
   });
 });

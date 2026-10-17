@@ -79,6 +79,10 @@ describe("Database Migrations and Security Hardening (Issue #194, SX-026 to SX-0
 
     // Global duplicate hash reuse is rejected
     expect(hardeningSql).toMatch(/Transaction hash already used on another payment/);
+
+    // Creator override sets manual: true
+    expect(hardeningSql).toMatch(/manual BOOLEAN DEFAULT false NOT NULL/);
+    expect(hardeningSql).toMatch(/'\{manual\}'/);
   });
 
   it("implements SX-029 (Trip expense_ids injection prevention) in migrations", () => {
@@ -138,6 +142,7 @@ describe("Database Migrations and Security Hardening (Issue #194, SX-026 to SX-0
     expect(pgtapContent).toMatch(/SX-028: Valid mark_share_paid/);
     expect(pgtapContent).toMatch(/SX-028: Cannot re-mark an already paid share/);
     expect(pgtapContent).toMatch(/SX-028: Global duplicate transaction hash reuse/);
+    expect(pgtapContent).toMatch(/SX-028: Creator override is flagged with manual: true/);
     expect(pgtapContent).toMatch(/SX-027: Trip creator cannot remove existing expenses/);
     expect(pgtapContent).toMatch(/SX-027: Cannot settle trip while linked expenses are unsettled/);
     expect(pgtapContent).toMatch(/SX-029: Non-UUID expense_ids rejected/);

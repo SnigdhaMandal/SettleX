@@ -567,7 +567,11 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
               p_tx_hash: txHash,
             });
 
-          if (!rpcErr && rpcData && rpcData.length > 0) {
+          if (rpcErr) {
+            throw rpcErr;
+          }
+
+          if (rpcData && rpcData.length > 0) {
             const updatedRow = dbRowToExpense(rpcData[0]);
             setExpenses((prev) => {
               const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
@@ -577,6 +581,15 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
             rpcSucceeded = true;
           }
         } catch (rpcErr) {
+          const errMsg = (rpcErr as { message?: string })?.message || "";
+          if (
+            errMsg.includes("already marked as paid") ||
+            errMsg.includes("already used on another") ||
+            errMsg.includes("Valid transaction hash is required") ||
+            errMsg.includes("Not authorized")
+          ) {
+            throw rpcErr;
+          }
           logWarn("expense.mark_share_paid_rpc_unavailable", {
             fields: { expenseId, ...supabaseErrorFields(rpcErr) },
           });

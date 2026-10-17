@@ -22,6 +22,7 @@ export interface ReceiptModalProps {
   ledger?: number;
   paidBy?: string;
   markedAt?: string;
+  manual?: boolean;
 }
 
 export function ReceiptModal({
@@ -34,6 +35,7 @@ export function ReceiptModal({
   ledger,
   paidBy,
   markedAt,
+  manual,
 }: ReceiptModalProps) {
   const explorerUrl = `${STELLAR_EXPLORER}/tx/${txHash}`;
   const displayAmount = formatXLM(amount);
@@ -105,6 +107,17 @@ export function ReceiptModal({
                 {new Date(markedAt).toLocaleString()}
               </span>
             }
+          />
+        )}
+        {manual && (
+          <ReceiptRow
+            label="Payment Type"
+            value={
+              <span className="text-xs font-semibold text-[#D97706] bg-[#FEF3C7] border border-[#FDE68A] px-2 py-0.5 rounded">
+                Manual creator override
+              </span>
+            }
+            hint="Recorded directly by expense creator rather than detected from recipient wallet"
           />
         )}
       </dl>

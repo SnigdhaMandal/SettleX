@@ -201,6 +201,41 @@ export type Database = {
         };
         Relationships: [];
       };
+      payments: {
+        Row: {
+          tx_hash: string;
+          expense_id: string;
+          member_id: string;
+          paid_by_wallet: string;
+          manual: boolean;
+          created_at: string;
+        };
+        Insert: {
+          tx_hash: string;
+          expense_id: string;
+          member_id: string;
+          paid_by_wallet: string;
+          manual?: boolean;
+          created_at?: string;
+        };
+        Update: {
+          tx_hash?: string;
+          expense_id?: string;
+          member_id?: string;
+          paid_by_wallet?: string;
+          manual?: boolean;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "payments_expense_id_fkey";
+            columns: ["expense_id"];
+            isOneToOne: false;
+            referencedRelation: "expenses";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
     };
     Views: {
       [_ in never]: never;

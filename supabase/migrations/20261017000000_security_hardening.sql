@@ -10,8 +10,19 @@ CREATE TABLE IF NOT EXISTS public.payments (
     expense_id UUID NOT NULL REFERENCES public.expenses(id) ON DELETE CASCADE,
     member_id TEXT NOT NULL,
     paid_by_wallet TEXT NOT NULL,
+    manual BOOLEAN DEFAULT false NOT NULL,
     created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL
 );
+
+DO $$ 
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_schema = 'public' AND table_name = 'payments' AND column_name = 'manual'
+    ) THEN
+        ALTER TABLE public.payments ADD COLUMN manual BOOLEAN DEFAULT false NOT NULL;
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS idx_payments_expense_id ON public.payments(expense_id);
 ALTER TABLE public.payments ENABLE ROW LEVEL SECURITY;
@@ -66,6 +77,7 @@ DECLARE
     v_settled BOOLEAN;
     v_target_wallet TEXT;
     v_is_authorized BOOLEAN := false;
+    v_is_manual BOOLEAN := false;
     v_target_found BOOLEAN := false;
     v_share_elem JSONB;
     v_share_is_paid BOOLEAN := false;
@@ -82,6 +94,14 @@ BEGIN
     -- Global uniqueness check across all expenses (SX-028)
     IF EXISTS (
         SELECT 1 FROM public.payments WHERE tx_hash = p_tx_hash
+    ) THEN
+        RAISE EXCEPTION 'Transaction hash already used on another payment';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM public.expenses e, pg_catalog.jsonb_array_elements(e.shares) AS s
+        WHERE (e.id <> p_expense_id OR s->>'memberId' <> p_member_id)
+        AND s->>'txHash' = p_tx_hash
     ) THEN
         RAISE EXCEPTION 'Transaction hash already used on another payment';
     END IF;
@@ -121,10 +141,6 @@ BEGIN
         RAISE EXCEPTION 'Transaction hash already used on another share';
     END IF;
 
-    IF v_caller_wallet = v_creator_wallet THEN
-        v_is_authorized := true;
-    END IF;
-
     FOR v_share_elem IN SELECT * FROM pg_catalog.jsonb_array_elements(v_current_shares) LOOP
         IF v_share_elem->>'memberId' = p_member_id THEN
             v_target_found := true;
@@ -132,7 +148,7 @@ BEGIN
             v_target_wallet := v_share_elem->>'walletAddress';
             
             -- Prevent re-marking an already-paid share (SX-028)
-            IF v_share_is_paid THEN
+            IF v_share_is_paid OR ((v_share_elem->>'txHash') IS NOT NULL AND (v_share_elem->>'txHash') <> '') THEN
                 RAISE EXCEPTION 'Share is already marked as paid';
             END IF;
 
@@ -152,13 +168,22 @@ BEGIN
         RAISE EXCEPTION 'Member share not found in expense';
     END IF;
 
+    -- Caller must be either the expense creator OR the owner of this share
+    IF v_caller_wallet = v_creator_wallet THEN
+        v_is_authorized := true;
+        -- Flag creator manual override if creator is not the owner of this share
+        IF v_target_wallet IS NULL OR v_caller_wallet <> v_target_wallet THEN
+            v_is_manual := true;
+        END IF;
+    END IF;
+
     IF NOT v_is_authorized THEN
         RAISE EXCEPTION 'Not authorized to mark this share as paid';
     END IF;
 
     -- Record payment globally (SX-028)
-    INSERT INTO public.payments (tx_hash, expense_id, member_id, paid_by_wallet)
-    VALUES (p_tx_hash, p_expense_id, p_member_id, v_caller_wallet);
+    INSERT INTO public.payments (tx_hash, expense_id, member_id, paid_by_wallet, manual)
+    VALUES (p_tx_hash, p_expense_id, p_member_id, v_caller_wallet, v_is_manual);
 
     -- Set transaction-level GUC to allow trigger to permit share update via RPC (SX-026)
     PERFORM pg_catalog.set_config('settlex.via_rpc', 'on', true);
@@ -171,15 +196,19 @@ BEGIN
                     pg_catalog.jsonb_set(
                         pg_catalog.jsonb_set(
                             pg_catalog.jsonb_set(
-                                pg_catalog.jsonb_set(elem, '{paid}', 'true'::jsonb),
-                                '{txHash}', 
-                                pg_catalog.to_jsonb(p_tx_hash)
+                                pg_catalog.jsonb_set(
+                                    pg_catalog.jsonb_set(elem, '{paid}', 'true'::jsonb),
+                                    '{txHash}', 
+                                    pg_catalog.to_jsonb(p_tx_hash)
+                                ),
+                                '{paidBy}',
+                                pg_catalog.to_jsonb(v_caller_wallet)
                             ),
-                            '{paidBy}',
-                            pg_catalog.to_jsonb(v_caller_wallet)
+                            '{markedAt}',
+                            pg_catalog.to_jsonb(pg_catalog.to_char(pg_catalog.now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
                         ),
-                        '{markedAt}',
-                        pg_catalog.to_jsonb(pg_catalog.to_char(pg_catalog.now() AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS"Z"'))
+                        '{manual}',
+                        pg_catalog.to_jsonb(v_is_manual)
                     )
                 ELSE elem 
             END
