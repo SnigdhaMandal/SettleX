@@ -8,7 +8,7 @@ BEGIN;
 
 CREATE EXTENSION IF NOT EXISTS pgtap;
 
-SELECT plan(15);
+SELECT plan(19);
 
 -- ─── SX-031: Length and Size Constraints ─────────────────────────────────────
 
@@ -193,6 +193,40 @@ SELECT throws_ok(
        WHERE id = 't0000000-0000-0000-0000-000000000001' $$,
     'Cannot settle trip while linked expenses remain unsettled',
     'SX-027: Cannot settle trip while linked expenses are unsettled'
+);
+
+SELECT lives_ok(
+    $$ UPDATE public.trips
+       SET settled = true
+       WHERE id = 't0000000-0000-0000-0000-000000000001' $$,
+    'SX-027: Valid trip settlement succeeds when all linked expenses are settled'
+);
+
+SELECT throws_ok(
+    $$ UPDATE public.trips
+       SET settled = false
+       WHERE id = 't0000000-0000-0000-0000-000000000001' $$,
+    'Cannot reopen a settled trip',
+    'SX-027: Trip creator cannot reopen a settled trip'
+);
+
+SELECT throws_ok(
+    $$ UPDATE public.trips
+       SET members = '[{"id":"m-alice","name":"Alice","walletAddress":"GALICE11111111111111111111111111111111111111111111111111111"},
+                       {"id":"m-charlie","name":"Charlie","walletAddress":"GCHARLIE3333333333333333333333333333333333333333333333333333"}]'::jsonb
+       WHERE id = 't0000000-0000-0000-0000-000000000001' $$,
+    'member_wallets must exactly match trip members',
+    'SX-027: Trip creator cannot desync members and member_wallets'
+);
+
+SELECT throws_ok(
+    $$ UPDATE public.trips
+       SET members = '[{"id":"m-bob","name":"Bob","walletAddress":"GBOB22222222222222222222222222222222222222222222222222222222"},
+                       {"id":"m-charlie","name":"Charlie","walletAddress":"GCHARLIE3333333333333333333333333333333333333333333333333333"}]'::jsonb,
+           member_wallets = ARRAY['GBOB22222222222222222222222222222222222222222222222222222222', 'GCHARLIE3333333333333333333333333333333333333333333333333333']
+       WHERE id = 't0000000-0000-0000-0000-000000000001' $$,
+    'Creator cannot be removed from member_wallets',
+    'SX-027: Trip creator cannot remove themselves from trip'
 );
 
 -- ─── SX-029: Trip expense_ids Injection Tests ────────────────────────────────

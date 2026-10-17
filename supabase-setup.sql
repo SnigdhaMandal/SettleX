@@ -1528,6 +1528,7 @@ DECLARE
     v_caller TEXT;
     v_is_creator BOOLEAN;
     v_unsettled_count INTEGER;
+    v_expected_wallets TEXT[];
 BEGIN
     v_caller := public.settlex_wallet();
 
@@ -1612,6 +1613,9 @@ BEGIN
                OR jsonb_array_length(NEW.members) < 2 THEN
                 RAISE EXCEPTION 'A trip requires at least two members';
             END IF;
+            IF jsonb_array_length(NEW.members) > 50 THEN
+                RAISE EXCEPTION 'A trip supports at most 50 members';
+            END IF;
             IF EXISTS (
                 SELECT 1
                 FROM jsonb_array_elements(NEW.members) AS m
@@ -1627,6 +1631,30 @@ BEGIN
                 FROM jsonb_array_elements(NEW.members) AS m
             ) THEN
                 RAISE EXCEPTION 'Trip members require unique ids, names, and valid Stellar wallets';
+            END IF;
+
+            IF NOT EXISTS (
+                SELECT 1
+                FROM jsonb_array_elements(NEW.members) AS m
+                WHERE m->>'walletAddress' = OLD.created_by_wallet
+            ) THEN
+                RAISE EXCEPTION 'Trip creator must be a trip member';
+            END IF;
+
+            SELECT COALESCE(
+                pg_catalog.array_agg(wallet ORDER BY wallet),
+                ARRAY[]::TEXT[]
+            )
+            INTO v_expected_wallets
+            FROM (
+                SELECT DISTINCT m->>'walletAddress' AS wallet
+                FROM jsonb_array_elements(NEW.members) AS m
+            ) AS wallets;
+
+            IF NEW.member_wallets IS NULL
+               OR pg_catalog.cardinality(NEW.member_wallets) <> pg_catalog.cardinality(v_expected_wallets)
+               OR NOT (NEW.member_wallets @> v_expected_wallets AND v_expected_wallets @> NEW.member_wallets) THEN
+                RAISE EXCEPTION 'member_wallets must exactly match trip members';
             END IF;
         END IF;
     ELSE
