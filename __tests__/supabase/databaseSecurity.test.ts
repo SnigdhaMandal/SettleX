@@ -92,6 +92,10 @@ describe("Database Migrations and Security Hardening (Issue #194, SX-026 to SX-0
 
     // Rejects foreign expenses or expenses caller does not belong to
     expect(hardeningSql).toMatch(/Cannot link foreign expense or expense caller does not belong to/);
+
+    // Creates trip_expenses join table and add_expense_to_trip RPC
+    expect(hardeningSql).toMatch(/CREATE TABLE IF NOT EXISTS public\.trip_expenses/);
+    expect(hardeningSql).toMatch(/CREATE OR REPLACE FUNCTION public\.add_expense_to_trip/);
   });
 
   it("implements SX-030 (Member share tampering & version check) in migrations", () => {
@@ -141,6 +145,10 @@ describe("Database Migrations and Security Hardening (Issue #194, SX-026 to SX-0
     expect(pgtapContent).toMatch(/SX-027: Trip creator cannot remove existing expenses/);
     expect(pgtapContent).toMatch(/SX-027: Cannot settle trip while linked expenses are unsettled/);
     expect(pgtapContent).toMatch(/SX-029: Non-UUID expense_ids rejected/);
+    expect(pgtapContent).toMatch(/SX-029: Foreign expense injection rejected/);
+    expect(pgtapContent).toMatch(/SX-029: Foreign expense via add_expense_to_trip rejected/);
+    expect(pgtapContent).toMatch(/SX-029: Settling trip with all settled expenses succeeds/);
+    expect(pgtapContent).toMatch(/SX-029: Cannot add expenses to settled trip/);
     expect(pgtapContent).toMatch(/SX-030: Non-creator cannot tamper with share name or attributes/);
     expect(pgtapContent).toMatch(/SX-030: Non-creator cannot arbitrarily alter version/);
     expect(pgtapContent).toMatch(/SELECT \* FROM finish\(\);/);

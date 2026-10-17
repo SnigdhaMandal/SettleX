@@ -211,11 +211,67 @@ export type Database = {
         };
         Relationships: [];
       };
+      trip_expenses: {
+        Row: {
+          trip_id: string;
+          expense_id: string;
+          added_by_wallet: string;
+          created_at: string;
+        };
+        Insert: {
+          trip_id: string;
+          expense_id: string;
+          added_by_wallet: string;
+          created_at?: string;
+        };
+        Update: {
+          trip_id?: string;
+          expense_id?: string;
+          added_by_wallet?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "trip_expenses_trip_id_fkey";
+            columns: ["trip_id"];
+            isOneToOne: false;
+            referencedRelation: "trips";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "trip_expenses_expense_id_fkey";
+            columns: ["expense_id"];
+            isOneToOne: false;
+            referencedRelation: "expenses";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
     };
     Views: {
       [_ in never]: never;
     };
     Functions: {
+      add_expense_to_trip: {
+        Args: {
+          p_trip_id: string;
+          p_expense_id: string;
+        };
+        Returns: {
+          id: string;
+          name: string;
+          description: string | null;
+          members: Json;
+          expense_ids: string[];
+          created_at: string;
+          updated_at: string;
+          settled: boolean;
+          created_by_wallet: string;
+          member_wallets: string[];
+          accepted_wallets: string[];
+          declined_wallets: string[];
+        }[];
+      };
       get_pending_invitations: {
         Args: Record<PropertyKey, never>;
         Returns: {
