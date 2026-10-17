@@ -48,6 +48,28 @@ describe("Database Migrations and Security Hardening (Issue #194, SX-026 to SX-0
     expect(hardeningSql).toMatch(/Cannot reopen a settled expense/);
   });
 
+  it("implements SX-034 (Expense creator bypass protection and payload re-validation) in migrations", () => {
+    const hardeningSql = fs.readFileSync(
+      path.join(migrationsDir, "20261017000000_security_hardening.sql"),
+      "utf8"
+    );
+
+    // Creator cannot unmark a paid share
+    expect(hardeningSql).toMatch(/Cannot unmark a paid share/);
+
+    // Creator edits re-validate payload against NEW
+    expect(hardeningSql).toMatch(/assert_valid_expense_payload\(/);
+
+    // Valid transaction hash required when marking share as paid
+    expect(hardeningSql).toMatch(/Valid transaction hash is required/);
+
+    // Totals desynchronization prevention
+    expect(hardeningSql).toMatch(/Share amounts do not reconcile to total_amount/);
+
+    // Settled status consistency and reopen prevention
+    expect(hardeningSql).toMatch(/Cannot reopen a settled expense/);
+  });
+
   it("implements SX-027 (Trip creator bypass prevention) in migrations", () => {
     const hardeningSql = fs.readFileSync(
       path.join(migrationsDir, "20261017000000_security_hardening.sql"),
@@ -143,6 +165,10 @@ describe("Database Migrations and Security Hardening (Issue #194, SX-026 to SX-0
     expect(pgtapContent).toMatch(/SX-029: Non-UUID expense_ids rejected/);
     expect(pgtapContent).toMatch(/SX-030: Non-creator cannot tamper with share name or attributes/);
     expect(pgtapContent).toMatch(/SX-030: Non-creator cannot arbitrarily alter version/);
+    expect(pgtapContent).toMatch(/SX-034: Creator cannot mark paid without a valid hash/);
+    expect(pgtapContent).toMatch(/SX-034: Creator cannot unmark a paid share/);
+    expect(pgtapContent).toMatch(/SX-034: Creator cannot desync totals/);
+    expect(pgtapContent).toMatch(/SX-034: Creator cannot reopen a settled expense/);
     expect(pgtapContent).toMatch(/SELECT \* FROM finish\(\);/);
   });
 
