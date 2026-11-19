@@ -106,6 +106,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           settled: boolean;
+          version: number;
           created_by_wallet: string;
           member_wallets: string[];
           accepted_wallets: string[];
@@ -120,6 +121,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           settled?: boolean;
+          version?: number;
           created_by_wallet: string;
           member_wallets?: string[];
           accepted_wallets?: string[];
@@ -134,6 +136,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           settled?: boolean;
+          version?: number;
           created_by_wallet?: string;
           member_wallets?: string[];
           accepted_wallets?: string[];

@@ -80,6 +80,13 @@ function isCachedTripForWallet(trip: Trip, walletAddress: string | null): boolea
   );
 }
 
+/**
+ * Raised when a write loses to a concurrent one. Local state already holds the
+ * winning row, so the caller should reapply its change rather than retry the
+ * same stale payload.
+ */
+export class TripConflictError extends Error {}
+
 function dbRowToTrip(row: unknown): Trip {
   return parseTripRow(row);
 }
@@ -104,6 +111,7 @@ function tripToDbInsertRow(
     expense_ids: trip.expenseIds,
     created_at: trip.createdAt,
     settled: trip.settled,
+    version: trip.version ?? 1,
     created_by_wallet: creatorWallet,
     member_wallets: allMemberWallets,
     accepted_wallets: [creatorWallet],
@@ -365,22 +373,63 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         if (updates.expenseIds !== undefined) dbUpdates.expense_ids = updates.expenseIds;
         if (updates.settled !== undefined) dbUpdates.settled = updates.settled;
 
-        const { error } = await client
+        // Guard the write with the version we based `merged` on.
+        const baseVersion = current.version ?? 1;
+        dbUpdates.version = baseVersion + 1;
+
+        const { data, error } = await client
           .from("trips")
           .update(dbUpdates)
-          .eq("id", id);
+          .eq("id", id)
+          .eq("version", baseVersion)
+          .select("*");
 
         if (error) throw error;
+
+        // Zero rows means the predicate did not match: someone else wrote first.
+        // Re-read so the caller sees the winning row rather than a stale local
+        // copy, and fail loudly instead of pretending the edit landed.
+        if (!data || data.length === 0) {
+          const { data: fresh } = await client
+            .from("trips")
+            .select("*")
+            .eq("id", id)
+            .single();
+
+          if (fresh) {
+            const winner = dbRowToTrip(fresh);
+            setTrips((prev) => {
+              const synced = prev.map((t) => (t.id === id ? winner : t));
+              localStorage.setItem(cacheKey, JSON.stringify(synced));
+              return synced;
+            });
+          }
+
+          throw new TripConflictError(
+            "This trip was changed by someone else while you were editing. " +
+              "Your view has been refreshed — please reapply your change."
+          );
+        }
+
+        // Adopt the row the database actually stored
+        const stored = dbRowToTrip(data[0]);
+        setTrips((prev) => {
+          const synced = prev.map((t) => (t.id === id ? stored : t));
+          localStorage.setItem(cacheKey, JSON.stringify(synced));
+          return synced;
+        });
       } catch (err) {
         reportError("trip.update_failed", err, {
           fields: { tripId: id, ...supabaseErrorFields(err) },
         });
-        // Roll back optimistic update on error
-        setTrips((prev) => {
-          const rolled = prev.map((t) => (t.id === id ? current : t));
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
-          return rolled;
-        });
+        // A conflict already replaced local state with the winning row.
+        if (!(err instanceof TripConflictError)) {
+          setTrips((prev) => {
+            const rolled = prev.map((t) => (t.id === id ? current : t));
+            localStorage.setItem(cacheKey, JSON.stringify(rolled));
+            return rolled;
+          });
+        }
         throw err;
       }
     },
@@ -425,20 +474,25 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
   const addExpenseToTrip = useCallback(
     async (tripId: string, expenseId: string) => {
-      const current = trips.find((t) => t.id === tripId);
-      if (!current || current.expenseIds.includes(expenseId)) return;
-
       const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
-      const expenseIds = [...current.expenseIds, expenseId];
 
-      // Optimistic update
+      // Optimistic update: use functional update so concurrent calls merge expenseIds
+      let alreadyIncluded = false;
       setTrips((prev) => {
+        const target = prev.find((t) => t.id === tripId);
+        if (!target) return prev;
+        if (target.expenseIds.includes(expenseId)) {
+          alreadyIncluded = true;
+          return prev;
+        }
         const updated = prev.map((t) =>
-          t.id === tripId ? { ...t, expenseIds } : t
+          t.id === tripId ? { ...t, expenseIds: [...t.expenseIds, expenseId] } : t
         );
         localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
+
+      if (alreadyIncluded) return;
 
       try {
         const client = await getClient();
@@ -446,7 +500,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         // 1. Primary path: Call validated server-side RPC add_expense_to_trip
         let rpcSucceeded = false;
         try {
-          const { error: rpcErr } = await client.rpc("add_expense_to_trip", {
+          const { data: rpcData, error: rpcErr } = await client.rpc("add_expense_to_trip", {
             p_trip_id: tripId,
             p_expense_id: expenseId,
           });
@@ -463,6 +517,28 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
             }
           } else {
             rpcSucceeded = true;
+            if (rpcData) {
+              const rows = Array.isArray(rpcData) ? rpcData : [rpcData];
+              if (rows.length > 0) {
+                const storedTrip = dbRowToTrip(rows[0]);
+                setTrips((prev) => {
+                  const updated = prev.map((t) => {
+                    if (t.id !== tripId) return t;
+                    // Preserve any local in-flight additions while adopting server state
+                    const mergedExpenseIds = Array.from(
+                      new Set([...storedTrip.expenseIds, ...t.expenseIds])
+                    );
+                    return {
+                      ...t,
+                      ...storedTrip,
+                      expenseIds: mergedExpenseIds,
+                    };
+                  });
+                  localStorage.setItem(cacheKey, JSON.stringify(updated));
+                  return updated;
+                });
+              }
+            }
           }
         } catch (rpcErr) {
           const msg = (rpcErr as { message?: string })?.message || "";
@@ -479,14 +555,73 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
           });
         }
 
-        // 2. Fallback path: Direct update if RPC not present in environment
+        // 2. Fallback path: Direct guarded OCC update with retry if RPC not present in environment
         if (!rpcSucceeded) {
-          const { error } = await client
-            .from("trips")
-            .update({ expense_ids: expenseIds })
-            .eq("id", tripId);
+          const maxRetries = 3;
+          let success = false;
+          for (let attempt = 0; attempt < maxRetries; attempt++) {
+            const { data: freshRow, error: fetchErr } = await client
+              .from("trips")
+              .select("*")
+              .eq("id", tripId)
+              .single();
 
-          if (error) throw error;
+            if (fetchErr) throw fetchErr;
+            if (!freshRow) throw new Error("Trip not found");
+
+            const freshTrip = dbRowToTrip(freshRow);
+            if (freshTrip.settled) {
+              throw new Error("Cannot add expenses to a settled trip");
+            }
+
+            if (freshTrip.expenseIds.includes(expenseId)) {
+              success = true;
+              setTrips((prev) => {
+                const updated = prev.map((t) => (t.id === tripId ? { ...t, ...freshTrip } : t));
+                localStorage.setItem(cacheKey, JSON.stringify(updated));
+                return updated;
+              });
+              break;
+            }
+
+            const baseVersion = freshTrip.version ?? 1;
+            const nextExpenseIds = [...freshTrip.expenseIds, expenseId];
+
+            const { data: updateData, error: updateErr } = await client
+              .from("trips")
+              .update({
+                expense_ids: nextExpenseIds,
+                version: baseVersion + 1,
+              })
+              .eq("id", tripId)
+              .eq("version", baseVersion)
+              .select("*");
+
+            if (updateErr) throw updateErr;
+
+            if (updateData && updateData.length > 0) {
+              const stored = dbRowToTrip(updateData[0]);
+              setTrips((prev) => {
+                const updated = prev.map((t) => {
+                  if (t.id !== tripId) return t;
+                  const mergedExpenseIds = Array.from(
+                    new Set([...stored.expenseIds, ...t.expenseIds])
+                  );
+                  return { ...t, ...stored, expenseIds: mergedExpenseIds };
+                });
+                localStorage.setItem(cacheKey, JSON.stringify(updated));
+                return updated;
+              });
+              success = true;
+              break;
+            }
+          }
+
+          if (!success) {
+            throw new TripConflictError(
+              "Failed to add expense to trip due to concurrent updates"
+            );
+          }
         }
 
         if (typeof window !== "undefined") {
@@ -496,16 +631,22 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         reportError("trip.add_expense_failed", err, {
           fields: { tripId, ...supabaseErrorFields(err) },
         });
-        // Roll back optimistic update on error
+        // Roll back ONLY the failed expenseId from optimistic state
         setTrips((prev) => {
-          const rolled = prev.map((t) => (t.id === tripId ? current : t));
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
-          return rolled;
+          const updated = prev.map((t) => {
+            if (t.id !== tripId) return t;
+            return {
+              ...t,
+              expenseIds: t.expenseIds.filter((id) => id !== expenseId),
+            };
+          });
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
         });
         throw err;
       }
     },
-    [trips, getClient, publicKey]
+    [getClient, publicKey]
   );
 
   const settleTrip = useCallback(
@@ -524,26 +665,59 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const client = await getClient();
-        const { error } = await client
+        const baseVersion = current.version ?? 1;
+        const { data, error } = await client
           .from("trips")
-          .update({ settled: true })
-          .eq("id", id);
+          .update({ settled: true, version: baseVersion + 1 })
+          .eq("id", id)
+          .eq("version", baseVersion)
+          .select("*");
 
         if (error) throw error;
+
+        if (!data || data.length === 0) {
+          const { data: fresh } = await client
+            .from("trips")
+            .select("*")
+            .eq("id", id)
+            .single();
+
+          if (fresh) {
+            const winner = dbRowToTrip(fresh);
+            setTrips((prev) => {
+              const synced = prev.map((t) => (t.id === id ? winner : t));
+              localStorage.setItem(cacheKey, JSON.stringify(synced));
+              return synced;
+            });
+          }
+
+          throw new TripConflictError(
+            "This trip was changed by someone else. Your view has been refreshed."
+          );
+        }
+
+        const stored = dbRowToTrip(data[0]);
+        setTrips((prev) => {
+          const synced = prev.map((t) => (t.id === id ? stored : t));
+          localStorage.setItem(cacheKey, JSON.stringify(synced));
+          return synced;
+        });
       } catch (err) {
         reportError("trip.settle_failed", err, {
           fields: { tripId: id, ...supabaseErrorFields(err) },
         });
-        // Roll back optimistic update on error
-        setTrips((prev) => {
-          const rolled = prev.map((t) => (t.id === id ? current : t));
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
-          return rolled;
-        });
+        // Roll back optimistic update on error if not conflict
+        if (!(err instanceof TripConflictError)) {
+          setTrips((prev) => {
+            const rolled = prev.map((t) => (t.id === id ? current : t));
+            localStorage.setItem(cacheKey, JSON.stringify(rolled));
+            return rolled;
+          });
+        }
         throw err;
       }
     },
-    [trips, getClient]
+    [trips, getClient, publicKey]
   );
 
   const getTrip = useCallback(

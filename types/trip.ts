@@ -12,6 +12,7 @@ export interface Trip {
   acceptedWallets?: string[];
   declinedWallets?: string[];
   settled: boolean;
+  version?: number;
 }
 
 export type TripFormData = {
