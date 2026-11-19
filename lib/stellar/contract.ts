@@ -219,7 +219,7 @@ export async function recordPaymentOnChain(
     const assembled = rpc.assembleTransaction(tx, simResult).build();
 
     onStatus?.("signing");
-    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE);
+    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE, params.memberPublicKey);
 
     onStatus?.("sending");
     const sendResult = await sorobanServer.sendTransaction(

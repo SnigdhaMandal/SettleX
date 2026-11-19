@@ -13,8 +13,10 @@ wallet + chain + UI paths a unit test can't.
 For **each** installed wallet (Freighter, xBull, Lobstr, Rabet):
 - [ ] Connect opens the chooser and lists the wallet as **Available**.
 - [ ] Selecting it returns your `G…` address; the header shows the truncated key + network.
+  - Freighter, xBull, and Rabet detect network automatically.
+  - LOBSTR prompts for explicit confirmation in the top banner: clicking "Confirm Testnet" marks network matched and enables payments.
 - [ ] **Reload the page** — you stay connected, and the correct wallet is remembered (sign still routes to the right extension).
-- [ ] Disconnect clears the session.
+- [ ] Disconnect clears the session and resets any manual network confirmation.
 
 ## 2. Create & split an expense
 - [ ] Create an expense, add members with Stellar addresses.
