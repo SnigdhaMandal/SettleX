@@ -41,6 +41,8 @@ interface ExpenseFormProps {
   currentUserName?: string | null;
   /** Pre-populate members (used when creating expense within a trip) */
   defaultMembers?: Member[];
+  /** Optional trip ID if this expense is being created directly within a trip */
+  tripId?: string;
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -51,6 +53,7 @@ export function ExpenseForm({
   currentUserPublicKey,
   currentUserName,
   defaultMembers,
+  tripId,
 }: ExpenseFormProps) {
   const { addExpense } = useExpense();
   const { success: toastSuccess, error: toastError } = useToast();
@@ -260,7 +263,7 @@ export function ExpenseForm({
           settled: false,
         };
 
-        await addExpense(expense);
+        await addExpense(expense, tripId);
         toastSuccess("Expense created!", `"${expense.title}" split among ${cleanMembers.length} members.`);
         onSuccess?.(expense.id);
       } catch (err: any) {
@@ -277,7 +280,7 @@ export function ExpenseForm({
       }
     },
     // eslint-disable-next-line react-hooks/exhaustive-deps
-    [title, description, totalAmount, splitMode, members, paidByMemberId]
+    [title, description, totalAmount, splitMode, members, paidByMemberId, tripId]
   );
 
   // ── Render ──────────────────────────────────────────────────────────────────

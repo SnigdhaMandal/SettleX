@@ -145,6 +145,52 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("settlex:consent-changed", refresh);
   }, []);
 
+  // Listen for atomic expense creations in trips
+  useEffect(() => {
+    const handleExpenseCreated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tripId: string; expenseId: string }>;
+      const { tripId, expenseId } = customEvent.detail || {};
+      if (tripId && expenseId) {
+        setTrips((prev) => {
+          const updated = prev.map((t) => {
+            if (t.id !== tripId) return t;
+            if (t.expenseIds.includes(expenseId)) return t;
+            return { ...t, expenseIds: [...t.expenseIds, expenseId] };
+          });
+          const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+
+    const handleExpenseDeleted = (e: Event) => {
+      const customEvent = e as CustomEvent<{ expenseId: string }>;
+      const expenseId = customEvent.detail?.expenseId;
+      if (expenseId) {
+        setTrips((prev) => {
+          const updated = prev.map((t) => {
+            if (!t.expenseIds.includes(expenseId)) return t;
+            return {
+              ...t,
+              expenseIds: t.expenseIds.filter((id) => id !== expenseId),
+            };
+          });
+          const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+
+    window.addEventListener("settlex:trip-expense-created", handleExpenseCreated);
+    window.addEventListener("settlex:expense-deleted", handleExpenseDeleted);
+    return () => {
+      window.removeEventListener("settlex:trip-expense-created", handleExpenseCreated);
+      window.removeEventListener("settlex:expense-deleted", handleExpenseDeleted);
+    };
+  }, [publicKey]);
+
   // Resolve the authenticated client once per wallet so the initial load and
   // periodic refresh share it. Concurrent callers reuse a single handshake,
   // so the wallet is only ever asked to sign once.
@@ -455,6 +501,15 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         const { error } = await client.from("trips").delete().eq("id", id);
 
         if (error) throw error;
+
+        // Notify ExpenseContext that this trip and its expenses were deleted
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("settlex:trip-deleted", {
+              detail: { tripId: id, expenseIds: current.expenseIds },
+            })
+          );
+        }
       } catch (err) {
         reportError("trip.delete_failed", err, {
           fields: { tripId: id, ...supabaseErrorFields(err) },
@@ -469,7 +524,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [trips, getClient]
+    [trips, getClient, publicKey]
   );
 
   const addExpenseToTrip = useCallback(

@@ -245,6 +245,13 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      create_trip_expense: {
+        Args: {
+          p_trip_id: string;
+          p_expense: Json;
+        };
+        Returns: Database["public"]["Tables"]["expenses"]["Row"][];
+      };
       add_expense_to_trip: {
         Args: {
           p_trip_id: string;

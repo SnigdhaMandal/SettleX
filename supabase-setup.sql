@@ -1960,6 +1960,134 @@ AFTER INSERT OR UPDATE OF expense_ids, accepted_wallets ON trips
 FOR EACH ROW
 EXECUTE FUNCTION sync_trip_expenses_accepted_wallets();
 
+-- ============================================================================
+-- 5.6. DELETE INTEGRITY & CASCADE CLEANUP TRIGGERS (SX-031)
+-- ============================================================================
+
+-- Trigger to validate expense deletion
+CREATE OR REPLACE FUNCTION public.validate_expense_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_caller TEXT;
+BEGIN
+    v_caller := public.settlex_wallet();
+    
+    -- If caller is authenticated, ensure caller is creator or trip creator
+    IF v_caller IS NOT NULL THEN
+        IF v_caller <> OLD.created_by_wallet AND NOT EXISTS (
+            SELECT 1 FROM public.trips t
+            WHERE OLD.id::TEXT = ANY(t.expense_ids) AND t.created_by_wallet = v_caller
+        ) THEN
+            RAISE EXCEPTION 'Not authorized to delete this expense';
+        END IF;
+    END IF;
+
+    -- Cannot delete settled expense or expense with paid shares
+    IF OLD.settled THEN
+        RAISE EXCEPTION 'Cannot delete a settled expense';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM jsonb_array_elements(OLD.shares) AS s
+        WHERE (s->>'paid')::boolean = true
+    ) OR EXISTS (
+        SELECT 1 FROM public.payments WHERE expense_id = OLD.id
+    ) THEN
+        RAISE EXCEPTION 'Cannot delete an expense with paid shares or payments';
+    END IF;
+
+    RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS validate_expenses_delete ON expenses;
+CREATE TRIGGER validate_expenses_delete
+BEFORE DELETE ON expenses
+FOR EACH ROW
+EXECUTE FUNCTION validate_expense_delete();
+
+-- Trigger to cleanup deleted expense from any trip's expense_ids
+CREATE OR REPLACE FUNCTION public.cleanup_expense_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.trips
+    SET expense_ids = pg_catalog.array_remove(expense_ids, OLD.id::TEXT),
+        updated_at = pg_catalog.now()
+    WHERE OLD.id::TEXT = ANY(expense_ids);
+
+    RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS cleanup_expenses_delete ON expenses;
+CREATE TRIGGER cleanup_expenses_delete
+AFTER DELETE ON expenses
+FOR EACH ROW
+EXECUTE FUNCTION cleanup_expense_delete();
+
+-- Trigger to validate trip deletion and cascade delete trip expenses
+CREATE OR REPLACE FUNCTION public.validate_and_cleanup_trip_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_caller TEXT;
+BEGIN
+    v_caller := public.settlex_wallet();
+
+    IF v_caller IS NOT NULL AND v_caller <> OLD.created_by_wallet THEN
+        RAISE EXCEPTION 'Only trip creator can delete trip';
+    END IF;
+
+    -- Deleting a trip with paid shares or settled status is strictly forbidden
+    IF OLD.settled THEN
+        RAISE EXCEPTION 'Cannot delete a settled trip';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.expenses e
+        WHERE e.id::TEXT = ANY(OLD.expense_ids)
+          AND (
+              e.settled = true
+              OR EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(e.shares) AS s
+                  WHERE (s->>'paid')::boolean = true
+              )
+              OR EXISTS (
+                  SELECT 1 FROM public.payments p WHERE p.expense_id = e.id
+              )
+          )
+    ) THEN
+        RAISE EXCEPTION 'Cannot delete a trip with paid shares or payments';
+    END IF;
+
+    -- Clean up all associated expenses belonging to this trip
+    IF OLD.expense_ids IS NOT NULL AND pg_catalog.cardinality(OLD.expense_ids) > 0 THEN
+        DELETE FROM public.expenses
+        WHERE id::TEXT = ANY(OLD.expense_ids);
+    END IF;
+
+    RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS validate_and_cleanup_trips_delete ON trips;
+CREATE TRIGGER validate_and_cleanup_trips_delete
+BEFORE DELETE ON trips
+FOR EACH ROW
+EXECUTE FUNCTION validate_and_cleanup_trip_delete();
+
 -- Pending invitees cannot SELECT the underlying row. This deliberately narrow
 -- RPC exposes only the information needed to make an informed consent choice.
 CREATE OR REPLACE FUNCTION public.get_pending_invitations()
@@ -2470,6 +2598,150 @@ $$;
 
 REVOKE ALL ON FUNCTION public.add_expense_to_trip(UUID, UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.add_expense_to_trip(UUID, UUID) TO authenticated;
+
+-- Create an expense in a trip atomically (SX-031)
+-- 1. Inserts the expense into expenses table
+-- 2. Records the relationship in trip_expenses join table
+-- 3. Appends expense id to trips.expense_ids and bumps version
+CREATE OR REPLACE FUNCTION public.create_trip_expense(
+    p_trip_id UUID,
+    p_expense JSONB
+)
+RETURNS SETOF public.expenses
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_caller TEXT;
+    v_trip public.trips%ROWTYPE;
+    v_expense_id UUID;
+    v_title TEXT;
+    v_description TEXT;
+    v_total_amount TEXT;
+    v_currency TEXT;
+    v_split_mode TEXT;
+    v_paid_by_member_id TEXT;
+    v_members JSONB;
+    v_shares JSONB;
+    v_created_at TIMESTAMPTZ;
+    v_member_wallets TEXT[];
+BEGIN
+    v_caller := public.settlex_wallet();
+    IF v_caller IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    -- 1. Lock trip row FOR UPDATE
+    SELECT * INTO v_trip
+    FROM public.trips
+    WHERE id = p_trip_id
+    FOR UPDATE;
+
+    IF v_trip.id IS NULL THEN
+        RAISE EXCEPTION 'Trip not found';
+    END IF;
+
+    IF v_trip.settled THEN
+        RAISE EXCEPTION 'Cannot add expenses to a settled trip';
+    END IF;
+
+    -- Caller must be trip creator or accepted trip member
+    IF v_caller <> v_trip.created_by_wallet
+       AND NOT (v_caller = ANY(v_trip.member_wallets) AND v_caller = ANY(v_trip.accepted_wallets)) THEN
+        RAISE EXCEPTION 'Not authorized to add expenses to this trip';
+    END IF;
+
+    -- Extract expense fields
+    v_expense_id := COALESCE((p_expense->>'id')::UUID, gen_random_uuid());
+    v_title := p_expense->>'title';
+    v_description := p_expense->>'description';
+    v_total_amount := COALESCE(p_expense->>'total_amount', p_expense->>'totalAmount');
+    v_currency := COALESCE(p_expense->>'currency', 'XLM');
+    v_split_mode := COALESCE(p_expense->>'split_mode', p_expense->>'splitMode');
+    v_paid_by_member_id := COALESCE(p_expense->>'paid_by_member_id', p_expense->>'paidByMemberId');
+    v_members := COALESCE(p_expense->'members', '[]'::JSONB);
+    v_shares := COALESCE(p_expense->'shares', '[]'::JSONB);
+    v_created_at := COALESCE((p_expense->>'created_at')::TIMESTAMPTZ, (p_expense->>'createdAt')::TIMESTAMPTZ, pg_catalog.now());
+
+    -- Extract member wallets
+    IF p_expense ? 'member_wallets' AND jsonb_typeof(p_expense->'member_wallets') = 'array' THEN
+        SELECT COALESCE(array_agg(elem::TEXT), ARRAY[]::TEXT[])
+        INTO v_member_wallets
+        FROM jsonb_array_elements_text(p_expense->'member_wallets') AS elem;
+    ELSE
+        SELECT COALESCE(array_agg(DISTINCT m->>'walletAddress'), ARRAY[]::TEXT[])
+        INTO v_member_wallets
+        FROM jsonb_array_elements(v_members) AS m
+        WHERE m->>'walletAddress' IS NOT NULL AND m->>'walletAddress' <> '';
+    END IF;
+
+    IF NOT (v_caller = ANY(v_member_wallets)) THEN
+        v_member_wallets := array_prepend(v_caller, v_member_wallets);
+    END IF;
+
+    -- All expense members must be members of the trip
+    IF NOT (v_member_wallets <@ v_trip.member_wallets) THEN
+        RAISE EXCEPTION 'Cannot link foreign expense or expense caller does not belong to';
+    END IF;
+
+    -- 2. Insert into expenses
+    INSERT INTO public.expenses (
+        id,
+        title,
+        description,
+        total_amount,
+        currency,
+        split_mode,
+        paid_by_member_id,
+        members,
+        shares,
+        created_at,
+        settled,
+        version,
+        created_by_wallet,
+        member_wallets,
+        accepted_wallets,
+        declined_wallets
+    ) VALUES (
+        v_expense_id,
+        v_title,
+        v_description,
+        v_total_amount,
+        v_currency,
+        v_split_mode,
+        v_paid_by_member_id,
+        v_members,
+        v_shares,
+        v_created_at,
+        false,
+        1,
+        v_caller,
+        v_member_wallets,
+        ARRAY[v_caller],
+        ARRAY[]::TEXT[]
+    );
+
+    -- 3. Record in trip_expenses join table
+    INSERT INTO public.trip_expenses (trip_id, expense_id, added_by_wallet)
+    VALUES (p_trip_id, v_expense_id, v_caller)
+    ON CONFLICT (trip_id, expense_id) DO NOTHING;
+
+    -- 4. Append to trips.expense_ids and bump version
+    IF NOT (v_expense_id::TEXT = ANY(v_trip.expense_ids)) THEN
+        UPDATE public.trips
+        SET expense_ids = pg_catalog.array_append(expense_ids, v_expense_id::TEXT),
+            updated_at = pg_catalog.now()
+        WHERE id = p_trip_id;
+    END IF;
+
+    RETURN QUERY
+    SELECT * FROM public.expenses WHERE id = v_expense_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_trip_expense(UUID, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.create_trip_expense(UUID, JSONB) TO authenticated;
 
 -- Resolve only the caller's own profile or a counterparty profile from a shared,
 -- accepted expense/trip. Stellar addresses are public, so requiring a "known"
