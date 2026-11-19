@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS trips (
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   settled BOOLEAN DEFAULT FALSE NOT NULL,
+  version BIGINT NOT NULL DEFAULT 1,
   -- New: Track creator and member wallets for authentication
   created_by_wallet TEXT NOT NULL,  -- Stellar address of trip creator
   member_wallets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[], -- Invited wallet addresses
@@ -171,6 +172,13 @@ BEGIN
         WHERE table_schema = 'public' AND table_name = 'trips' AND column_name = 'declined_wallets'
     ) THEN
         ALTER TABLE trips ADD COLUMN declined_wallets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'trips' AND column_name = 'version'
+    ) THEN
+        ALTER TABLE trips ADD COLUMN version BIGINT NOT NULL DEFAULT 1;
     END IF;
 END $$;
 
@@ -913,6 +921,30 @@ BEFORE UPDATE ON expenses
 FOR EACH ROW
 EXECUTE FUNCTION bump_expense_version();
 
+CREATE OR REPLACE FUNCTION bump_trip_version()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  -- Only when the row's contents actually changed, so a no-op write does not
+  -- invalidate another editor's token for nothing.
+  IF NEW IS DISTINCT FROM OLD THEN
+    IF NEW.version IS NOT DISTINCT FROM OLD.version THEN
+      NEW.version = COALESCE(OLD.version, 0) + 1;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS bump_trips_version ON trips;
+
+CREATE TRIGGER bump_trips_version
+BEFORE UPDATE ON trips
+FOR EACH ROW
+EXECUTE FUNCTION bump_trip_version();
+
 -- Create trigger for trips
 CREATE TRIGGER update_trips_updated_at
 BEFORE UPDATE ON trips
@@ -1212,8 +1244,8 @@ BEGIN
         RAISE EXCEPTION 'created_by_wallet must match the authenticated wallet';
     END IF;
 
-    IF NEW.settled OR pg_catalog.cardinality(NEW.expense_ids) <> 0 THEN
-        RAISE EXCEPTION 'New trips must be unsettled and contain no expenses';
+    IF NEW.settled OR pg_catalog.cardinality(NEW.expense_ids) <> 0 OR NEW.version <> 1 THEN
+        RAISE EXCEPTION 'New trips must be unsettled, contain no expenses, and start at version 1';
     END IF;
     IF pg_catalog.jsonb_typeof(NEW.members) <> 'array'
        OR pg_catalog.jsonb_array_length(NEW.members) < 2 THEN
@@ -1739,6 +1771,13 @@ BEGIN
 
         IF NEW.member_wallets IS DISTINCT FROM OLD.member_wallets THEN
             RAISE EXCEPTION 'Only trip creator can modify member_wallets';
+        END IF;
+    END IF;
+
+    -- Version check: must be OLD.version + 1
+    IF NEW.version IS DISTINCT FROM OLD.version THEN
+        IF NEW.version <> OLD.version + 1 THEN
+            RAISE EXCEPTION 'Version must increment by exactly 1';
         END IF;
     END IF;
 
@@ -2418,6 +2457,7 @@ BEGIN
         RETURN QUERY
         UPDATE public.trips
         SET expense_ids = pg_catalog.array_append(expense_ids, p_expense_id::TEXT),
+            version = COALESCE(version, 1) + 1,
             updated_at = pg_catalog.now()
         WHERE id = p_trip_id
         RETURNING *;

@@ -1216,6 +1216,7 @@ BEGIN
         RETURN QUERY
         UPDATE public.trips
         SET expense_ids = pg_catalog.array_append(expense_ids, p_expense_id::TEXT),
+            version = COALESCE(version, 1) + 1,
             updated_at = pg_catalog.now()
         WHERE id = p_trip_id
         RETURNING *;
