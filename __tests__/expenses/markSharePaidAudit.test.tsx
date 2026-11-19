@@ -179,5 +179,23 @@ describe("Issue #130: mark_share_paid audit record (paidBy and markedAt)", () =>
 
       expect(screen.getByText("Manual creator override")).toBeDefined();
     });
+
+    it("renders 'Marked paid by creator — not verified' for arbitrary or unverified marks (Issue #230)", () => {
+      render(
+        <ReceiptModal
+          open={true}
+          onClose={() => {}}
+          txHash="0123456789abcdef"
+          amount="50.0000000"
+          recipientName="Alice"
+          shareOwner={MEMBER_WALLET}
+          paidBy={CREATOR_WALLET}
+          markedAt="2026-09-29T12:00:00Z"
+          manual={true}
+        />
+      );
+
+      expect(screen.getByText("Marked paid by creator — not verified")).toBeDefined();
+    });
   });
 });

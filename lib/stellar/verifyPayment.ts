@@ -89,9 +89,9 @@ export async function verifyTransactionOnHorizon(
         const records = opsData._embedded?.records || [];
         operations = records.map((op: any) => ({
           type: op.type,
-          from: op.from || op.source_account,
-          to: op.to || op.into,
-          amount: op.amount,
+          from: op.from || op.source_account || op.funder,
+          to: op.to || op.into || op.account,
+          amount: op.amount || op.starting_balance,
         }));
       }
     } catch {
@@ -134,6 +134,55 @@ export async function verifyTransactionOnHorizon(
           createdAt: txData.created_at,
           warning: "Payment destination does not match expected member wallet.",
           error: "Payment destination does not match expected member wallet.",
+          operations,
+        };
+      }
+    }
+
+    // Check source wallet if specified
+    if (options?.sourceWallet) {
+      const targetSource = options.sourceWallet.toUpperCase();
+      const txSourceMatches =
+        txData.source_account &&
+        txData.source_account.toUpperCase() === targetSource;
+      const opSourceMatches = operations.some(
+        (op) => op.from && op.from.toUpperCase() === targetSource
+      );
+      if (!txSourceMatches && !opSourceMatches) {
+        return {
+          valid: false,
+          exists: true,
+          successful: true,
+          flagged: true,
+          ledger: txData.ledger_attr ?? txData.ledger,
+          memo: txData.memo,
+          sourceAccount: txData.source_account,
+          createdAt: txData.created_at,
+          warning: "Transaction source does not match expected share owner.",
+          error: "Transaction source does not match expected share owner.",
+          operations,
+        };
+      }
+    }
+
+    // Check expected amount if specified
+    if (options?.expectedAmount) {
+      const targetAmount = Number(options.expectedAmount);
+      const hasAmount = operations.some(
+        (op) => op.amount && Number(op.amount) === targetAmount
+      );
+      if (operations.length > 0 && !hasAmount) {
+        return {
+          valid: false,
+          exists: true,
+          successful: true,
+          flagged: true,
+          ledger: txData.ledger_attr ?? txData.ledger,
+          memo: txData.memo,
+          sourceAccount: txData.source_account,
+          createdAt: txData.created_at,
+          warning: "Payment amount does not match expected amount.",
+          error: "Payment amount does not match expected amount.",
           operations,
         };
       }

@@ -197,9 +197,10 @@ export function PaymentRow({
           open={showReceipt}
           onClose={() => setShowReceipt(false)}
           txHash={share.txHash}
-          memo={memo}
           amount={share.amount}
           recipientName={share.name}
+          shareOwner={share.walletAddress}
+          destinationWallet={payerWalletAddress}
           paidBy={share.paidBy}
           markedAt={share.markedAt}
           manual={share.manual}
