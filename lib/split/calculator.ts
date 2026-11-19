@@ -1,4 +1,21 @@
 import type { Member, SplitShare } from "@/types/expense";
+import {
+  MIN_SPLIT_WEIGHT,
+  MAX_SPLIT_WEIGHT,
+  MAX_AMOUNT_XLM,
+  MAX_AMOUNT_STROOPS,
+  MAX_DECIMALS_XLM,
+  STROOPS_PER_XLM,
+} from "@/lib/utils/constants";
+
+export {
+  MIN_SPLIT_WEIGHT,
+  MAX_SPLIT_WEIGHT,
+  MAX_AMOUNT_XLM,
+  MAX_AMOUNT_STROOPS,
+  MAX_DECIMALS_XLM,
+  STROOPS_PER_XLM,
+};
 
 export function xlmToStroops(xlm: string | number | bigint): bigint {
   if (typeof xlm === "bigint") return xlm;
@@ -9,8 +26,17 @@ export function xlmToStroops(xlm: string | number | bigint): bigint {
   const str = xlm.trim();
   if (!str) throw new Error("Invalid XLM amount: empty string");
 
+  // Reject scientific notation / exponents (e.g. 1e-7, 1e5, 1E10)
+  if (/[eE]/.test(str)) {
+    throw new Error(`Invalid XLM amount format: exponents not allowed: ${str}`);
+  }
+
   const isNegative = str.startsWith("-");
   const cleanStr = isNegative ? str.slice(1) : str;
+  if (!cleanStr || cleanStr === ".") {
+    throw new Error(`Invalid XLM amount format: ${str}`);
+  }
+
   const parts = cleanStr.split(".");
   if (parts.length > 2) throw new Error(`Invalid XLM amount format: ${str}`);
 
@@ -21,10 +47,17 @@ export function xlmToStroops(xlm: string | number | bigint): bigint {
     throw new Error(`Invalid XLM amount format: ${str}`);
   }
 
+  // Reject inputs with more than 7 decimal places
+  if (fracPart.length > MAX_DECIMALS_XLM) {
+    throw new Error(
+      `Invalid XLM amount format: exceeds maximum ${MAX_DECIMALS_XLM} decimal places: ${str}`,
+    );
+  }
+
   const whole = BigInt(wholePart);
-  const fracStr = fracPart.padEnd(7, "0").slice(0, 7);
+  const fracStr = fracPart.padEnd(7, "0");
   const frac = BigInt(fracStr);
-  const total = whole * 10_000_000n + frac;
+  const total = whole * STROOPS_PER_XLM + frac;
   return isNegative ? -total : total;
 }
 
@@ -32,8 +65,8 @@ export function stroopsToXlm(stroops: bigint | string | number): string {
   const n = BigInt(stroops);
   const isNegative = n < 0n;
   const abs = isNegative ? -n : n;
-  const whole = abs / 10_000_000n;
-  const frac = abs % 10_000_000n;
+  const whole = abs / STROOPS_PER_XLM;
+  const frac = abs % STROOPS_PER_XLM;
   const formatted = `${whole}.${frac.toString().padStart(7, "0")}`;
   return isNegative ? `-${formatted}` : formatted;
 }
@@ -155,9 +188,6 @@ export function calculateSplit(
 
 // ─── Validation helpers ───────────────────────────────────────────────────────
 
-export { MIN_SPLIT_WEIGHT, MAX_SPLIT_WEIGHT } from "@/lib/utils/constants";
-import { MIN_SPLIT_WEIGHT, MAX_SPLIT_WEIGHT } from "@/lib/utils/constants";
-
 export function isValidSplitWeight(weight: number | undefined): weight is number {
   return (
     typeof weight === "number" &&
@@ -170,7 +200,7 @@ export function isValidSplitWeight(weight: number | undefined): weight is number
 export function isValidXLMAmount(value: string): boolean {
   try {
     const stroops = xlmToStroops(value);
-    return stroops > 0n && stroops <= 1_000_000_000_000_000n;
+    return stroops > 0n && stroops <= MAX_AMOUNT_STROOPS;
   } catch {
     return false;
   }
