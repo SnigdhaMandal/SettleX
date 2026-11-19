@@ -44,7 +44,7 @@ function hasProvenOwnership(walletAddress: string | null): boolean {
 
 interface ExpenseContextType {
   expenses: Expense[];
-  addExpense: (expense: Expense) => Promise<void>;
+  addExpense: (expense: Expense, tripId?: string) => Promise<void>;
   updateExpense: (id: string, updates: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   markSharePaid: (expenseId: string, memberId: string, txHash: string) => Promise<void>;
@@ -148,6 +148,24 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("settlex:consent-changed", refresh);
     return () => window.removeEventListener("settlex:consent-changed", refresh);
   }, []);
+
+  // Listen for trip deletion to clean up cascaded expenses locally
+  useEffect(() => {
+    const handleTripDeleted = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tripId: string; expenseIds: string[] }>;
+      const deletedIds = customEvent.detail?.expenseIds;
+      if (deletedIds && deletedIds.length > 0) {
+        setExpenses((prev) => {
+          const updated = prev.filter((exp) => !deletedIds.includes(exp.id));
+          const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+    window.addEventListener("settlex:trip-deleted", handleTripDeleted);
+    return () => window.removeEventListener("settlex:trip-deleted", handleTripDeleted);
+  }, [publicKey]);
 
   // Resolve the authenticated client once per wallet so the initial load and
   // periodic refresh share it. Concurrent callers reuse a single handshake,
@@ -305,45 +323,127 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     };
   }, [client, publicKey]);
 
-  const addExpense = useCallback(async (expense: Expense) => {
-    if (!publicKey) throw new Error("Wallet not connected");
+  const addExpense = useCallback(
+    async (expense: Expense, tripId?: string) => {
+      if (!publicKey) throw new Error("Wallet not connected");
 
-    const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
+      const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
 
-    const memberWallets = expense.members
-      .map((member) => member.walletAddress)
-      .filter((address): address is string => !!address);
-    const allMemberWallets = memberWallets.includes(publicKey)
-      ? memberWallets
-      : [publicKey, ...memberWallets];
-    const localExpense: Expense = {
-      ...expense,
-      createdByWallet: publicKey,
-      memberWallets: allMemberWallets,
-      acceptedWallets: [publicKey],
-    };
+      const memberWallets = expense.members
+        .map((member) => member.walletAddress)
+        .filter((address): address is string => !!address);
+      const allMemberWallets = memberWallets.includes(publicKey)
+        ? memberWallets
+        : [publicKey, ...memberWallets];
+      const localExpense: Expense = {
+        ...expense,
+        createdByWallet: publicKey,
+        memberWallets: allMemberWallets,
+        acceptedWallets: [publicKey],
+      };
 
-    setExpenses((prev) => {
-      const updated = [localExpense, ...prev];
-      localStorage.setItem(cacheKey, JSON.stringify(updated));
-      return updated;
-    });
-
-    // Persist to Supabase — throw on failure so the caller can handle it
-    const client = await getClient();
-    const { error } = await client
-      .from("expenses")
-      .insert([expenseToDbInsertRow(expense, publicKey)]);
-
-    if (error) {
       setExpenses((prev) => {
-        const rolled = prev.filter((e) => e.id !== expense.id);
-        localStorage.setItem(cacheKey, JSON.stringify(rolled));
-        return rolled;
+        const updated = [localExpense, ...prev];
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
+        return updated;
       });
-      throw error;
-    }
-  }, [getClient, publicKey]);
+
+      try {
+        const client = await getClient();
+        const expensePayload = expenseToDbInsertRow(expense, publicKey);
+
+        if (tripId) {
+          // Atomic path: Use create_trip_expense RPC to create and link in one transaction
+          let rpcSuccess = false;
+          try {
+            const { data, error } = await client.rpc("create_trip_expense", {
+              p_trip_id: tripId,
+              p_expense: expensePayload as unknown as Json,
+            });
+
+            if (error) {
+              const msg = error.message || "";
+              if (
+                msg.includes("Cannot link foreign expense") ||
+                msg.includes("Not authorized") ||
+                msg.includes("Cannot add expenses to a settled trip") ||
+                msg.includes("Trip not found")
+              ) {
+                throw error;
+              }
+            } else {
+              rpcSuccess = true;
+              if (data && data.length > 0) {
+                const stored = dbRowToExpense(data[0]);
+                setExpenses((prev) => {
+                  const synced = prev.map((e) => (e.id === expense.id ? stored : e));
+                  localStorage.setItem(cacheKey, JSON.stringify(synced));
+                  return synced;
+                });
+              }
+            }
+          } catch (rpcErr) {
+            const msg = (rpcErr as { message?: string })?.message || "";
+            if (
+              msg.includes("Cannot link foreign expense") ||
+              msg.includes("Not authorized") ||
+              msg.includes("Cannot add expenses to a settled trip") ||
+              msg.includes("Trip not found")
+            ) {
+              throw rpcErr;
+            }
+            logWarn("expense.create_trip_expense_rpc_unavailable", {
+              fields: { tripId, expenseId: expense.id, ...supabaseErrorFields(rpcErr) },
+            });
+          }
+
+          // Fallback path if RPC is unavailable in the environment
+          if (!rpcSuccess) {
+            const { error: insertErr } = await client
+              .from("expenses")
+              .insert([expensePayload]);
+            if (insertErr) throw insertErr;
+
+            try {
+              const { error: linkErr } = await client.rpc("add_expense_to_trip", {
+                p_trip_id: tripId,
+                p_expense_id: expense.id,
+              });
+              if (linkErr) throw linkErr;
+            } catch (linkErr) {
+              // Roll back the inserted expense from DB so we don't leave an unlinked orphan
+              await client.from("expenses").delete().eq("id", expense.id).catch(() => {});
+              throw linkErr;
+            }
+          }
+
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("settlex:trip-expense-created", {
+                detail: { tripId, expenseId: expense.id },
+              })
+            );
+            window.dispatchEvent(new Event("settlex:consent-changed"));
+          }
+        } else {
+          // Standard standalone expense insert
+          const { error } = await client
+            .from("expenses")
+            .insert([expensePayload]);
+
+          if (error) throw error;
+        }
+      } catch (err) {
+        setExpenses((prev) => {
+          const rolled = prev.filter((e) => e.id !== expense.id);
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
+          return rolled;
+        });
+        throw err;
+      }
+    },
+    [getClient, publicKey]
+  );
 
   const updateExpense = useCallback(
     async (id: string, updates: Partial<Expense>) => {
@@ -471,6 +571,15 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         const { error } = await client.from("expenses").delete().eq("id", id);
 
         if (error) throw error;
+
+        // Notify TripContext to remove dangling references in local trips
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("settlex:expense-deleted", {
+              detail: { expenseId: id },
+            })
+          );
+        }
       } catch (err) {
         reportError("expense.delete_failed", err, {
           fields: { expenseId: id, ...supabaseErrorFields(err) },
@@ -485,7 +594,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [expenses, getClient]
+    [expenses, getClient, publicKey]
   );
 
   const markSharePaid = useCallback(

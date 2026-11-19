@@ -475,15 +475,8 @@ export default function TripDetailPage() {
           currentUserPublicKey={publicKey}
           currentUserName={user?.displayName}
           defaultMembers={trip.members}
-          onSuccess={async (newExpenseId?: string) => {
-            if (newExpenseId) {
-              try {
-                await addExpenseToTrip(trip.id, newExpenseId);
-                toastSuccess("Expense added!", "Expense added to trip.");
-              } catch (err: any) {
-                toastError("Failed to link expense", err?.message || "Could not link expense to trip in database.");
-              }
-            }
+          tripId={trip.id}
+          onSuccess={() => {
             setShowExpenseForm(false);
           }}
           onCancel={() => setShowExpenseForm(false)}
