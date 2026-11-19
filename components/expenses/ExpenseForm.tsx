@@ -12,6 +12,7 @@ import {
   isValidSplitWeight,
   MIN_SPLIT_WEIGHT,
   MAX_SPLIT_WEIGHT,
+  MAX_AMOUNT_XLM,
   stroopsToXlm,
   xlmToStroops,
 } from "@/lib/split/calculator";
@@ -165,8 +166,9 @@ export function ExpenseForm({
       errs.description = "Description cannot exceed 100 characters.";
     }
 
-    if (!totalAmount || !isValidXLMAmount(totalAmount))
-      errs.totalAmount = "Enter a valid XLM amount (e.g. 10.5).";
+    const trimmedAmount = totalAmount.trim();
+    if (!trimmedAmount || !isValidXLMAmount(trimmedAmount))
+      errs.totalAmount = `Enter a valid XLM amount (e.g. 10.5, up to ${MAX_AMOUNT_XLM.toLocaleString()} with at most 7 decimals).`;
 
     members.forEach((m, i) => {
       const trimmedName = m.name.trim();
@@ -320,11 +322,29 @@ export function ExpenseForm({
           label="Total amount"
           required
           placeholder="10.5"
-          type="number"
-          min="0.0000001"
-          step="0.0000001"
+          type="text"
+          inputMode="decimal"
           value={totalAmount}
-          onChange={(e) => setTotalAmount(e.target.value)}
+          onChange={(e) => {
+            const val = e.target.value;
+            setTotalAmount(val);
+            if (errors.totalAmount) {
+              setErrors((prev) => {
+                const next = { ...prev };
+                delete next.totalAmount;
+                return next;
+              });
+            }
+          }}
+          onBlur={() => {
+            const trimmed = totalAmount.trim();
+            if (trimmed && !isValidXLMAmount(trimmed)) {
+              setErrors((prev) => ({
+                ...prev,
+                totalAmount: `Enter a valid XLM amount (e.g. 10.5, up to ${MAX_AMOUNT_XLM.toLocaleString()} with at most 7 decimals).`,
+              }));
+            }
+          }}
           error={errors.totalAmount}
           trailing={<span className="text-xs font-semibold">XLM</span>}
         />
