@@ -136,6 +136,14 @@ SettleX uses:
 - Incorrect wallet/account setup can block end-to-end payment tests.
 - Supabase configuration errors can affect sync behavior even if chain operations work.
 
+## Dependency Security and Accepted Risks (SX-081)
+
+- **Next.js 14.2.35 Upgrade**: Next.js is upgraded from `14.2.5` to `^14.2.35` (aligned with `eslint-config-next: ^14.2.35`). This directly patches the critical Next.js middleware authorization-bypass vulnerability (`x-middleware-subrequest`, GHSA-f82v-jwr5-mffw, fixed in 14.2.25) crucial for `middleware.ts` CSP nonce generation, as well as multiple cache-poisoning and DoS advisories. A future migration to Next.js 15+ is planned.
+- **Transitive Security Overrides**: Sub-dependency patches were applied via `package.json` overrides for `postcss` (`^8.5.33`), `nanoid` (`^3.3.20`), `browserslist` (`^4.29.6`), `follow-redirects` (`^1.16.3`), and `source-map-js` (`^1.2.3`).
+- **Accepted Risk — `toml` (via `@stellar/stellar-sdk`)**: Upstream `@stellar/stellar-sdk` depends on `toml` for parsing Stellar.toml federation files. SettleX does not parse untrusted user-supplied TOML documents, making this low operational risk until `@stellar/stellar-sdk` migrates upstream.
+- **Accepted Risk — `zod`, `uuid`, `elliptic`, `stream-json` (via `@creit.tech/stellar-wallets-kit`)**: Transitive dependencies of `@creit.tech/stellar-wallets-kit` and its wallet adapters (`@reown/appkit`, `@hot-wallet/sdk`). Upstream breaking releases are incompatible with current multi-wallet integrations. None of the vulnerable vector paths are exposed to external untrusted web inputs.
+- **Dependabot Automation (SX-081)**: Automated dependency tracking is configured via `.github/dependabot.yml` with daily package updates and security alerts.
+
 ## Recommended Future Improvements
 
 - Add automated e2e tests (Playwright) with mobile viewport assertions.
