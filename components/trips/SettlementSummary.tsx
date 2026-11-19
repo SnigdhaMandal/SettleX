@@ -163,8 +163,8 @@ function NetPaymentRow({
         amount:               payment.amount,
         memoText:             memo,
       });
-      toastInfo("Waiting for Freighter?", "Confirm the settlement payment.");
-      const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE);
+      toastInfo("Waiting for wallet signature…", "Confirm the settlement payment.");
+      const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE, publicKey);
       const { hash }  = await submitSignedTransaction(signedXDR);
 
       // Only close shares up to the net amount actually transferred.

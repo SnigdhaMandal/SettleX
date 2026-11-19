@@ -251,7 +251,11 @@ async function runHandshake(walletAddress: string): Promise<WalletSession> {
 
   let signedTransactionXdr: string;
   try {
-    signedTransactionXdr = await signXDR(challenge.transactionXdr, challenge.networkPassphrase);
+    signedTransactionXdr = await signXDR(
+      challenge.transactionXdr,
+      challenge.networkPassphrase,
+      walletAddress,
+    );
   } catch (error) {
     const message = error instanceof Error ? error.message : "";
     throw new WalletSessionError(

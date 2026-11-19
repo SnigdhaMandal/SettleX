@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, RefreshCw } from "lucide-react";
+import { AlertTriangle, CheckCircle, RefreshCw } from "lucide-react";
 import { useWallet } from "@/hooks/useWallet";
 import { stellarNetworkLabel } from "@/lib/utils/constants";
 
@@ -11,6 +11,7 @@ export function NetworkGuardBanner() {
     expectedNetwork,
     networkStatus,
     refreshNetwork,
+    confirmNetwork,
   } = useWallet();
 
   if (
@@ -22,10 +23,11 @@ export function NetworkGuardBanner() {
   }
 
   const isChecking = networkStatus === "checking";
+  const isUnavailable = networkStatus === "unavailable";
   const detail =
     networkStatus === "mismatched" && network
       ? `Your wallet is on ${stellarNetworkLabel(network)}, but SettleX is configured for ${stellarNetworkLabel(expectedNetwork)}.`
-      : `SettleX could not verify the selected wallet's network. Switch it to ${stellarNetworkLabel(expectedNetwork)}, then check again.`;
+      : `SettleX could not automatically verify the selected wallet's network. Switch it to ${stellarNetworkLabel(expectedNetwork)} and confirm below to enable payments.`;
 
   return (
     <div
@@ -41,15 +43,27 @@ export function NetworkGuardBanner() {
             <p className="mt-0.5 text-xs leading-5 text-[#991B1B]">{detail}</p>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={() => void refreshNetwork()}
-          disabled={isChecking}
-          className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-[#DC2626]/30 bg-white px-3 py-2 text-xs font-bold text-[#991B1B] transition-colors hover:bg-[#FEE2E2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626] focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
-        >
-          <RefreshCw className={`h-4 w-4 ${isChecking ? "animate-spin" : ""}`} aria-hidden="true" />
-          {isChecking ? "Checking network" : "Check again"}
-        </button>
+        <div className="flex items-center gap-2">
+          {isUnavailable && confirmNetwork && (
+            <button
+              type="button"
+              onClick={() => confirmNetwork()}
+              className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg bg-[#DC2626] px-3 py-2 text-xs font-bold text-white transition-colors hover:bg-[#B91C1C] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626] focus-visible:ring-offset-2"
+            >
+              <CheckCircle className="h-4 w-4" aria-hidden="true" />
+              Confirm {stellarNetworkLabel(expectedNetwork)}
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={() => void refreshNetwork()}
+            disabled={isChecking}
+            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-lg border border-[#DC2626]/30 bg-white px-3 py-2 text-xs font-bold text-[#991B1B] transition-colors hover:bg-[#FEE2E2] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#DC2626] focus-visible:ring-offset-2 disabled:cursor-wait disabled:opacity-60"
+          >
+            <RefreshCw className={`h-4 w-4 ${isChecking ? "animate-spin" : ""}`} aria-hidden="true" />
+            {isChecking ? "Checking network" : "Check again"}
+          </button>
+        </div>
       </div>
     </div>
   );
