@@ -371,7 +371,7 @@ The contract emits a `pmt_rec` event for every confirmed payment. `hooks/useCont
 
 ### Prerequisites
 
-- **Node.js** v18 or later
+- **Node.js** v20 or later
 - **npm** v9 or later
 - **Freighter Wallet** browser extension — [freighter.app](https://freighter.app)
   - In Freighter: Settings → Network → select **Testnet**

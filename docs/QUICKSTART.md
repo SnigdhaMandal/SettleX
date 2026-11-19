@@ -3,7 +3,7 @@
 Get SettleX running locally in ~5 minutes.
 
 ## Prerequisites
-- Node.js 18+ and npm 9+
+- Node.js 20+ and npm 9+
 - A Stellar wallet extension set to **Testnet** — [Freighter](https://freighter.app), xBull, Lobstr, or Rabet
 - (Optional) A free [Supabase](https://supabase.com) project for cross-device sync
 

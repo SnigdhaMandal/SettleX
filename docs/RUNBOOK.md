@@ -2,7 +2,7 @@
 
 ## 1. Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - npm 9+
 - Rust toolchain (for contract work)
 - Stellar CLI (for deployment operations)
