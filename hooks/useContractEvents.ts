@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { fetchContractEvents } from "@/lib/stellar/events";
+import { fetchContractEvents, fetchTripPaymentHistory } from "@/lib/stellar/events";
+import { sorobanServer } from "@/lib/stellar/soroban";
 import type { ContractPaymentEvent } from "@/types/contract";
 import { CONTRACT_ID } from "@/lib/utils/constants";
 import { userFacingMessage } from "@/lib/errors/userMessage";
@@ -25,12 +26,15 @@ export function useContractEvents(tripId: string | undefined): UseContractEvents
   const ledgerRef = useRef(0);
   ledgerRef.current = latestLedger;
 
-  const fetch_ = useCallback(async (isFirst = false) => {
+  const currentTripIdRef = useRef(tripId);
+  currentTripIdRef.current = tripId;
+
+  const pollEvents = useCallback(async () => {
     if (!tripId || !CONTRACT_ID) return;
-    if (isFirst) setIsLoading(true);
 
     try {
       const result = await fetchContractEvents(ledgerRef.current, tripId);
+      if (currentTripIdRef.current !== tripId) return;
 
       if (result.events.length > 0) {
         setEvents((prev) => {
@@ -42,31 +46,99 @@ export function useContractEvents(tripId: string | undefined): UseContractEvents
 
       if (result.latestLedger > ledgerRef.current) {
         setLatestLedger(result.latestLedger);
+        ledgerRef.current = result.latestLedger;
       }
       setError(null);
     } catch (err) {
-      // Rendered in the trip page's degraded-state banner, so it is vetted: a
-      // Soroban RPC failure surfaces transport text, not anything actionable.
-      // lib/stellar/events.ts already logs the underlying error.
-      setError(userFacingMessage(err).message);
+      if (currentTripIdRef.current === tripId) {
+        setError(userFacingMessage(err).message);
+      }
+    }
+  }, [tripId]);
+
+  const loadInitialHistory = useCallback(async () => {
+    if (!tripId || !CONTRACT_ID) {
+      setIsLoading(false);
+      return;
+    }
+
+    setIsLoading(true);
+    setError(null);
+
+    try {
+      // 1. Load persistent history from get_payments (filtering voided)
+      const historyEvents = await fetchTripPaymentHistory(tripId);
+      if (currentTripIdRef.current !== tripId) return;
+
+      // 2. Query current latest ledger sequence to start polling from
+      let currentLedger = 0;
+      try {
+        const latest = await sorobanServer.getLatestLedger();
+        currentLedger = typeof latest?.sequence === "number" ? latest.sequence : 0;
+      } catch {
+        currentLedger = 0;
+      }
+
+      if (currentTripIdRef.current !== tripId) return;
+
+      setEvents(historyEvents);
+      if (currentLedger > 0) {
+        setLatestLedger(currentLedger);
+        ledgerRef.current = currentLedger;
+      }
+      setError(null);
+    } catch (err) {
+      if (currentTripIdRef.current === tripId) {
+        setError(userFacingMessage(err).message);
+      }
     } finally {
-      if (isFirst) setIsLoading(false);
+      if (currentTripIdRef.current === tripId) {
+        setIsLoading(false);
+      }
     }
   }, [tripId]);
 
   useEffect(() => {
-    if (!tripId || !CONTRACT_ID) return;
+    // Reset state immediately on tripId change
+    setEvents([]);
+    setLatestLedger(0);
+    ledgerRef.current = 0;
+    setError(null);
 
-    fetch_(true);
-    const interval = setInterval(() => fetch_(), POLL_INTERVAL_MS);
-    const onVisible = () => { if (document.visibilityState === "visible") fetch_(); };
+    if (!tripId || !CONTRACT_ID) {
+      setIsLoading(false);
+      return;
+    }
+
+    let isCancelled = false;
+
+    loadInitialHistory();
+
+    const interval = setInterval(() => {
+      if (!isCancelled) pollEvents();
+    }, POLL_INTERVAL_MS);
+
+    const onVisible = () => {
+      if (document.visibilityState === "visible" && !isCancelled) {
+        pollEvents();
+      }
+    };
     document.addEventListener("visibilitychange", onVisible);
 
     return () => {
+      isCancelled = true;
       clearInterval(interval);
       document.removeEventListener("visibilitychange", onVisible);
     };
-  }, [tripId, fetch_]);
+  }, [tripId, loadInitialHistory, pollEvents]);
 
-  return { events, latestLedger, isLoading, error, refresh: () => fetch_() };
+  const refresh = useCallback(async () => {
+    if (ledgerRef.current === 0) {
+      await loadInitialHistory();
+    } else {
+      await pollEvents();
+    }
+  }, [loadInitialHistory, pollEvents]);
+
+  return { events, latestLedger, isLoading, error, refresh };
 }

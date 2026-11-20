@@ -109,6 +109,18 @@ async function loadAccount(publicKey: string): Promise<Account> {
   return new Account(publicKey, data.sequence);
 }
 
+// Placeholder public key for read simulations; simulation does not check
+// signatures, balances, or sequences, so any valid G-address works.
+const SIMULATION_ACCOUNT_ADDRESS = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAY";
+
+function createSimulationAccount(callerPublicKey?: string): Account {
+  const address =
+    callerPublicKey && callerPublicKey.startsWith("G") && callerPublicKey.length === 56
+      ? callerPublicKey
+      : SIMULATION_ACCOUNT_ADDRESS;
+  return new Account(address, "0");
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -298,7 +310,7 @@ export async function getContractPayments(
   }
 
   try {
-    const account  = await loadAccount(callerPublicKey);
+    const account  = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     type RawPayment = {

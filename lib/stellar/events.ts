@@ -3,6 +3,7 @@ import { sorobanServer } from "./soroban";
 import { CONTRACT_ID } from "@/lib/utils/constants";
 import { logWarn } from "@/lib/observability/logger";
 import type { ContractPaymentEvent } from "@/types/contract";
+import { getContractPayments } from "./contract";
 
 const LOOKBACK_LEDGERS = 600;
 
@@ -66,6 +67,51 @@ export function parsePaymentEvent(raw: RawEventLike): ContractPaymentEvent | nul
   }
 }
 
+export async function fetchTripPaymentHistory(
+  tripId: string,
+  callerPublicKey?: string
+): Promise<ContractPaymentEvent[]> {
+  if (!CONTRACT_ID || !tripId) {
+    return [];
+  }
+
+  try {
+    const result = await getContractPayments(callerPublicKey ?? "", tripId);
+    if (!result.success || !result.payments) {
+      if (result.error) {
+        logWarn("contract.fetch_trip_history_failed", {
+          fields: { tripId, error: result.error },
+        });
+      }
+      return [];
+    }
+
+    // Filter out voided records (from clear_paid)
+    return result.payments
+      .filter((record) => !record.voided)
+      .map((record) => ({
+        ledger: 0,
+        ledgerClosedAt: record.timestamp
+          ? new Date(record.timestamp * 1000).toISOString()
+          : "",
+        tripId: record.tripId,
+        expenseId: record.expenseId,
+        member: record.member,
+        amountStroops: record.amountStroops.toString(),
+        txHash: record.txHash,
+        attested: record.attested === true,
+      }));
+  } catch (err) {
+    logWarn("contract.fetch_trip_history_failed", {
+      fields: {
+        tripId,
+        error: err instanceof Error ? err.message : String(err),
+      },
+    });
+    return [];
+  }
+}
+
 export async function fetchContractEvents(
   startLedger: number,
   tripId?: string,
@@ -89,26 +135,63 @@ export async function fetchContractEvents(
       ? nativeToScVal(tripId, { type: "string" }).toXDR("base64")
       : "*";
 
-    const response = await server.getEvents({
-      startLedger: fromLedger,
-      filters: [
-        {
-          type:        "contract",
-          contractIds: [CONTRACT_ID],
-          topics:      [[symbolXdr, tripTopicXdr]],
-        },
-      ],
-      limit: 200,
-    }) as rpc.Api.GetEventsResponse;
+    let cursor: string | undefined = undefined;
+    let latestLedger = fromLedger;
+    const allRawEvents: RawEventLike[] = [];
+    const MAX_PAGES = 50;
 
-    const latestLedger: number =
-      typeof response?.latestLedger === "number" && response.latestLedger > fromLedger
-        ? response.latestLedger
-        : fromLedger;
+    for (let page = 0; page < MAX_PAGES; page++) {
+      const requestParams: {
+        filters: Array<{
+          type: "contract";
+          contractIds: string[];
+          topics: string[][];
+        }>;
+        limit: number;
+        startLedger?: number;
+        cursor?: string;
+      } = {
+        filters: [
+          {
+            type:        "contract",
+            contractIds: [CONTRACT_ID],
+            topics:      [[symbolXdr, tripTopicXdr]],
+          },
+        ],
+        limit: 200,
+      };
 
-    const rawEvents = Array.isArray(response?.events) ? response.events : [];
+      if (cursor) {
+        requestParams.cursor = cursor;
+      } else {
+        requestParams.startLedger = fromLedger;
+      }
 
-    const events: ContractPaymentEvent[] = rawEvents
+      const response = (await server.getEvents(requestParams)) as rpc.Api.GetEventsResponse & {
+        cursor?: string;
+      };
+
+      if (typeof response?.latestLedger === "number" && response.latestLedger > latestLedger) {
+        latestLedger = response.latestLedger;
+      }
+
+      const pageEvents = Array.isArray(response?.events) ? response.events : [];
+      allRawEvents.push(...pageEvents);
+
+      const nextCursor: string | undefined =
+        response?.cursor ??
+        (pageEvents.length > 0
+          ? (pageEvents[pageEvents.length - 1] as { pagingToken?: string })?.pagingToken
+          : undefined);
+
+      if (pageEvents.length < 200 || !nextCursor || nextCursor === cursor) {
+        break;
+      }
+
+      cursor = nextCursor;
+    }
+
+    const events: ContractPaymentEvent[] = allRawEvents
       .map((ev) => parsePaymentEvent(ev))
       .filter((e): e is ContractPaymentEvent => e !== null && !!e.tripId);
 
