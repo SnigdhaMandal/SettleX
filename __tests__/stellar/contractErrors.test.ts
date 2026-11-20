@@ -43,4 +43,11 @@ describe("decodeContractError", () => {
     const raw = "network timeout";
     expect(decodeContractError(raw)).toBe(raw);
   });
+
+  it("extracts and decodes contract error from longer strings or send messages", () => {
+    const msg = "Contract send failed: Error(Contract, #2)";
+    expect(decodeContractError(msg)).toBe(
+      "This expense was already settled on-chain. No double payment needed."
+    );
+  });
 });
