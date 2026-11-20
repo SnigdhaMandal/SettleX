@@ -11,12 +11,15 @@ import {
   stellarNetworkLabel,
 } from "@/lib/utils/constants";
 import { cn, formatAddress, formatXLM } from "@/lib/utils";
+import { parsePaymentMemo } from "@/lib/stellar/memo";
 
 export interface ReceiptModalProps {
   open: boolean;
   onClose: () => void;
   txHash: string;
   memo?: string;
+  /** The identifying memo this share's payment should carry (lib/stellar/memo). */
+  expectedMemo?: string;
   /** XLM amount string, e.g. "300.0000000" */
   amount: string;
   recipientName: string;
@@ -28,11 +31,21 @@ export interface ReceiptModalProps {
   manual?: boolean;
 }
 
+/** Says what an on-chain memo pays, relative to the share being viewed. */
+function describeMemoTarget(onChainMemo: string | undefined, expectedMemo: string): string {
+  if (onChainMemo && onChainMemo === expectedMemo) return "This share ✓";
+  const parsed = parsePaymentMemo(onChainMemo);
+  if (parsed?.kind === "settlement") return "A trip settlement that covers this share";
+  if (parsed?.kind === "share") return "A different share ⚠ (memo does not match this share)";
+  return "Not identifiable (memo predates share identifiers)";
+}
+
 export function ReceiptModal({
   open,
   onClose,
   txHash,
   memo,
+  expectedMemo,
   amount,
   recipientName,
   shareOwner,
@@ -328,6 +341,13 @@ export function ReceiptModal({
             </span>
           }
         />
+        {expectedMemo && txDetails.loaded && txDetails.exists && (
+          <ReceiptRow
+            label="Pays"
+            value={<span className="text-xs">{describeMemoTarget(txDetails.memo, expectedMemo)}</span>}
+            hint="Matched from the transaction memo"
+          />
+        )}
         <ReceiptRow
           label="Memo"
           value={

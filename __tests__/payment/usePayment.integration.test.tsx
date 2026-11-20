@@ -8,6 +8,7 @@ import {
 } from "@/lib/stellar/submitTransaction";
 import { checkIsPaid, recordPaymentOnChain } from "@/lib/stellar/contract";
 import { signXDR } from "@/lib/freighter";
+import { shareMemo } from "@/lib/stellar/memo";
 import type { SplitShare } from "@/types/expense";
 
 const { act, renderHook, waitFor } = require("@testing-library/react");
@@ -128,6 +129,10 @@ describe("usePayment integration flow", () => {
     });
 
     expect(mockMarkSharePaid).toHaveBeenCalledWith("exp-1", "member-1", "tx-hash-123");
+    // The memo identifies the share (Issue #207), not the title or name.
+    expect(buildPaymentTransaction).toHaveBeenCalledWith(
+      expect.objectContaining({ memo: shareMemo("exp-1", "member-1") }),
+    );
     expect(recordPaymentOnChain).toHaveBeenCalledTimes(1);
     expect(mockToastSuccess).toHaveBeenCalled();
   });

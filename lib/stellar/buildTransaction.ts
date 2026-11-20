@@ -14,16 +14,20 @@ import {
   TX_BASE_FEE,
   TX_TIMEOUT_SECONDS,
   TX_MAX_FEE_STROOPS,
-  MEMO_MAX_BYTES,
-  MEMO_PREFIX,
   HORIZON_URL,
 } from "@/lib/utils/constants";
+import { isPaymentMemo } from "@/lib/stellar/memo";
 
 export interface BuildTxParams {
   sourcePublicKey: string;
   destinationPublicKey: string;
   amount: string;
-  memoText?: string;
+  /**
+   * Identifying memo from `shareMemo()` or `settlementMemo()` in
+   * lib/stellar/memo.ts, used verbatim. Free text is rejected so every payment
+   * can be matched back to the share or settlement it pays.
+   */
+  memo: string;
   customFee?: string;
 }
 
@@ -63,26 +67,17 @@ export async function fetchSuggestedFee(): Promise<string> {
   return String(Math.max(TX_BASE_FEE, 1000));
 }
 
-function trimToMemoBytes(text: string, maxBytes: number = MEMO_MAX_BYTES): string {
-  const encoder = new TextEncoder();
-  const bytes = encoder.encode(text);
-  if (bytes.length <= maxBytes) return text;
-  let lo = 0, hi = text.length;
-  while (lo < hi) {
-    const mid = Math.ceil((lo + hi) / 2);
-    if (encoder.encode(text.slice(0, mid)).length <= maxBytes) lo = mid;
-    else hi = mid - 1;
-  }
-  return text.slice(0, lo);
-}
-
 export async function buildPaymentTransaction({
   sourcePublicKey,
   destinationPublicKey,
   amount,
-  memoText,
+  memo,
   customFee,
 }: BuildTxParams): Promise<BuildTxResult> {
+  if (!isPaymentMemo(memo)) {
+    throw new Error("Payment memo is missing or invalid. Please refresh and try again.");
+  }
+
   const [acctRes, suggestedFee] = await Promise.all([
     fetch(`${HORIZON_URL}/accounts/${sourcePublicKey}?_ts=${Date.now()}`, {
       cache: "no-store",
@@ -99,9 +94,6 @@ export async function buildPaymentTransaction({
   const acctData = (await acctRes.json()) as { sequence: string };
   const account = new Account(sourcePublicKey, acctData.sequence);
 
-  const rawMemo = memoText ? `${MEMO_PREFIX}|${memoText}` : MEMO_PREFIX;
-  const safeMemo = trimToMemoBytes(rawMemo);
-
   const tx = new TransactionBuilder(account, {
     fee: suggestedFee,
     networkPassphrase: NETWORK_PASSPHRASE,
@@ -113,9 +105,9 @@ export async function buildPaymentTransaction({
         amount,
       })
     )
-    .addMemo(Memo.text(safeMemo))
+    .addMemo(Memo.text(memo))
     .setTimeout(TX_TIMEOUT_SECONDS)
     .build();
 
-  return { xdr: tx.toXDR(), memo: safeMemo, fee: suggestedFee };
+  return { xdr: tx.toXDR(), memo, fee: suggestedFee };
 }

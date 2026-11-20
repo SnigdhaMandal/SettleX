@@ -11,6 +11,8 @@ import type { SplitShare } from "@/types/expense";
 
 interface SplitCalculatorProps {
   shares: SplitShare[];
+  /** Saved expense id; enables identifying memos for QR payments. */
+  expenseId?: string;
   payerName: string;
   totalAmount: string;
   expenseTitle?: string;
@@ -32,6 +34,7 @@ interface SplitCalculatorProps {
 
 export function SplitCalculator({
   shares,
+  expenseId,
   payerName,
   totalAmount,
   expenseTitle = "Expense",
@@ -97,6 +100,7 @@ export function SplitCalculator({
           <PaymentRow
             key={share.memberId}
             share={share}
+            expenseId={expenseId}
             index={i}
             expenseTitle={expenseTitle}
             onPay={disablePay ? undefined : onPay}

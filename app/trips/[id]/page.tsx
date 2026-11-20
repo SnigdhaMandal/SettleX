@@ -139,6 +139,7 @@ function TripExpenseCard({
               )}
               <SplitCalculator
                 shares={expense.shares}
+                expenseId={expense.id}
                 payerName={payer?.name ?? "Payer"}
                 payerWalletAddress={payer?.walletAddress}
                 totalAmount={expense.totalAmount}

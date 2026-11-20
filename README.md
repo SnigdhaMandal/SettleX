@@ -174,7 +174,7 @@ TransactionBuilder constructs Payment operation
   · from:   payer public key
   · to:     payee Stellar address
   · amount: share amount in XLM
-  · memo:   expense ID
+  · memo:   share identifier (see "Payment memos" below)
     |
 Wallet extension signs client-side
 (private key never leaves the browser)
@@ -189,6 +189,17 @@ recordPaymentOnChain() stores to Soroban contract:
 tx hash stored in app, share marked "paid"
 useContractEvents polls every 10s -> syncs state for all participants
 ```
+
+### Payment memos
+
+Every SettleX payment carries a 28-byte `MEMO_TEXT` that identifies exactly what it pays. The same functions in [`lib/stellar/memo.ts`](lib/stellar/memo.ts) build it for the in-app Pay button, the QR code and trip settle-up:
+
+| Memo | Pays | Built from |
+| --- | --- | --- |
+| `SX1S:<23 base32 chars>` | one member's share of one expense | `sha256("settlex:share:v1:<expenseId>:<memberId>")` |
+| `SX1N:<23 base32 chars>` | one netted trip settlement | `sha256("settlex:settle:v1:<tripId>:<FROM_WALLET>:<TO_WALLET>")` |
+
+The memo is a one-way digest, so the public ledger shows no expense titles or member names. Anyone who can see the expense can recompute it. Given a transaction hash, `lookupPaymentByTxHash()` reads the memo from Horizon and returns the share or settlement it pays. For older payments made before share identifiers, it falls back to the share whose recorded `txHash` matches. `buildPaymentTransaction()` rejects any memo that is not in this format.
 
 ---
 

@@ -42,7 +42,6 @@ export function stellarNetworkLabel(network: StellarNetwork): string {
   return network === "PUBLIC" ? "Mainnet" : "Testnet";
 }
 
-export const MEMO_PREFIX        = "SettleX";
 export const TX_BASE_FEE        = 100;
 export const TX_TIMEOUT_SECONDS = 180;
 export const TX_MAX_FEE_STROOPS = 10_000;
