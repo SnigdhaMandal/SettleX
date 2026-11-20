@@ -15,6 +15,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { useAuth } from "@/context/AuthContext";
 import { useExpense } from "@/hooks/useExpense";
 import { usePayment } from "@/hooks/usePayment";
+import { useTrip } from "@/hooks/useTrip";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Modal } from "@/components/ui/Modal";
@@ -24,6 +25,7 @@ import { PaymentStatus } from "@/components/payment/PaymentStatus";
 import { useToast } from "@/components/ui/Toast";
 import { formatXLM } from "@/lib/utils";
 import type { Expense, SplitShare } from "@/types/expense";
+import type { Trip } from "@/types/trip";
 
 // ─── Expense Card ─────────────────────────────────────────────────────────────
 
@@ -31,14 +33,18 @@ function ExpenseCard({
   expense,
   onDelete,
   currentUserPublicKey,
+  owningTrip: propOwningTrip,
 }: {
   expense: Expense;
   onDelete: (id: string) => void;
   currentUserPublicKey?: string | null;
+  owningTrip?: Trip;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [payingShareId, setPayingShareId] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
+  const { trips } = useTrip();
+  const owningTrip = propOwningTrip ?? trips.find((t) => t.expenseIds.includes(expense.id));
 
   // Only the payer (the person who created/paid the expense) can delete it.
   const payerMember = expense.members.find((m) => m.id === expense.paidByMemberId);
@@ -62,6 +68,7 @@ function ExpenseCard({
       share,
       expenseTitle: expense.title,
       payerWalletAddress: payer?.walletAddress ?? "",
+      tripId: owningTrip?.id,
     });
     setPayingShareId(null);
   };
@@ -75,18 +82,37 @@ function ExpenseCard({
       className="bg-white rounded-2xl border border-[#E5E5E5] overflow-hidden hover:border-[#D0D0D0] transition-all"
     >
       {/* Header row */}
-      <button
-        className="w-full flex items-start sm:items-center justify-between gap-3 p-4 text-left"
+      <div
+        role="button"
+        tabIndex={0}
+        className="w-full flex items-start sm:items-center justify-between gap-3 p-4 text-left cursor-pointer select-none"
         onClick={() => setExpanded((v) => !v)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            setExpanded((v) => !v);
+          }
+        }}
       >
         <div className="flex items-center gap-3 min-w-0">
           <div className="w-9 h-9 rounded-xl bg-[#0F0F14] flex items-center justify-center shrink-0">
             <ReceiptText size={15} className="text-[#B9FF66]" />
           </div>
           <div className="min-w-0">
-            <p className="text-sm font-bold text-[#0F0F14] truncate">
-              {expense.title}
-            </p>
+            <div className="flex items-center gap-2 flex-wrap">
+              <p className="text-sm font-bold text-[#0F0F14] truncate">
+                {expense.title}
+              </p>
+              {owningTrip && (
+                <Link
+                  href={`/trips/${owningTrip.id}`}
+                  onClick={(e) => e.stopPropagation()}
+                  className="inline-flex items-center text-[10px] font-semibold px-2 py-0.5 rounded-full bg-[#F0F0F0] text-[#555] hover:bg-[#E5E5E5] hover:text-[#0F0F14] transition-colors max-w-[200px] truncate"
+                >
+                  Trip: {owningTrip.name}
+                </Link>
+              )}
+            </div>
             <p className="text-xs text-[#AAA] leading-relaxed">
               {formatXLM(expense.totalAmount)} XLM &middot; {expense.members.length} members
               &middot; {createdAt}
@@ -111,7 +137,7 @@ function ExpenseCard({
             }`}
           />
         </div>
-      </button>
+      </div>
 
       {/* Progress bar */}
       {expense.shares.length > 0 && (
@@ -156,12 +182,14 @@ function ExpenseCard({
                 connectedWalletAddress={currentUserPublicKey}
               />
 
-              <div className="mt-3 px-3 py-2 bg-amber-50 rounded-xl border border-amber-100 flex items-start gap-2">
-                <Inbox size={14} className="text-amber-600 mt-0.5 shrink-0" />
-                <p className="text-xs text-amber-700 leading-relaxed">
-                  <strong>Not linked to a trip</strong> — Payments for standalone expenses are processed peer-to-peer but do not generate an on-chain record.
-                </p>
-              </div>
+              {!owningTrip && (
+                <div className="mt-3 px-3 py-2 bg-amber-50 rounded-xl border border-amber-100 flex items-start gap-2">
+                  <Inbox size={14} className="text-amber-600 mt-0.5 shrink-0" />
+                  <p className="text-xs text-amber-700 leading-relaxed">
+                    <strong>Not linked to a trip</strong> — Payments for standalone expenses are processed peer-to-peer but do not generate an on-chain record.
+                  </p>
+                </div>
+              )}
 
               {paymentState.status !== "idle" && (
                 <div className="mt-3">
@@ -261,6 +289,7 @@ export default function ExpensesPage() {
   const { publicKey } = useWallet();
   const { user } = useAuth();
   const { expenses, deleteExpense } = useExpense();
+  const { trips } = useTrip();
   const { success: toastSuccess, error: toastError } = useToast();
   const [showForm, setShowForm] = useState(false);
 
@@ -318,14 +347,18 @@ export default function ExpensesPage() {
           ) : (
             <div className="space-y-3">
               <AnimatePresence mode="popLayout">
-                {expenses.map((expense: Expense) => (
-                  <ExpenseCard
-                    key={expense.id}
-                    expense={expense}
-                    onDelete={handleDeleteExpense}
-                    currentUserPublicKey={publicKey}
-                  />
-                ))}
+                {expenses.map((expense: Expense) => {
+                  const owningTrip = trips.find((t) => t.expenseIds.includes(expense.id));
+                  return (
+                    <ExpenseCard
+                      key={expense.id}
+                      expense={expense}
+                      owningTrip={owningTrip}
+                      onDelete={handleDeleteExpense}
+                      currentUserPublicKey={publicKey}
+                    />
+                  );
+                })}
               </AnimatePresence>
             </div>
           )}
