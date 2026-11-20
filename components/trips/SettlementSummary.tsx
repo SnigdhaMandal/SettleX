@@ -10,17 +10,35 @@ import type { NetPayment, RawDebt } from "@/lib/settlement/netBalance";
 import { computeNetPayments } from "@/lib/settlement/netBalance";
 import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
 import { settlementMemo } from "@/lib/stellar/memo";
-import { submitSignedTransaction } from "@/lib/stellar/submitTransaction";
+import {
+  inspectSignedTransaction,
+  isSubmissionIndeterminate,
+  submitSignedTransaction,
+} from "@/lib/stellar/submitTransaction";
+import { recordPaymentOnChain } from "@/lib/stellar/contract";
 import { signXDR } from "@/lib/freighter";
 import { useWallet } from "@/hooks/useWallet";
 import { useExpense } from "@/hooks/useExpense";
 import { useToast } from "@/components/ui/Toast";
-import { NETWORK_PASSPHRASE, stellarNetworkLabel } from "@/lib/utils/constants";
+import {
+  CONTRACT_ID,
+  NETWORK_PASSPHRASE,
+  stellarNetworkLabel,
+} from "@/lib/utils/constants";
 import { PayButton } from "@/components/payment/PayButton";
-import { TransactionHash } from "@/components/payment/TransactionHash";
+import { PaymentStatus } from "@/components/payment/PaymentStatus";
+import type { PaymentState } from "@/hooks/usePayment";
 import { cn, formatXLM } from "@/lib/utils";
 import { userFacingMessage } from "@/lib/errors/userMessage";
 import { selectCoveredShares } from "@/lib/settlement/shareBudget";
+import {
+  checkTransactionOnHorizon,
+  deletePendingPaymentRemote,
+  removePendingPaymentLocal,
+  savePendingPaymentLocal,
+  syncPendingPaymentRemote,
+  type PendingPayment,
+} from "@/lib/payments/pendingPayments";
 
 interface SettlementSummaryProps {
   trip: Trip;
@@ -28,10 +46,25 @@ interface SettlementSummaryProps {
   onChainEvents?: ContractPaymentEvent[];
 }
 
-type RowState =
-  | { status: "idle" }
-  | { status: "paying" }
-  | { status: "done"; txHash: string };
+function isAlreadyRecorded(err: unknown): boolean {
+  const message = (err as { message?: string })?.message ?? "";
+  return /already marked as paid|already used on another/i.test(message);
+}
+
+interface PendingOnChainRecord {
+  memberPublicKey: string;
+  tripId: string;
+  expenseId: string;
+  payerPublicKey: string;
+  amountXlm: string;
+  txHash: string;
+  ledger: number;
+}
+
+interface PendingShareRecord {
+  expenseId: string;
+  memberId: string;
+}
 
 function filterMemberEvents(
   expenses: Expense[],
@@ -133,13 +166,32 @@ function NetPaymentRow({
   } = useWallet();
   const { markSharePaid } = useExpense();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
-  const [rowState, setRowState] = useState<RowState>({ status: "idle" });
+  const [paymentState, setPaymentState] = useState<PaymentState>({ status: "idle" });
+  const [pendingOnChain, setPendingOnChain] = useState<PendingOnChainRecord[] | null>(null);
+  const [pendingShares, setPendingShares] = useState<{
+    hash: string;
+    ledger: number;
+    shares: PendingShareRecord[];
+    onChain: boolean;
+  } | null>(null);
+
+  const isLoading =
+    paymentState.status === "building" ||
+    paymentState.status === "signing" ||
+    paymentState.status === "submitting" ||
+    paymentState.status === "recording" ||
+    paymentState.status === "verifying";
+
+  const isDone =
+    paymentState.status === "success" ||
+    paymentState.status === "partial_success" ||
+    paymentState.status === "paid_unrecorded";
 
   const canPay =
-    publicKey &&
-    payment.toWallet &&
+    Boolean(publicKey) &&
+    Boolean(payment.toWallet) &&
     isNetworkCompatible &&
-    rowState.status === "idle" &&
+    paymentState.status === "idle" &&
     publicKey === payment.fromWallet;
 
   const handlePay = async () => {
@@ -154,52 +206,399 @@ function NetPaymentRow({
       );
       return;
     }
+
+    const coveredShares = selectCoveredShares(payment, expenses);
+    let pendingList: PendingPayment[] = [];
+
     try {
-      setRowState({ status: "paying" });
-      const coveredShares = selectCoveredShares(payment, expenses);
+      setPaymentState({ status: "building" });
       const { xdr } = await buildPaymentTransaction({
         sourcePublicKey:      publicKey,
         destinationPublicKey: payment.toWallet,
         amount:               payment.amount,
         memo:                 settlementMemo(tripId, publicKey, payment.toWallet),
       });
+
+      setPaymentState({ status: "signing" });
       toastInfo("Waiting for wallet signature…", "Confirm the settlement payment.");
       const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE, publicKey);
-      const { hash }  = await submitSignedTransaction(signedXDR);
+
+      const signed = inspectSignedTransaction(signedXDR);
+      pendingList = coveredShares.map((cs) => {
+        const exp = expenses.find((e) => e.id === cs.expenseId);
+        const sh = exp?.shares.find((s) => s.memberId === cs.memberId);
+        return {
+          expenseId: cs.expenseId,
+          memberId: cs.memberId,
+          txHash: signed.hash,
+          payerWallet: publicKey,
+          destinationWallet: payment.toWallet!,
+          amount: sh?.amount || "0",
+          tripId,
+          status: "signed" as const,
+          ledger: null,
+          validUntil: signed.validUntil,
+          onChainRecorded: false,
+          createdAt: new Date().toISOString(),
+        };
+      });
+
+      for (const p of pendingList) {
+        savePendingPaymentLocal(p);
+        void syncPendingPaymentRemote(p);
+      }
+
+      setPaymentState({ status: "submitting" });
+      let result: { hash: string; ledger: number };
+      try {
+        const submitRes = await submitSignedTransaction(signedXDR);
+        result = {
+          hash: submitRes.hash || signed.hash,
+          ledger: submitRes.ledger,
+        };
+      } catch (err) {
+        if (isSubmissionIndeterminate(err)) {
+          setPaymentState({
+            status: "pending_confirmation",
+            hash: signed.hash,
+            message: userFacingMessage(err).message,
+          });
+          toastInfo(
+            "Payment awaiting confirmation",
+            "Stellar has not confirmed the transfer yet. Don't pay again — check again shortly.",
+          );
+          return;
+        }
+        for (const p of pendingList) {
+          removePendingPaymentLocal(p.payerWallet, p.expenseId, p.memberId, p.txHash);
+          void deletePendingPaymentRemote(p.payerWallet, p.expenseId, p.memberId, p.txHash);
+        }
+        throw err;
+      }
+
+      // Money has moved on Stellar. Update pending entries to submitted.
+      const submittedHash = result.hash || signed.hash;
+      pendingList = pendingList.map((p) => ({
+        ...p,
+        txHash: submittedHash,
+        status: "submitted" as const,
+        ledger: result.ledger,
+      }));
+      for (const p of pendingList) {
+        savePendingPaymentLocal(p);
+      }
+
+      // Record settlements on-chain per covered share (Issue #209 / SX-043)
+      let onChain = false;
+      let onChainError: string | null = null;
+      const failedOnChain: PendingOnChainRecord[] = [];
+
+      if (CONTRACT_ID && tripId && coveredShares.length > 0) {
+        for (const cs of coveredShares) {
+          const exp = expenses.find((e) => e.id === cs.expenseId);
+          const sh = exp?.shares.find((s) => s.memberId === cs.memberId);
+          const expPayer = exp?.members.find((m) => m.id === exp.paidByMemberId);
+          const payerWallet = expPayer?.walletAddress || payment.toWallet!;
+          const shareAmount = sh?.amount || "0";
+
+          const rec: PendingOnChainRecord = {
+            memberPublicKey: publicKey,
+            tripId,
+            expenseId: cs.expenseId,
+            payerPublicKey: payerWallet,
+            amountXlm: shareAmount,
+            txHash: submittedHash,
+            ledger: result.ledger,
+          };
+
+          setPaymentState({ status: "recording", step: "simulating" });
+          const contractRes = await recordPaymentOnChain({
+            ...rec,
+            onStatus: (step) => setPaymentState({ status: "recording", step }),
+          });
+
+          if (contractRes.success) {
+            // Succeeded
+          } else if (contractRes.error && /already (marked as paid|settled on-chain)/i.test(contractRes.error)) {
+            // Already recorded
+          } else {
+            onChainError = contractRes.error ?? "On-chain recording failed.";
+            failedOnChain.push(rec);
+          }
+        }
+
+        if (failedOnChain.length === 0) {
+          onChain = true;
+          for (const p of pendingList) {
+            savePendingPaymentLocal({ ...p, onChainRecorded: true });
+          }
+        } else {
+          setPendingOnChain(failedOnChain);
+        }
+      }
 
       // Only close shares up to the net amount actually transferred.
       // A netted payment may be smaller than the gross obligations it represents
       // (e.g. A owes B 10 XLM and B owes A 4 XLM → net 6 XLM transfer). Marking
       // ALL of A's shares paid would write off 10 XLM while only 6 XLM moved.
+      const failedDbShares: PendingShareRecord[] = [];
       for (const share of coveredShares) {
         try {
-          await markSharePaid(share.expenseId, share.memberId, hash);
-        } catch {
-          // The Stellar transfer succeeded; local reconciliation can retry.
+          await markSharePaid(share.expenseId, share.memberId, submittedHash);
+          removePendingPaymentLocal(publicKey, share.expenseId, share.memberId, submittedHash);
+          void deletePendingPaymentRemote(publicKey, share.expenseId, share.memberId, submittedHash);
+        } catch (err) {
+          if (isAlreadyRecorded(err)) {
+            removePendingPaymentLocal(publicKey, share.expenseId, share.memberId, submittedHash);
+            void deletePendingPaymentRemote(publicKey, share.expenseId, share.memberId, submittedHash);
+          } else {
+            failedDbShares.push({ expenseId: share.expenseId, memberId: share.memberId });
+          }
         }
       }
 
-      setRowState({ status: "done", txHash: hash });
+      if (failedDbShares.length > 0) {
+        setPendingShares({
+          hash: submittedHash,
+          ledger: result.ledger,
+          shares: failedDbShares,
+          onChain,
+        });
+        setPaymentState({
+          status: "paid_unrecorded",
+          hash: submittedHash,
+          ledger: result.ledger,
+          onChain,
+          message: "Could not update some expense share records in the database.",
+        });
+        toastInfo("Settlement sent — recording pending", "Your XLM transfer went through. Retry recording — do not pay again.");
+        return;
+      }
+
+      if (failedOnChain.length > 0) {
+        setPaymentState({
+          status: "partial_success",
+          hash: submittedHash,
+          ledger: result.ledger,
+          onChain: false,
+          message: onChainError ?? "On-chain recording failed.",
+        });
+        toastInfo(
+          "Payment sent, on-chain record pending",
+          "XLM transfer succeeded. Use retry to record it on-chain.",
+        );
+        return;
+      }
+
+      setPaymentState({
+        status: "success",
+        hash: submittedHash,
+        ledger: result.ledger,
+        onChain,
+      });
       toastSuccess(
         "Settlement sent!",
-        `Paid ${formatXLM(payment.amount)} XLM to ${payment.to}`,
+        onChain
+          ? `Paid ${formatXLM(payment.amount)} XLM to ${payment.to} · Recorded on-chain ✓`
+          : `Paid ${formatXLM(payment.amount)} XLM to ${payment.to}`,
       );
     } catch (err: unknown) {
       const msg        = err instanceof Error ? err.message : "Payment failed";
       const isRejected = /reject|denied|cancel/i.test(msg);
+      const display    = isRejected
+        ? "You rejected the payment in Freighter."
+        : userFacingMessage(err).message;
       toastError(
         isRejected ? "Transaction cancelled" : "Payment failed",
-        // Vetted before display: a settlement failure can surface a raw PostgREST
-        // or RPC message, which must not be shown to the user verbatim.
-        isRejected
-          ? "You rejected the payment in Freighter."
-          : userFacingMessage(err).message,
+        display,
       );
-      setRowState({ status: "idle" });
+      setPaymentState({ status: "error", message: display });
     }
   };
 
-  const done = rowState.status === "done";
+  const retryOnChainRecord = async () => {
+    if (!pendingOnChain || pendingOnChain.length === 0) return;
+    const liveNetwork = await refreshNetwork();
+    if (liveNetwork !== expectedNetwork) {
+      toastError(
+        "Payment blocked",
+        liveNetwork
+          ? `Switch your wallet to ${stellarNetworkLabel(expectedNetwork)} before retrying.`
+          : `SettleX could not verify your wallet is on ${stellarNetworkLabel(expectedNetwork)}.`,
+      );
+      return;
+    }
+
+    const stillFailed: PendingOnChainRecord[] = [];
+    let lastError: string | null = null;
+    let lastLedger = pendingOnChain[0].ledger;
+
+    for (const rec of pendingOnChain) {
+      setPaymentState({ status: "recording", step: "simulating" });
+      const contractResult = await recordPaymentOnChain({
+        ...rec,
+        onStatus: (step) => setPaymentState({ status: "recording", step }),
+      });
+      if (contractResult.success) {
+        if (contractResult.ledger) lastLedger = contractResult.ledger;
+      } else if (contractResult.error && /already (marked as paid|settled on-chain)/i.test(contractResult.error)) {
+        // Already recorded
+      } else {
+        lastError = contractResult.error ?? "On-chain retry failed.";
+        stillFailed.push(rec);
+      }
+    }
+
+    if (stillFailed.length > 0) {
+      setPendingOnChain(stillFailed);
+      setPaymentState({
+        status: "partial_success",
+        hash: pendingOnChain[0].txHash,
+        ledger: lastLedger,
+        onChain: false,
+        message: lastError ?? "On-chain retry failed.",
+      });
+      toastError("On-chain retry failed", lastError ?? "On-chain retry failed.");
+      return;
+    }
+
+    const completedHash = pendingOnChain[0].txHash;
+    setPendingOnChain(null);
+    setPaymentState({
+      status: "success",
+      hash: completedHash,
+      ledger: lastLedger,
+      onChain: true,
+    });
+    toastSuccess("On-chain record recovered", "Settlement is now confirmed in the contract.");
+  };
+
+  const retryRecording = async () => {
+    if (!pendingShares || pendingShares.shares.length === 0) return;
+    const stillFailed: PendingShareRecord[] = [];
+
+    for (const s of pendingShares.shares) {
+      try {
+        await markSharePaid(s.expenseId, s.memberId, pendingShares.hash);
+        if (publicKey) {
+          removePendingPaymentLocal(publicKey, s.expenseId, s.memberId, pendingShares.hash);
+          void deletePendingPaymentRemote(publicKey, s.expenseId, s.memberId, pendingShares.hash);
+        }
+      } catch (err) {
+        if (!isAlreadyRecorded(err)) {
+          stillFailed.push(s);
+        } else if (publicKey) {
+          removePendingPaymentLocal(publicKey, s.expenseId, s.memberId, pendingShares.hash);
+          void deletePendingPaymentRemote(publicKey, s.expenseId, s.memberId, pendingShares.hash);
+        }
+      }
+    }
+
+    if (stillFailed.length > 0) {
+      setPendingShares({ ...pendingShares, shares: stillFailed });
+      toastError("Recording still failing", "Failed to update some shares.");
+      return;
+    }
+
+    const completedHash = pendingShares.hash;
+    const completedLedger = pendingShares.ledger;
+    const completedOnChain = pendingShares.onChain;
+    setPendingShares(null);
+    setPaymentState({
+      status: "success",
+      hash: completedHash,
+      ledger: completedLedger,
+      onChain: completedOnChain,
+    });
+    toastSuccess("Settlement recorded!", "All shares updated in database.");
+  };
+
+  const checkPendingConfirmation = async (hash: string) => {
+    setPaymentState({ status: "verifying", hash });
+    const horizon = await checkTransactionOnHorizon(hash);
+    if (horizon.state === "failed") {
+      setPaymentState({
+        status: "error",
+        message: "The earlier transfer failed on the Stellar network, so no XLM moved. You can pay again.",
+      });
+      return;
+    }
+    if (horizon.state !== "confirmed") {
+      setPaymentState({
+        status: "pending_confirmation",
+        hash,
+        message: horizon.state === "unknown"
+          ? "Could not reach Stellar to confirm the earlier transfer. Check again shortly."
+          : "Stellar has not confirmed the earlier transfer yet. Check again shortly.",
+      });
+      toastInfo("Still awaiting confirmation", "Stellar has not confirmed the transfer yet.");
+      return;
+    }
+
+    const coveredShares = selectCoveredShares(payment, expenses);
+    let onChain = false;
+    let onChainError: string | null = null;
+    const failedOnChain: PendingOnChainRecord[] = [];
+
+    if (CONTRACT_ID && tripId && coveredShares.length > 0) {
+      for (const cs of coveredShares) {
+        const exp = expenses.find((e) => e.id === cs.expenseId);
+        const sh = exp?.shares.find((s) => s.memberId === cs.memberId);
+        const expPayer = exp?.members.find((m) => m.id === exp.paidByMemberId);
+        const payerWallet = expPayer?.walletAddress || payment.toWallet;
+        const rec: PendingOnChainRecord = {
+          memberPublicKey: publicKey!,
+          tripId,
+          expenseId: cs.expenseId,
+          payerPublicKey: payerWallet,
+          amountXlm: sh?.amount || "0",
+          txHash: hash,
+          ledger: horizon.ledger,
+        };
+        setPaymentState({ status: "recording", step: "simulating" });
+        const contractRes = await recordPaymentOnChain({
+          ...rec,
+          onStatus: (step) => setPaymentState({ status: "recording", step }),
+        });
+        if (!contractRes.success && !(contractRes.error && /already (marked as paid|settled on-chain)/i.test(contractRes.error))) {
+          onChainError = contractRes.error ?? "On-chain recording failed.";
+          failedOnChain.push(rec);
+        }
+      }
+      if (failedOnChain.length === 0) {
+        onChain = true;
+      } else {
+        setPendingOnChain(failedOnChain);
+      }
+    }
+
+    for (const share of coveredShares) {
+      try {
+        await markSharePaid(share.expenseId, share.memberId, hash);
+      } catch {
+        // Ignore or handled
+      }
+    }
+
+    if (failedOnChain.length > 0) {
+      setPaymentState({
+        status: "partial_success",
+        hash,
+        ledger: horizon.ledger,
+        onChain: false,
+        message: onChainError ?? "On-chain recording failed.",
+      });
+      return;
+    }
+
+    setPaymentState({
+      status: "success",
+      hash,
+      ledger: horizon.ledger,
+      onChain,
+    });
+    toastSuccess("Settlement confirmed!", "Payment verified and recorded.");
+  };
 
   return (
     <motion.div
@@ -208,7 +607,7 @@ function NetPaymentRow({
       transition={{ delay: index * 0.06 }}
       className={cn(
         "flex flex-col gap-2 p-3.5 rounded-xl border transition-all",
-        done ? "bg-[#F0FFDB] border-[#B9FF66]/40" : "bg-white border-[#E5E5E5]",
+        isDone ? "bg-[#F0FFDB] border-[#B9FF66]/40" : "bg-white border-[#E5E5E5]",
       )}
     >
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
@@ -224,7 +623,7 @@ function NetPaymentRow({
             <span className="text-[10px] font-normal text-[#888]">XLM</span>
           </span>
 
-          {done ? (
+          {isDone ? (
             <span className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#B9FF66]/30 text-[#2D6600] rounded-full">
               <CheckCircle2 size={9} /> Paid
             </span>
@@ -233,7 +632,7 @@ function NetPaymentRow({
               amount={payment.amount}
               recipientName={payment.to}
               onClick={handlePay}
-              isLoading={rowState.status === "paying"}
+              isLoading={isLoading}
               disabled={!canPay}
               size="sm"
             />
@@ -241,20 +640,31 @@ function NetPaymentRow({
         </div>
       </div>
 
-      {done && (
-        <div className="pl-1">
-          <TransactionHash hash={rowState.txHash} compact />
+      {paymentState.status !== "idle" && (
+        <div className="mt-1">
+          <PaymentStatus
+            state={paymentState}
+            onReset={paymentState.status === "error" ? () => setPaymentState({ status: "idle" }) : undefined}
+            onRetryOnChain={pendingOnChain && pendingOnChain.length > 0 ? retryOnChainRecord : undefined}
+            onRetryRecording={
+              paymentState.status === "pending_confirmation"
+                ? () => checkPendingConfirmation(paymentState.hash)
+                : pendingShares && pendingShares.shares.length > 0
+                ? retryRecording
+                : undefined
+            }
+          />
         </div>
       )}
 
-      {!done && !!unverifiedClaimCount && (
+      {!isDone && !!unverifiedClaimCount && (
         <p className="inline-flex items-center gap-1 text-[10px] font-semibold text-[#8A5A00] pl-1">
           <AlertCircle size={11} className="shrink-0" />
           {payment.from} reports paid - unverified
         </p>
       )}
 
-      {!done && rowState.status === "idle" && publicKey && publicKey !== payment.fromWallet && (
+      {!isDone && paymentState.status === "idle" && publicKey && publicKey !== payment.fromWallet && (
         <p className="text-[10px] text-[#AAA] pl-1">
           Connect {payment.from}&apos;s wallet to pay
         </p>
