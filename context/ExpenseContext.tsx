@@ -7,7 +7,7 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import type { Expense, SplitShare } from "@/types/expense";
+import type { Expense } from "@/types/expense";
 import { getWalletScopedKey, LS_EXPENSES } from "@/lib/utils/constants";
 import {
   getAuthenticatedClient,
@@ -21,6 +21,7 @@ import { useWalletContext } from "./WalletContext";
 import { logWarn, reportError } from "@/lib/observability/logger";
 import { supabaseErrorFields } from "@/lib/observability/supabaseError";
 import { parseExpenseRow } from "@/lib/supabase/rowGuards";
+import { userFacingMessage } from "@/lib/errors/userMessage";
 
 
 /**
@@ -630,131 +631,29 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       try {
         const client = await getClient();
 
-        // 1. Primary path: Atomic server-side RPC (row-locked in Postgres)
-        let rpcSucceeded = false;
-        try {
-          const { data: rpcData, error: rpcErr } = await client
-            .rpc("mark_share_paid", {
-              p_expense_id: expenseId,
-              p_member_id: memberId,
-              p_tx_hash: txHash,
-            });
+        // Single write path: the row-locked mark_share_paid RPC. It enforces
+        // the rules a direct UPDATE cannot (caller authorisation, one hash per
+        // payment, no re-marking a paid share, creator restrictions SX-026 /
+        // SX-028), so its rejections are final. There is deliberately no
+        // client-side fallback that writes the shares array directly: that
+        // would turn every business rejection into a silent bypass.
+        const { data: rpcData, error: rpcErr } = await client.rpc("mark_share_paid", {
+          p_expense_id: expenseId,
+          p_member_id: memberId,
+          p_tx_hash: txHash,
+        });
 
-          if (rpcErr) {
-            throw rpcErr;
-          }
-
-          if (rpcData && rpcData.length > 0) {
-            const updatedRow = dbRowToExpense(rpcData[0]);
-            setExpenses((prev) => {
-              const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
-              localStorage.setItem(cacheKey, JSON.stringify(synced));
-              return synced;
-            });
-            rpcSucceeded = true;
-          }
-        } catch (rpcErr) {
-          const errMsg = (rpcErr as { message?: string })?.message || "";
-          if (
-            errMsg.includes("already marked as paid") ||
-            errMsg.includes("already used on another") ||
-            errMsg.includes("Valid transaction hash is required") ||
-            errMsg.includes("Not authorized")
-          ) {
-            throw rpcErr;
-          }
-          logWarn("expense.mark_share_paid_rpc_unavailable", {
-            fields: { expenseId, ...supabaseErrorFields(rpcErr) },
-          });
+        if (rpcErr) throw rpcErr;
+        if (!rpcData || rpcData.length === 0) {
+          throw new Error("The payment could not be recorded. Please try again.");
         }
 
-        if (rpcSucceeded) return;
-
-        // 2. Fallback path: Optimistic Concurrency Control (OCC) with Retry Loop
-        const MAX_RETRIES = 5;
-        let lastError: unknown = null;
-
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          const { data: freshData, error: fetchErr } = await client
-            .from("expenses")
-            .select("*")
-            .eq("id", expenseId)
-            .single();
-
-          if (fetchErr) throw fetchErr;
-
-          const currentVersion = freshData.version ?? 1;
-          const existingShares = (freshData.shares as SplitShare[]) || [];
-
-          // Merge: preserve any other members marked paid concurrently
-          const freshShares = existingShares.map((s: SplitShare) =>
-            s.memberId === memberId
-              ? {
-                  ...s,
-                  paid: true,
-                  txHash,
-                  paidBy: publicKey || s.paidBy,
-                  markedAt: s.markedAt || nowIso,
-                }
-              : s
-          );
-          const freshSettled = freshShares.every((s: SplitShare) => s.paid);
-
-          // Update conditionally matching the version token
-          const { data: rowsUpdated, error: updateErr } = await client
-            .from("expenses")
-            .update({
-              shares: freshShares as unknown as Json,
-              settled: freshSettled,
-              version: currentVersion + 1,
-            })
-            .eq("id", expenseId)
-            .eq("version", currentVersion)
-            .select("*");
-
-          if (updateErr) {
-            lastError = updateErr;
-            // If column 'version' does not exist in db, fallback to direct update
-            if (String(updateErr.message || "").includes("version")) {
-              const { data: fallbackRows, error: fallbackErr } = await client
-                .from("expenses")
-                .update({
-                  shares: freshShares as unknown as Json,
-                  settled: freshSettled,
-                })
-                .eq("id", expenseId)
-                .select("*");
-
-              if (fallbackErr) throw fallbackErr;
-              if (fallbackRows && fallbackRows.length > 0) {
-                const updatedExpense = dbRowToExpense(fallbackRows[0]);
-                setExpenses((prev) => {
-                  const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
-                  localStorage.setItem(cacheKey, JSON.stringify(synced));
-                  return synced;
-                });
-                return;
-              }
-            }
-          }
-
-          if (rowsUpdated && rowsUpdated.length > 0) {
-            const updatedExpense = dbRowToExpense(rowsUpdated[0]);
-            setExpenses((prev) => {
-              const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
-              localStorage.setItem(cacheKey, JSON.stringify(synced));
-              return synced;
-            });
-            return;
-          }
-
-          // Conflict detected (version changed by concurrent writer) - backoff and retry
-          if (attempt < MAX_RETRIES - 1) {
-            await new Promise((r) => setTimeout(r, 40 * (attempt + 1) + Math.random() * 40));
-          }
-        }
-
-        throw lastError || new Error("Failed to record payment due to concurrent updates. Please try again.");
+        const updatedRow = dbRowToExpense(rpcData[0]);
+        setExpenses((prev) => {
+          const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
+          localStorage.setItem(cacheKey, JSON.stringify(synced));
+          return synced;
+        });
       } catch (err) {
         // The payment settled on Stellar but the database does not reflect it:
         // the ledger and the app now disagree about who has paid.
@@ -779,7 +678,12 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
-        throw err;
+        // PostgREST errors are plain objects, not Error instances, so pass the
+        // message itself. Rule rejections written for users ("Share is already
+        // marked as paid") survive; raw database detail becomes the generic line.
+        const rawMessage = (err as { message?: unknown } | null)?.message;
+        const { message } = userFacingMessage(typeof rawMessage === "string" ? rawMessage : err);
+        throw new Error(message, { cause: err });
       }
     },
     [expenses, getClient, publicKey]
