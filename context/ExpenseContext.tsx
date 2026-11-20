@@ -758,18 +758,31 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         // The payment settled on Stellar but the database does not reflect it:
         // the ledger and the app now disagree about who has paid.
+        // The caller (usePayment) keeps a durable pending-payment record for
+        // this transfer and blocks Pay until it is recorded, so rolling the
+        // share back here cannot lead to a second payment.
         reportError("expense.mark_share_paid_failed", err, {
           fields: { expenseId, ...supabaseErrorFields(err) },
         });
+        // Undo only this share's optimistic update. Restoring the whole
+        // snapshot would also discard anything that landed meanwhile (a poll,
+        // another member's payment) and is newer than `current`.
+        const previousShare = current.shares.find((s) => s.memberId === memberId);
         setExpenses((prev) => {
-          const rolled = prev.map((e) => (e.id === expenseId ? current : e));
+          const rolled = prev.map((e) => {
+            if (e.id !== expenseId) return e;
+            const shares = e.shares.map((s) =>
+              s.memberId === memberId && s.txHash === txHash && previousShare ? previousShare : s
+            );
+            return { ...e, shares, settled: shares.every((s) => s.paid) };
+          });
           localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
       }
     },
-    [expenses, getClient]
+    [expenses, getClient, publicKey]
   );
 
   const getExpense = useCallback(
