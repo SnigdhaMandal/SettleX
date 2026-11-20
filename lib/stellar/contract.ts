@@ -6,6 +6,7 @@ import {
   nativeToScVal,
   scValToNative,
   Address,
+  xdr,
 } from "@stellar/stellar-sdk";
 import { sorobanServer } from "./soroban";
 import { signXDR } from "@/lib/freighter";
@@ -107,6 +108,160 @@ async function loadAccount(publicKey: string): Promise<Account> {
   }
   const data = (await res.json()) as { sequence: string };
   return new Account(publicKey, data.sequence);
+}
+
+// Placeholder public key for read simulations; simulation does not check
+// signatures, balances, or sequences, so any valid G-address works.
+const SIMULATION_ACCOUNT_ADDRESS = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAY";
+
+function createSimulationAccount(callerPublicKey?: string): Account {
+  const address =
+    callerPublicKey && callerPublicKey.startsWith("G") && callerPublicKey.length === 56
+      ? callerPublicKey
+      : SIMULATION_ACCOUNT_ADDRESS;
+  return new Account(address, "0");
+}
+
+function toBase64Xdr(val: unknown): string {
+  if (!val) return "";
+  if (typeof val === "string") return val;
+  if (typeof val === "object" && val !== null && "toXDR" in val) {
+    const xdrObj = val as { toXDR: (format?: string) => unknown };
+    try {
+      const res = xdrObj.toXDR("base64");
+      if (typeof res === "string") return res;
+      if (res && typeof (res as { toString: (f?: string) => string }).toString === "function") {
+        return (res as { toString: (f?: string) => string }).toString("base64");
+      }
+    } catch {
+      try {
+        const raw = xdrObj.toXDR();
+        if (typeof raw === "string") return raw;
+        if (raw && typeof (raw as { toString: (f?: string) => string }).toString === "function") {
+          return (raw as { toString: (f?: string) => string }).toString("base64");
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
+  return "";
+}
+
+function extractErrorFromScVal(val: unknown): string | null {
+  if (!val || typeof val !== "object") return null;
+
+  try {
+    const v = val as {
+      arm?: () => string;
+      switch?: () => { name?: string };
+      error?: () => {
+        switch?: () => { name?: string };
+        contractCode?: () => number;
+        value?: () => number;
+      };
+    };
+
+    const arm = typeof v.arm === "function" ? v.arm() : undefined;
+    const switchName = typeof v.switch === "function" ? v.switch()?.name : undefined;
+    if (arm === "error" || switchName === "scvError") {
+      const err = typeof v.error === "function" ? v.error() : undefined;
+      if (err) {
+        const code =
+          typeof err.contractCode === "function"
+            ? err.contractCode()
+            : typeof err.value === "function"
+            ? err.value()
+            : undefined;
+        if (code !== undefined && code !== null) {
+          return `Error(Contract, #${code})`;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  try {
+    const native = scValToNative(val as Parameters<typeof scValToNative>[0]);
+    if (typeof native === "string") {
+      const m = native.match(/Error\(Contract,\s*#\d+\)/);
+      if (m) return m[0];
+    } else if (native && typeof native === "object") {
+      const str = JSON.stringify(native);
+      const m = str.match(/Error\(Contract,\s*#\d+\)/);
+      if (m) return m[0];
+    }
+  } catch {
+    // ignore
+  }
+
+  return null;
+}
+
+function extractDiagnosticError(events?: unknown[]): string | null {
+  if (!events || !Array.isArray(events)) return null;
+
+  for (const item of events) {
+    if (!item) continue;
+
+    if (typeof item === "string") {
+      const directMatch = item.match(/Error\(Contract,\s*#\d+\)/);
+      if (directMatch) return directMatch[0];
+      try {
+        const parsed = xdr.DiagnosticEvent.fromXDR(item, "base64");
+        const fromParsed = extractDiagnosticError([parsed]);
+        if (fromParsed) return fromParsed;
+      } catch {
+        // Not a base64 DiagnosticEvent
+      }
+      continue;
+    }
+
+    try {
+      const evtItem = item as {
+        event?: () => {
+          body?: () => {
+            v0?: () => {
+              topics?: () => unknown[];
+              data?: () => unknown;
+            };
+          };
+        };
+      };
+
+      const evt = typeof evtItem.event === "function" ? evtItem.event() : undefined;
+      if (evt) {
+        const body = typeof evt.body === "function" ? evt.body() : undefined;
+        const v0 = body && typeof body.v0 === "function" ? body.v0() : undefined;
+        const topics = (v0 && typeof v0.topics === "function" ? v0.topics() : []) ?? [];
+        const data = v0 && typeof v0.data === "function" ? v0.data() : undefined;
+
+        const candidates = [...topics];
+        if (data) candidates.push(data);
+
+        for (const candidate of candidates) {
+          const errStr = extractErrorFromScVal(candidate);
+          if (errStr) return errStr;
+        }
+      }
+    } catch {
+      // ignore
+    }
+
+    try {
+      const str =
+        typeof (item as { toXDR?: (f?: string) => string }).toXDR === "function"
+          ? (item as { toXDR: (f?: string) => string }).toXDR("base64")
+          : JSON.stringify(item);
+      const strMatch = str.match(/Error\(Contract,\s*#\d+\)/);
+      if (strMatch) return strMatch[0];
+    } catch {
+      // ignore
+    }
+  }
+
+  return null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -255,9 +410,35 @@ export async function recordPaymentOnChain(
     );
 
     if (sendResult.status === "ERROR") {
+      const sendEvents =
+        (sendResult as { diagnosticEventsXdr?: unknown[]; diagnosticEvents?: unknown[] })
+          .diagnosticEventsXdr ??
+        (sendResult as { diagnosticEventsXdr?: unknown[]; diagnosticEvents?: unknown[] })
+          .diagnosticEvents;
+      const diagErr = extractDiagnosticError(sendEvents);
+      if (diagErr) {
+        throw new Error(decodeContractError(diagErr));
+      }
+
+      const errorDetail =
+        (sendResult as { errorResult?: { result?: () => { toXDR?: (f?: string) => string }; toXDR?: (f?: string) => string }; errorResultXdr?: string })
+          .errorResult?.result?.()?.toXDR?.("base64") ??
+        (sendResult as { errorResult?: { toXDR?: (f?: string) => string } })
+          .errorResult?.toXDR?.("base64") ??
+        (sendResult as { errorResultXdr?: string }).errorResultXdr ??
+        "unknown error";
       throw new Error(
-        `Contract send failed: ${sendResult.errorResult?.result()?.toXDR("base64") ?? "unknown error"}`
+        decodeContractError(`Contract send failed: ${errorDetail}`)
       );
+    }
+    if (sendResult.status === "TRY_AGAIN_LATER") {
+      throw new Error("The network is currently busy. Please try submitting again later.");
+    }
+    if (sendResult.status === "DUPLICATE") {
+      throw new Error("Transaction is a duplicate and was already submitted.");
+    }
+    if (sendResult.status !== "PENDING") {
+      throw new Error(`Unexpected transaction submission status: ${sendResult.status}`);
     }
 
     onStatus?.("confirming");
@@ -271,10 +452,23 @@ export async function recordPaymentOnChain(
         return { success: true, ledger: (pollResult as { ledger: number }).ledger };
       }
       if (pollResult.status === rpc.Api.GetTransactionStatus.FAILED) {
-        const failedResult = pollResult as { resultXdr?: { toXDR?: () => unknown } };
-        const rawMsg = failedResult.resultXdr
-          ? `Contract error: ${String(failedResult.resultXdr)}`
-          : "Contract transaction was submitted but failed on-chain.";
+        const failedResult = pollResult as {
+          resultXdr?: unknown;
+          diagnosticEventsXdr?: unknown[];
+          diagnosticEvents?: unknown[];
+        };
+
+        const events = failedResult.diagnosticEventsXdr ?? failedResult.diagnosticEvents;
+        const diagnosticError = extractDiagnosticError(events);
+
+        const resultXdrBase64 = toBase64Xdr(failedResult.resultXdr);
+
+        const rawMsg =
+          diagnosticError ??
+          (resultXdrBase64
+            ? `Contract error: ${resultXdrBase64}`
+            : "Contract transaction was submitted but failed on-chain.");
+
         throw new Error(decodeContractError(rawMsg));
       }
     }
@@ -298,7 +492,7 @@ export async function getContractPayments(
   }
 
   try {
-    const account  = await loadAccount(callerPublicKey);
+    const account  = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     type RawPayment = {
@@ -342,7 +536,10 @@ export async function getContractPayments(
         rpc.Api.isSimulationError(simResult) ||
         !rpc.Api.isSimulationSuccess(simResult)
       ) {
-        throw new Error("Simulation failed when reading trip payments.");
+        const errDetail = rpc.Api.isSimulationError(simResult)
+          ? decodeContractError(simResult.error)
+          : "Simulation failed when reading trip payments.";
+        throw new Error(errDetail);
       }
 
       const retval = simResult.result?.retval;
@@ -408,7 +605,7 @@ export async function checkIsPaid(
   }
 
   try {
-    const account  = await loadAccount(callerPublicKey);
+    const account  = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     const tx = new TransactionBuilder(account, {
@@ -432,7 +629,10 @@ export async function checkIsPaid(
       rpc.Api.isSimulationError(simResult) ||
       !rpc.Api.isSimulationSuccess(simResult)
     ) {
-      throw new Error("Simulation failed when checking payment status.");
+      const errDetail = rpc.Api.isSimulationError(simResult)
+        ? decodeContractError(simResult.error)
+        : "Simulation failed when checking payment status.";
+      throw new Error(errDetail);
     }
 
     const retval = simResult.result?.retval;
