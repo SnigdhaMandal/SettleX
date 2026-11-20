@@ -54,10 +54,14 @@ describe("usePayment integration flow", () => {
   const mockToastError = jest.fn();
   const mockToastInfo = jest.fn();
 
+  const DEBTOR = "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+  const CREDITOR = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+
+  // The connected wallet (DEBTOR) owns this share: only the owner may pay it.
   const share: SplitShare = {
     memberId: "member-1",
     name: "Bob",
-    walletAddress: "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+    walletAddress: DEBTOR,
     amount: "1.5000000",
     paid: false,
   };
@@ -134,6 +138,12 @@ describe("usePayment integration flow", () => {
       expect.objectContaining({ memo: shareMemo("exp-1", "member-1") }),
     );
     expect(recordPaymentOnChain).toHaveBeenCalledTimes(1);
+    // Issue #208: the record and the duplicate guard are keyed by the same
+    // account, the debtor who sent the XLM, with the creditor as recipient.
+    expect(recordPaymentOnChain).toHaveBeenCalledWith(
+      expect.objectContaining({ debtorPublicKey: DEBTOR, creditorPublicKey: CREDITOR }),
+    );
+    expect(checkIsPaid).toHaveBeenCalledWith(DEBTOR, "exp-1", DEBTOR);
     expect(mockToastSuccess).toHaveBeenCalled();
   });
 
@@ -215,6 +225,59 @@ describe("usePayment integration flow", () => {
 
     expect(recordPaymentOnChain).toHaveBeenCalledTimes(2);
   });
+  // ─── Issue #208: only the share's owner may pay it ───────────────────────
+
+  const OTHER = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+
+  it.each([
+    ["a share owned by another wallet", { ...share, walletAddress: OTHER }, DEBTOR],
+    ["a share with no wallet", { ...share, walletAddress: undefined }, DEBTOR],
+    ["the creditor's own share", { ...share, walletAddress: CREDITOR }, CREDITOR],
+  ])("refuses to pay %s and never builds, checks or records anything", async (_label, target, connected) => {
+    mockedUseWallet.mockReturnValue({
+      publicKey: connected,
+      refreshBalance: mockRefreshBalance,
+      refreshNetwork: mockRefreshNetwork,
+      reconcile: mockReconcile,
+      isNetworkCompatible: true,
+      networkStatus: "matched",
+      expectedNetwork: "TESTNET",
+    });
+    const { result } = renderHook(() => usePayment({ expenseId: "exp-owner" }));
+
+    await act(async () => {
+      await result.current.payShare({
+        share: target as SplitShare,
+        expenseTitle: "Dinner",
+        payerWalletAddress: CREDITOR,
+        tripId: "trip-1",
+      });
+    });
+
+    expect(mockToastError).toHaveBeenCalledWith("Payment blocked", expect.any(String));
+    expect(mockRefreshNetwork).not.toHaveBeenCalled();
+    expect(checkIsPaid).not.toHaveBeenCalled();
+    expect(buildPaymentTransaction).not.toHaveBeenCalled();
+    expect(signXDR).not.toHaveBeenCalled();
+    expect(recordPaymentOnChain).not.toHaveBeenCalled();
+    expect(mockMarkSharePaid).not.toHaveBeenCalled();
+    expect(result.current.paymentState.status).toBe("idle");
+  });
+
+  it("matches the share's wallet regardless of letter case", async () => {
+    const { result } = renderHook(() => usePayment({ expenseId: "exp-case" }));
+
+    await act(async () => {
+      await result.current.payShare({
+        share: { ...share, walletAddress: DEBTOR.toLowerCase() },
+        expenseTitle: "Dinner",
+        payerWalletAddress: CREDITOR,
+      });
+    });
+
+    expect(buildPaymentTransaction).toHaveBeenCalledTimes(1);
+  });
+
   // ─── Issue #205: money moved but the share stays unpaid on a DB error ───────
 
   const payStandalone = async (result: { current: ReturnType<typeof usePayment> }) => {

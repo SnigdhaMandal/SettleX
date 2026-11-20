@@ -8,6 +8,7 @@ import {
   submitSignedTransaction,
 } from "@/lib/stellar/submitTransaction";
 import { recordPaymentOnChain, checkIsPaid } from "@/lib/stellar/contract";
+import { sameWallet, sharePaymentDenial } from "@/lib/payments/shareOwnership";
 import { signXDR } from "@/lib/freighter";
 import { shareMemo } from "@/lib/stellar/memo";
 import { useWallet } from "@/hooks/useWallet";
@@ -68,10 +69,12 @@ interface PayShareParams {
 }
 
 interface PendingOnChainRecord {
-  memberPublicKey: string;
+  /** Who sent the XLM: the share's owner, and the account that signs the record. */
+  debtorPublicKey: string;
   tripId: string;
   expenseId: string;
-  payerPublicKey: string;
+  /** Who received it: the member who paid the bill. */
+  creditorPublicKey: string;
   amountXlm: string;
   txHash: string;
   ledger: number;
@@ -164,10 +167,10 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     if (CONTRACT_ID && entry.tripId && !entry.onChainRecorded) {
       const message = "Payment recorded. The on-chain contract record is still pending.";
       setPendingOnChain({
-        memberPublicKey: entry.payerWallet,
+        debtorPublicKey: entry.payerWallet,
         tripId: entry.tripId,
         expenseId: entry.expenseId,
-        payerPublicKey: entry.destinationWallet,
+        creditorPublicKey: entry.destinationWallet,
         amountXlm: entry.amount,
         txHash: entry.txHash,
         ledger,
@@ -332,6 +335,12 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
   const retryOnChainRecord = useCallback(async () => {
     if (!pendingOnChain) return;
+    // The record is signed by the debtor; another connected wallet cannot
+    // (and must not) record this payment.
+    if (!sameWallet(publicKey, pendingOnChain.debtorPublicKey)) {
+      toastError("Wrong wallet", "Connect the wallet that sent this payment to record it on-chain.");
+      return;
+    }
     if (!(await hasCurrentPaymentNetwork("retrying"))) return;
 
     setPaymentState({ status: "recording", step: "simulating" });
@@ -368,6 +377,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
   }, [
     hasCurrentPaymentNetwork,
     pendingOnChain,
+    publicKey,
     toastError,
     toastSuccess,
   ]);
@@ -381,6 +391,22 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         toastError("Wallet not connected", "Please connect your Stellar wallet first.");
         return;
       }
+      // Only the share's owner may pay it (Issue #208). The UI hides Pay for
+      // other rows, but this is the rule that actually holds: a third party's
+      // payment would be recorded against the wrong person and slip past the
+      // on-chain duplicate guard, which is keyed by the share's wallet.
+      const denial = sharePaymentDenial({
+        share,
+        connectedWallet: publicKey,
+        creditorWallet: payerWalletAddress,
+      });
+      if (denial) {
+        toastError("Payment blocked", denial);
+        return;
+      }
+      // From here the sender, the share owner and the debtor are one account.
+      const debtor = publicKey;
+      const creditor = payerWalletAddress;
       if (share.paid) {
         toastInfo("Already paid", `${share.name}'s share is already marked as paid.`);
         return;
@@ -395,18 +421,11 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         return;
       }
       if (!(await hasCurrentPaymentNetwork("paying"))) return;
-      if (!share.walletAddress) {
-        toastError("No wallet address", `${share.name} doesn't have a Stellar address.`);
-        return;
-      }
-      if (!payerWalletAddress) {
-        toastError("Payer has no wallet", "The expense creator hasn't added their Stellar address.");
-        return;
-      }
 
-      // Pre-flight: check if already settled on-chain before building the TX
-      if (CONTRACT_ID && share.walletAddress) {
-        const alreadyPaid = await checkIsPaid(publicKey, expenseId, share.walletAddress);
+      // Pre-flight: check if already settled on-chain before building the TX.
+      // Keyed by the debtor, the same account record_payment records below.
+      if (CONTRACT_ID) {
+        const alreadyPaid = await checkIsPaid(debtor, expenseId, debtor);
         if (alreadyPaid.paid) {
           toastError(
             "Already settled on-chain",
@@ -425,15 +444,15 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         try {
           setPaymentState({ status: "building" });
           const { xdr } = await buildPaymentTransaction({
-            sourcePublicKey:      publicKey,
-            destinationPublicKey: payerWalletAddress,
+            sourcePublicKey:      debtor,
+            destinationPublicKey: creditor,
             amount:               share.amount,
             memo:                 shareMemo(expenseId, share.memberId),
           });
 
           setPaymentState({ status: "signing" });
           toastInfo("Waiting for wallet signature…", "Review and confirm the transaction.");
-          const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE, publicKey);
+          const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE, debtor);
 
           // The hash is fixed once signed. Persist it before anything can move
           // money, so a crash or DB failure after submission is recoverable.
@@ -442,8 +461,8 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
             expenseId,
             memberId: share.memberId,
             txHash: signed.hash,
-            payerWallet: publicKey,
-            destinationWallet: payerWalletAddress,
+            payerWallet: debtor,
+            destinationWallet: creditor,
             amount: share.amount,
             tripId: tripId ?? null,
             status: "signed",
@@ -489,10 +508,10 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         if (CONTRACT_ID && tripId) {
           setPaymentState({ status: "recording", step: "simulating" });
           const contractResult = await recordPaymentOnChain({
-            memberPublicKey: publicKey,
+            debtorPublicKey:   debtor,
             tripId,
             expenseId,
-            payerPublicKey: payerWalletAddress,
+            creditorPublicKey: creditor,
             amountXlm:      share.amount,
             txHash:         pending.txHash,
             onStatus:       (step) => setPaymentState({ status: "recording", step }),
@@ -505,10 +524,10 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
           } else {
             onChainError = contractResult.error ?? "On-chain recording failed.";
             setPendingOnChain({
-              memberPublicKey: publicKey,
+              debtorPublicKey: debtor,
               tripId,
               expenseId,
-              payerPublicKey: payerWalletAddress,
+              creditorPublicKey: creditor,
               amountXlm: share.amount,
               txHash: pending.txHash,
               ledger: result.ledger,

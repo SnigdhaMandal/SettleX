@@ -10,6 +10,7 @@ import { QRToggle } from "@/components/payment/QRCodeDisplay";
 import { ReceiptModal } from "@/components/expenses/ReceiptModal";
 import { useWallet } from "@/hooks/useWallet";
 import { shareMemo } from "@/lib/stellar/memo";
+import { canWalletPayShare } from "@/lib/payments/shareOwnership";
 import type { SplitShare } from "@/types/expense";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -26,10 +27,10 @@ interface PaymentRowProps {
   isPaying?: boolean;
   /** A transfer for this share may already have moved: Pay stays disabled. */
   hasPendingPayment?: boolean;
-  /** Connected wallet — Pay button is only shown when this matches share.walletAddress.
-   *  If undefined/null, falls back to the old behaviour (show for all). */
+  /** Connected wallet. Pay (and the QR code) are shown only when it owns this
+   *  share; with no wallet connected, nobody's share is payable. */
   connectedWalletAddress?: string | null;
-  /** Payer's wallet address — guard against showing Pay for the payer row. */
+  /** Creditor: wallet of the member who paid the bill, i.e. where payments go. */
   payerWalletAddress?: string;
 }
 
@@ -55,18 +56,13 @@ export function PaymentRow({
   // identify, so no QR is offered.
   const memo = expenseId ? shareMemo(expenseId, share.memberId) : undefined;
 
-  // The payer NEVER owes anything — guard even if wallets accidentally overlap.
-  const isPayerRow =
-    !!payerWalletAddress &&
-    !!share.walletAddress &&
-    share.walletAddress === payerWalletAddress;
-
-  // Show Pay button only when the connected wallet matches this share’s wallet
-  // AND this row does not belong to the payer.
-  const isMyRow =
-    !isPayerRow &&
-    (!connectedWalletAddress ||
-      (!!share.walletAddress && share.walletAddress === connectedWalletAddress));
+  // Only the share's own wallet may pay it, never a third party and never the
+  // member who paid the bill. Same rule payShare enforces (Issue #208).
+  const isMyRow = canWalletPayShare({
+    share,
+    connectedWallet: connectedWalletAddress,
+    creditorWallet: payerWalletAddress,
+  });
 
   // When paidBy is recorded and doesn't match the share owner, someone else marked this share paid
   const isMarkedByOther = Boolean(
@@ -191,11 +187,13 @@ export function PaymentRow({
           </div>
         </div>
 
-        {/* QR toggle — only if unpaid and has wallet address */}
-        {!share.paid && !hasPendingPayment && share.walletAddress && memo && (
+        {/* QR toggle: lets the share's owner pay from a phone wallet. The
+            payment goes to the creditor (who paid the bill), not to the share's
+            own wallet. */}
+        {!share.paid && !hasPendingPayment && isMyRow && payerWalletAddress && memo && (
           <div className="pl-11">
             <QRToggle
-              data={{ destination: share.walletAddress, amount: share.amount, memo }}
+              data={{ destination: payerWalletAddress, amount: share.amount, memo }}
             />
           </div>
         )}

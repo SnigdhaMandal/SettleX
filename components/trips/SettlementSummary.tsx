@@ -187,6 +187,7 @@ function NetPaymentRow({
     paymentState.status === "partial_success" ||
     paymentState.status === "paid_unrecorded";
 
+  // Only the debtor of a net payment may send it (Issue #208).
   const canPay =
     Boolean(publicKey) &&
     Boolean(payment.toWallet) &&
@@ -196,6 +197,10 @@ function NetPaymentRow({
 
   const handlePay = async () => {
     if (!publicKey || !payment.toWallet) return;
+    if (!sameWallet(publicKey, payment.fromWallet)) {
+      toastError("Payment blocked", `Only ${payment.from} can send this settlement, from their own wallet.`);
+      return;
+    }
     const liveNetwork = await refreshNetwork();
     if (liveNetwork !== expectedNetwork) {
       toastError(

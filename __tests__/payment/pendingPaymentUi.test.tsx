@@ -35,6 +35,7 @@ jest.mock("@/components/expenses/ReceiptModal", () => ({
 
 const HASH = "b".repeat(64);
 const WALLET = "GBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB";
+const CREDITOR = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
 
 const share: SplitShare = {
   memberId: "member-1",
@@ -87,6 +88,8 @@ describe("Pending payment UI (Issue #205)", () => {
         onPay={onPay}
         hasPendingPayment
         connectedWalletAddress={WALLET}
+        payerWalletAddress={CREDITOR}
+        expenseId="exp-1"
       />,
     );
 
@@ -99,7 +102,13 @@ describe("Pending payment UI (Issue #205)", () => {
 
   it("keeps Pay enabled when nothing is pending", () => {
     render(
-      <PaymentRow share={share} index={0} onPay={jest.fn()} connectedWalletAddress={WALLET} />,
+      <PaymentRow
+        share={share}
+        index={0}
+        onPay={jest.fn()}
+        connectedWalletAddress={WALLET}
+        payerWalletAddress={CREDITOR}
+      />,
     );
 
     const button = screen.getByRole("button", { name: /pay 1\.5/i }) as HTMLButtonElement;
