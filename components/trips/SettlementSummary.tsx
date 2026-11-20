@@ -9,6 +9,7 @@ import type { ContractPaymentEvent } from "@/types/contract";
 import type { NetPayment, RawDebt } from "@/lib/settlement/netBalance";
 import { computeNetPayments } from "@/lib/settlement/netBalance";
 import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
+import { settlementMemo } from "@/lib/stellar/memo";
 import { submitSignedTransaction } from "@/lib/stellar/submitTransaction";
 import { signXDR } from "@/lib/freighter";
 import { useWallet } from "@/hooks/useWallet";
@@ -114,13 +115,13 @@ function deriveUnverifiedClaims(
 function NetPaymentRow({
   payment,
   index,
-  tripName,
+  tripId,
   expenses,
   unverifiedClaimCount,
 }: {
   payment: NetPayment;
   index: number;
-  tripName: string;
+  tripId: string;
   expenses: Expense[];
   unverifiedClaimCount?: number;
 }) {
@@ -156,12 +157,11 @@ function NetPaymentRow({
     try {
       setRowState({ status: "paying" });
       const coveredShares = selectCoveredShares(payment, expenses);
-      const memo = `SettleX|${tripName}`.slice(0, 28);
       const { xdr } = await buildPaymentTransaction({
         sourcePublicKey:      publicKey,
         destinationPublicKey: payment.toWallet,
         amount:               payment.amount,
-        memoText:             memo,
+        memo:                 settlementMemo(tripId, publicKey, payment.toWallet),
       });
       toastInfo("Waiting for wallet signature…", "Confirm the settlement payment.");
       const signedXDR = await signXDR(xdr, NETWORK_PASSPHRASE, publicKey);
@@ -313,7 +313,7 @@ export function SettlementSummary({ trip, expenses, onChainEvents = [] }: Settle
           key={`${p.fromId}-${p.toId}-${i}`}
           payment={p}
           index={i}
-          tripName={trip.name}
+          tripId={trip.id}
           expenses={expenses}
           unverifiedClaimCount={
             p.fromWallet && p.toWallet

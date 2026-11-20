@@ -2,7 +2,9 @@ import {
   buildPaymentTransaction,
   fetchSuggestedFee,
 } from "@/lib/stellar/buildTransaction";
-import { MEMO_MAX_BYTES, MEMO_PREFIX } from "@/lib/utils/constants";
+import { Memo, TransactionBuilder } from "@stellar/stellar-sdk";
+import { MEMO_MAX_BYTES, NETWORK_PASSPHRASE } from "@/lib/utils/constants";
+import { settlementMemo, shareMemo } from "@/lib/stellar/memo";
 
 const sourcePublicKey = "GCUOC6KXBSOHRIMBWAHOOHLNJVHJGDPVMCMRXDKKUYQ4AUO5PNX2WYVF";
 const destinationPublicKey = "GCGQLYHZDOSEWXKLKHYSZXYRUWTEPGLPDHWVIZQRL5XDE2BIEJ76XVMV";
@@ -12,7 +14,7 @@ describe("buildPaymentTransaction", () => {
     jest.resetAllMocks();
   });
 
-  it("builds xdr, dynamic fee, and prefixes memo", async () => {
+  it("builds xdr, dynamic fee, and uses the identifying memo verbatim", async () => {
     const fetchMock = jest.fn().mockImplementation((url: string) => {
       if (url.includes("/fee_stats")) {
         return Promise.resolve({
@@ -33,42 +35,53 @@ describe("buildPaymentTransaction", () => {
       sourcePublicKey,
       destinationPublicKey,
       amount: "1.25",
-      memoText: "Dinner",
+      memo: shareMemo("exp-1", "m2"),
     });
 
     expect(typeof result.xdr).toBe("string");
     expect(result.xdr.length).toBeGreaterThan(20);
-    expect(result.memo).toBe(`${MEMO_PREFIX}|Dinner`);
+    expect(result.memo).toBe(shareMemo("exp-1", "m2"));
+    const tx = TransactionBuilder.fromXDR(result.xdr, NETWORK_PASSPHRASE);
+    expect(tx.memo.type).toBe(Memo.text("x").type);
+    expect(String(tx.memo.value)).toBe(shareMemo("exp-1", "m2"));
     // 200 * 1.5 = 300
     expect(result.fee).toBe("300");
   });
 
-  it("trims long memo text to byte limit", async () => {
+  it("does not double-prefix settlement memos", async () => {
     const fetchMock = jest.fn().mockImplementation((url: string) => {
       if (url.includes("/fee_stats")) {
-        return Promise.resolve({
-          ok: true,
-          json: async () => ({ fee_charged: { mode: "100" } }),
-        });
+        return Promise.resolve({ ok: true, json: async () => ({ fee_charged: { mode: "100" } }) });
       }
-      return Promise.resolve({
-        ok: true,
-        json: async () => ({ sequence: "54321" }),
-      });
+      return Promise.resolve({ ok: true, json: async () => ({ sequence: "54321" }) });
     });
     (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
 
-    const longMemo = "very-long-note-".repeat(10);
+    const memo = settlementMemo("trip-1", sourcePublicKey, destinationPublicKey);
     const result = await buildPaymentTransaction({
       sourcePublicKey,
       destinationPublicKey,
       amount: "0.5",
-      memoText: longMemo,
+      memo,
     });
 
-    const memoBytes = new TextEncoder().encode(result.memo).length;
-    expect(result.memo.startsWith(`${MEMO_PREFIX}|`)).toBe(true);
-    expect(memoBytes).toBeLessThanOrEqual(MEMO_MAX_BYTES);
+    expect(result.memo).toBe(memo);
+    expect(result.memo).not.toMatch(/SettleX\|/);
+    expect(new TextEncoder().encode(result.memo).length).toBeLessThanOrEqual(MEMO_MAX_BYTES);
+  });
+
+  it.each([
+    "SettleX|Dinner|Aman",
+    "Dinner",
+    "",
+  ])("rejects a memo that does not identify a share or settlement (%p)", async (memo) => {
+    const fetchMock = jest.fn();
+    (global as unknown as { fetch: typeof fetch }).fetch = fetchMock as unknown as typeof fetch;
+
+    await expect(
+      buildPaymentTransaction({ sourcePublicKey, destinationPublicKey, amount: "1", memo }),
+    ).rejects.toThrow("Payment memo is missing or invalid");
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it("throws when horizon account lookup fails", async () => {
@@ -85,6 +98,7 @@ describe("buildPaymentTransaction", () => {
         sourcePublicKey,
         destinationPublicKey,
         amount: "2",
+        memo: shareMemo("exp-1", "m1"),
       }),
     ).rejects.toThrow("Failed to load account from Horizon");
   });

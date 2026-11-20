@@ -9,6 +9,7 @@ import {
 } from "@/lib/stellar/submitTransaction";
 import { recordPaymentOnChain, checkIsPaid } from "@/lib/stellar/contract";
 import { signXDR } from "@/lib/freighter";
+import { shareMemo } from "@/lib/stellar/memo";
 import { useWallet } from "@/hooks/useWallet";
 import { useExpense } from "@/hooks/useExpense";
 import { useToast } from "@/components/ui/Toast";
@@ -60,6 +61,7 @@ interface UsePaymentOpts {
 
 interface PayShareParams {
   share: SplitShare;
+  /** Display only; the memo is derived from the expense and member ids. */
   expenseTitle: string;
   payerWalletAddress: string;
   tripId?: string;
@@ -371,7 +373,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
   ]);
 
   const payShare = useCallback(
-    async ({ share, expenseTitle, payerWalletAddress, tripId }: PayShareParams) => {
+    async ({ share, payerWalletAddress, tripId }: PayShareParams) => {
       if (inFlightRef.current) return;
 
       await reconcile();
@@ -422,12 +424,11 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
         let result: { hash: string; ledger: number };
         try {
           setPaymentState({ status: "building" });
-          const memoText = `${expenseTitle}|${share.name}`.slice(0, 24);
           const { xdr } = await buildPaymentTransaction({
             sourcePublicKey:      publicKey,
             destinationPublicKey: payerWalletAddress,
             amount:               share.amount,
-            memoText,
+            memo:                 shareMemo(expenseId, share.memberId),
           });
 
           setPaymentState({ status: "signing" });

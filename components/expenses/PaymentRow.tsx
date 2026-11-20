@@ -9,12 +9,15 @@ import { PayButton } from "@/components/payment/PayButton";
 import { QRToggle } from "@/components/payment/QRCodeDisplay";
 import { ReceiptModal } from "@/components/expenses/ReceiptModal";
 import { useWallet } from "@/hooks/useWallet";
+import { shareMemo } from "@/lib/stellar/memo";
 import type { SplitShare } from "@/types/expense";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface PaymentRowProps {
   share: SplitShare;
+  /** Expense this share belongs to; needed to build the identifying memo for QR payments. */
+  expenseId?: string;
   index: number;
   expenseTitle?: string;
   /** Called when user clicks "Pay". */
@@ -34,8 +37,8 @@ interface PaymentRowProps {
 
 export function PaymentRow({
   share,
+  expenseId,
   index,
-  expenseTitle = "Expense",
   onPay,
   isPaying = false,
   hasPendingPayment = false,
@@ -47,7 +50,10 @@ export function PaymentRow({
   const explorerUrl = share.walletAddress
     ? `${STELLAR_EXPLORER}/account/${share.walletAddress}`
     : null;
-  const memo = `SettleX|${expenseTitle}|${share.name}`.slice(0, 28);
+  // Same memo as the in-app Pay path, so a QR payment can be matched to this
+  // share too. Without an expense id (an unsaved preview) there is nothing to
+  // identify, so no QR is offered.
+  const memo = expenseId ? shareMemo(expenseId, share.memberId) : undefined;
 
   // The payer NEVER owes anything — guard even if wallets accidentally overlap.
   const isPayerRow =
@@ -186,7 +192,7 @@ export function PaymentRow({
         </div>
 
         {/* QR toggle — only if unpaid and has wallet address */}
-        {!share.paid && !hasPendingPayment && share.walletAddress && (
+        {!share.paid && !hasPendingPayment && share.walletAddress && memo && (
           <div className="pl-11">
             <QRToggle
               data={{ destination: share.walletAddress, amount: share.amount, memo }}
@@ -201,6 +207,7 @@ export function PaymentRow({
           open={showReceipt}
           onClose={() => setShowReceipt(false)}
           txHash={share.txHash}
+          expectedMemo={memo}
           amount={share.amount}
           recipientName={share.name}
           shareOwner={share.walletAddress}
