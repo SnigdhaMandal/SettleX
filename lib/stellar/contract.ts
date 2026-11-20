@@ -6,6 +6,7 @@ import {
   nativeToScVal,
   scValToNative,
   Address,
+  xdr,
 } from "@stellar/stellar-sdk";
 import { sorobanServer } from "./soroban";
 import { signXDR } from "@/lib/freighter";
@@ -267,9 +268,35 @@ export async function recordPaymentOnChain(
     );
 
     if (sendResult.status === "ERROR") {
+      const sendEvents =
+        (sendResult as { diagnosticEventsXdr?: unknown[]; diagnosticEvents?: unknown[] })
+          .diagnosticEventsXdr ??
+        (sendResult as { diagnosticEventsXdr?: unknown[]; diagnosticEvents?: unknown[] })
+          .diagnosticEvents;
+      const diagErr = extractDiagnosticError(sendEvents);
+      if (diagErr) {
+        throw new Error(decodeContractError(diagErr));
+      }
+
+      const errorDetail =
+        (sendResult as { errorResult?: { result?: () => { toXDR?: (f?: string) => string }; toXDR?: (f?: string) => string }; errorResultXdr?: string })
+          .errorResult?.result?.()?.toXDR?.("base64") ??
+        (sendResult as { errorResult?: { toXDR?: (f?: string) => string } })
+          .errorResult?.toXDR?.("base64") ??
+        (sendResult as { errorResultXdr?: string }).errorResultXdr ??
+        "unknown error";
       throw new Error(
-        `Contract send failed: ${sendResult.errorResult?.result()?.toXDR("base64") ?? "unknown error"}`
+        decodeContractError(`Contract send failed: ${errorDetail}`)
       );
+    }
+    if (sendResult.status === "TRY_AGAIN_LATER") {
+      throw new Error("The network is currently busy. Please try submitting again later.");
+    }
+    if (sendResult.status === "DUPLICATE") {
+      throw new Error("Transaction is a duplicate and was already submitted.");
+    }
+    if (sendResult.status !== "PENDING") {
+      throw new Error(`Unexpected transaction submission status: ${sendResult.status}`);
     }
 
     onStatus?.("confirming");
@@ -283,10 +310,23 @@ export async function recordPaymentOnChain(
         return { success: true, ledger: (pollResult as { ledger: number }).ledger };
       }
       if (pollResult.status === rpc.Api.GetTransactionStatus.FAILED) {
-        const failedResult = pollResult as { resultXdr?: { toXDR?: () => unknown } };
-        const rawMsg = failedResult.resultXdr
-          ? `Contract error: ${String(failedResult.resultXdr)}`
-          : "Contract transaction was submitted but failed on-chain.";
+        const failedResult = pollResult as {
+          resultXdr?: unknown;
+          diagnosticEventsXdr?: unknown[];
+          diagnosticEvents?: unknown[];
+        };
+
+        const events = failedResult.diagnosticEventsXdr ?? failedResult.diagnosticEvents;
+        const diagnosticError = extractDiagnosticError(events);
+
+        const resultXdrBase64 = toBase64Xdr(failedResult.resultXdr);
+
+        const rawMsg =
+          diagnosticError ??
+          (resultXdrBase64
+            ? `Contract error: ${resultXdrBase64}`
+            : "Contract transaction was submitted but failed on-chain.");
+
         throw new Error(decodeContractError(rawMsg));
       }
     }
@@ -354,7 +394,10 @@ export async function getContractPayments(
         rpc.Api.isSimulationError(simResult) ||
         !rpc.Api.isSimulationSuccess(simResult)
       ) {
-        throw new Error("Simulation failed when reading trip payments.");
+        const errDetail = rpc.Api.isSimulationError(simResult)
+          ? decodeContractError(simResult.error)
+          : "Simulation failed when reading trip payments.";
+        throw new Error(errDetail);
       }
 
       const retval = simResult.result?.retval;
@@ -420,7 +463,7 @@ export async function checkIsPaid(
   }
 
   try {
-    const account  = await loadAccount(callerPublicKey);
+    const account  = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     const tx = new TransactionBuilder(account, {
@@ -444,7 +487,10 @@ export async function checkIsPaid(
       rpc.Api.isSimulationError(simResult) ||
       !rpc.Api.isSimulationSuccess(simResult)
     ) {
-      throw new Error("Simulation failed when checking payment status.");
+      const errDetail = rpc.Api.isSimulationError(simResult)
+        ? decodeContractError(simResult.error)
+        : "Simulation failed when checking payment status.";
+      throw new Error(errDetail);
     }
 
     const retval = simResult.result?.retval;
