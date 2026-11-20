@@ -21,6 +21,7 @@ import { TransactionHash } from "@/components/payment/TransactionHash";
 import { cn, formatXLM } from "@/lib/utils";
 import { userFacingMessage } from "@/lib/errors/userMessage";
 import { selectCoveredShares } from "@/lib/settlement/shareBudget";
+import { sameWallet } from "@/lib/payments/shareOwnership";
 
 interface SettlementSummaryProps {
   trip: Trip;
@@ -135,15 +136,20 @@ function NetPaymentRow({
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const [rowState, setRowState] = useState<RowState>({ status: "idle" });
 
+  // Only the debtor of a net payment may send it (Issue #208).
   const canPay =
     publicKey &&
     payment.toWallet &&
     isNetworkCompatible &&
     rowState.status === "idle" &&
-    publicKey === payment.fromWallet;
+    sameWallet(publicKey, payment.fromWallet);
 
   const handlePay = async () => {
     if (!publicKey || !payment.toWallet) return;
+    if (!sameWallet(publicKey, payment.fromWallet)) {
+      toastError("Payment blocked", `Only ${payment.from} can send this settlement, from their own wallet.`);
+      return;
+    }
     const liveNetwork = await refreshNetwork();
     if (liveNetwork !== expectedNetwork) {
       toastError(
@@ -254,7 +260,7 @@ function NetPaymentRow({
         </p>
       )}
 
-      {!done && rowState.status === "idle" && publicKey && publicKey !== payment.fromWallet && (
+      {!done && rowState.status === "idle" && publicKey && !sameWallet(publicKey, payment.fromWallet) && (
         <p className="text-[10px] text-[#AAA] pl-1">
           Connect {payment.from}&apos;s wallet to pay
         </p>

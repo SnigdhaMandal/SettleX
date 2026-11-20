@@ -1,7 +1,12 @@
 export interface ContractPaymentRecord {
   tripId: string;
   expenseId: string;
+  /**
+   * CREDITOR: received the XLM (the member who paid the bill). The contract's
+   * name; it is NOT the account that sent this payment. See lib/stellar/contract.ts.
+   */
   payer: string;
+  /** DEBTOR: owned the share and sent the XLM (the contract's name). */
   member: string;
   amountStroops: bigint;
   txHash: string;
@@ -73,6 +78,7 @@ export interface ContractPaymentEvent {
   ledgerClosedAt: string;
   tripId: string;
   expenseId: string;
+  /** DEBTOR: the share owner who sent the XLM (the contract's `member`). */
   member: string;
   amountStroops: string;
   txHash: string;

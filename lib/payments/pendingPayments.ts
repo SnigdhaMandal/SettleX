@@ -38,7 +38,9 @@ export interface PendingPayment {
   expenseId: string;
   memberId: string;
   txHash: string;
+  /** The wallet that SENT the transfer: the share's owner (debtor). */
   payerWallet: string;
+  /** The wallet that received it: the member who paid the bill (creditor). */
   destinationWallet: string;
   amount: string;
   tripId: string | null;

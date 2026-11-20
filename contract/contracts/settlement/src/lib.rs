@@ -40,7 +40,9 @@ pub struct PaymentRecordV1 {
 #[derive(Clone)]
 pub struct PaymentRecord {
     pub expense_id: String,
+    // CREDITOR: received the XLM (paid the bill). Not the sender. See record_payment.
     pub payer: Address,
+    // DEBTOR: owned the share and sent the XLM; authorized the record.
     pub member: Address,
     pub amount: i128,
     pub tx_hash: BytesN<32>,
@@ -473,6 +475,12 @@ impl SettleXContract {
         );
     }
 
+    // NAMING (Issue #208): `payer` is the CREDITOR, the member who paid the
+    // bill and received this XLM. `member` is the DEBTOR, the share owner who
+    // sent it, and the one who must authorize. This is the reverse of the
+    // everyday meaning of "payer". The names are kept because they are the
+    // stored PaymentRecord fields and event payload; the TypeScript wrapper
+    // (lib/stellar/contract.ts) exposes them as creditor / debtor.
     pub fn record_payment(
         env: Env,
         trip_id: String,

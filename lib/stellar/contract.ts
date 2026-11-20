@@ -126,11 +126,32 @@ function contractReady(caller: string): boolean {
   return true;
 }
 
+/*
+ * ─── Naming: the contract's `payer` / `member` are inverted (Issue #208) ────
+ *
+ * In the settlement contract (contract/contracts/settlement/src/lib.rs):
+ *
+ *   payer  = the CREDITOR: the member who paid the bill and RECEIVES the XLM
+ *   member = the DEBTOR:   the member who owed a share and SENT the XLM
+ *
+ * That is the reverse of everyday usage and of the UI, where "Payer" is the
+ * person who paid the bill. The names are part of the deployed contract's
+ * interface (stored PaymentRecord fields and event payloads), so they stay
+ * there; this wrapper speaks creditor/debtor instead, and maps them onto the
+ * contract's argument order in one place below. When reading records or
+ * events, treat `payer` as the creditor and `member` as the debtor.
+ */
+
 export interface RecordPaymentParams {
-  memberPublicKey: string;
+  /**
+   * DEBTOR: owner of the share, who sent the XLM. Signs the record
+   * (the contract's `member`, which must `require_auth`).
+   */
+  debtorPublicKey: string;
   tripId: string;
   expenseId: string;
-  payerPublicKey: string;
+  /** CREDITOR: who received the XLM, the member who paid the bill (the contract's `payer`). */
+  creditorPublicKey: string;
   amountXlm: string;
   txHash: string;
   onStatus?: (step: "simulating" | "signing" | "sending" | "confirming") => void;
@@ -152,7 +173,7 @@ export interface PoolPrecheckResult {
 
 export async function precheckPoolBalance(
   callerPublicKey: string,
-  memberPublicKey: string,
+  debtorPublicKey: string,
   amountXlm: string,
 ): Promise<PoolPrecheckResult> {
   const requiredStroops = xlmToStroops(amountXlm);
@@ -175,25 +196,32 @@ export async function recordPaymentOnChain(
   }
 
   const {
-    memberPublicKey,
+    debtorPublicKey,
     tripId,
     expenseId,
-    payerPublicKey,
+    creditorPublicKey,
     amountXlm,
     txHash,
     onStatus,
   } = params;
 
   try {
-    const account  = await loadAccount(memberPublicKey);
+    if (debtorPublicKey === creditorPublicKey) {
+      // The contract rejects this too (InvalidActor); fail before asking to sign.
+      throw new Error("The sender and recipient of a share payment must differ.");
+    }
+
+    const account  = await loadAccount(debtorPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     const amountStroops = xlmToStroops(amountXlm);
+    // record_payment(trip_id, expense_id, payer, member, amount, tx_hash)
+    //                                     ^creditor ^debtor
     const contractArgs = [
       nativeToScVal(tripId,           { type: "string" }),
       nativeToScVal(expenseId,        { type: "string" }),
-      new Address(payerPublicKey).toScVal(),
-      new Address(memberPublicKey).toScVal(),
+      new Address(creditorPublicKey).toScVal(),
+      new Address(debtorPublicKey).toScVal(),
       nativeToScVal(amountStroops,    { type: "i128" }),
       nativeToScVal(txHash,           { type: "string" }),
     ];
@@ -219,7 +247,7 @@ export async function recordPaymentOnChain(
     const assembled = rpc.assembleTransaction(tx, simResult).build();
 
     onStatus?.("signing");
-    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE, params.memberPublicKey);
+    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE, debtorPublicKey);
 
     onStatus?.("sending");
     const sendResult = await sorobanServer.sendTransaction(
@@ -338,8 +366,8 @@ export async function getContractPayments(
     const payments: ContractPaymentRecord[] = rawPayments.map((r) => ({
       tripId:        tripId,
       expenseId:     r.expense_id,
-      payer:         r.payer,
-      member:        r.member,
+      payer:         r.payer,   // creditor
+      member:        r.member,  // debtor
       amountStroops: r.amount,
       txHash:        r.tx_hash,
       timestamp:     Number(r.timestamp),
@@ -365,10 +393,15 @@ export async function getContractPayments(
   }
 }
 
+/**
+ * Whether the DEBTOR's share of `expenseId` is recorded as paid on-chain
+ * (the contract's `is_paid(expense_id, member)`). Pass the share owner's
+ * wallet, the same account `recordPaymentOnChain` records as the debtor.
+ */
 export async function checkIsPaid(
   callerPublicKey: string,
   expenseId: string,
-  memberPublicKey: string
+  debtorPublicKey: string
 ): Promise<IsPaidResult> {
   if (!contractReady("checkIsPaid")) {
     return { paid: false, success: false, error: "Contract not configured." };
@@ -386,7 +419,7 @@ export async function checkIsPaid(
         contract.call(
           "is_paid",
           nativeToScVal(expenseId,      { type: "string" }),
-          new Address(memberPublicKey).toScVal()
+          new Address(debtorPublicKey).toScVal()
         )
       )
       .setTimeout(30)
