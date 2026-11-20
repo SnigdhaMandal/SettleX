@@ -46,7 +46,7 @@ function ExpenseCard({
     !!currentUserPublicKey &&
     !!payerMember?.walletAddress &&
     payerMember.walletAddress === currentUserPublicKey;
-  const { payShare, paymentState, reset, retryOnChainRecord } = usePayment({ expenseId: expense.id });
+  const { payShare, paymentState, reset, retryOnChainRecord, retryRecording, pendingShareIds } = usePayment({ expenseId: expense.id });
 
   const paidCount = expense.shares.filter((s) => s.paid).length;
   const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
@@ -151,6 +151,7 @@ function ExpenseCard({
                 expenseTitle={expense.title}
                 onPay={handlePay}
                 payingShareId={payingShareId ?? undefined}
+                pendingShareIds={pendingShareIds}
                 connectedWalletAddress={currentUserPublicKey}
               />
 
@@ -167,6 +168,7 @@ function ExpenseCard({
                     state={paymentState}
                     onReset={reset}
                     onRetryOnChain={retryOnChainRecord}
+                    onRetryRecording={retryRecording}
                   />
                 </div>
               )}

@@ -21,6 +21,8 @@ interface PaymentRowProps {
   onPay?: (share: SplitShare) => void;
   /** When true, show spinner on Pay button (payment in-flight for this share). */
   isPaying?: boolean;
+  /** A transfer for this share may already have moved: Pay stays disabled. */
+  hasPendingPayment?: boolean;
   /** Connected wallet — Pay button is only shown when this matches share.walletAddress.
    *  If undefined/null, falls back to the old behaviour (show for all). */
   connectedWalletAddress?: string | null;
@@ -36,6 +38,7 @@ export function PaymentRow({
   expenseTitle = "Expense",
   onPay,
   isPaying = false,
+  hasPendingPayment = false,
   connectedWalletAddress,
   payerWalletAddress,
 }: PaymentRowProps) {
@@ -170,7 +173,8 @@ export function PaymentRow({
                 recipientName={share.name}
                 onClick={() => onPay?.(share)}
                 isLoading={isPaying}
-                disabled={!share.walletAddress || !onPay || !isNetworkCompatible}
+                disabled={!share.walletAddress || !onPay || !isNetworkCompatible || hasPendingPayment}
+                label={hasPendingPayment ? "Payment pending" : undefined}
                 size="sm"
               />
             ) : (
@@ -182,7 +186,7 @@ export function PaymentRow({
         </div>
 
         {/* QR toggle — only if unpaid and has wallet address */}
-        {!share.paid && share.walletAddress && (
+        {!share.paid && !hasPendingPayment && share.walletAddress && (
           <div className="pl-11">
             <QRToggle
               data={{ destination: share.walletAddress, amount: share.amount, memo }}

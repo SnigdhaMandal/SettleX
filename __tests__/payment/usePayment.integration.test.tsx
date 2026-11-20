@@ -1,7 +1,11 @@
 /** @jest-environment jsdom */
 
 import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
-import { submitSignedTransaction } from "@/lib/stellar/submitTransaction";
+import {
+  inspectSignedTransaction,
+  isSubmissionIndeterminate,
+  submitSignedTransaction,
+} from "@/lib/stellar/submitTransaction";
 import { checkIsPaid, recordPaymentOnChain } from "@/lib/stellar/contract";
 import { signXDR } from "@/lib/freighter";
 import type { SplitShare } from "@/types/expense";
@@ -26,6 +30,14 @@ jest.mock("@/hooks/useExpense", () => ({
 jest.mock("@/components/ui/Toast", () => ({
   useToast: jest.fn(),
 }));
+// No database session in tests: the pending-payment mirror is best-effort, so
+// these tests exercise the localStorage path that survives a reload.
+jest.mock("@/lib/supabase/session", () => ({
+  getAuthenticatedClient: jest.fn(async () => null),
+}));
+
+const SIGNED_HASH = "a".repeat(64);
+const PENDING_KEY = "settlex:pendingPayments:GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
 
 describe("usePayment integration flow", () => {
   const { usePayment } = require("@/hooks/usePayment") as typeof import("@/hooks/usePayment");
@@ -85,6 +97,18 @@ describe("usePayment integration flow", () => {
     });
     jest.mocked(checkIsPaid).mockResolvedValue({ paid: false, success: true });
     jest.mocked(recordPaymentOnChain).mockResolvedValue({ success: true, ledger: 322 });
+    jest.mocked(inspectSignedTransaction).mockReturnValue({
+      hash: SIGNED_HASH,
+      validUntil: new Date(Date.now() + 180_000).toISOString(),
+    });
+    jest.mocked(isSubmissionIndeterminate).mockReturnValue(false);
+    mockMarkSharePaid.mockImplementation(async () => {});
+    window.localStorage.clear();
+    (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => ({
+      status: 404,
+      ok: false,
+      json: async () => ({}),
+    }));
   });
 
   it("completes payment and records on-chain successfully", async () => {
@@ -185,5 +209,229 @@ describe("usePayment integration flow", () => {
     });
 
     expect(recordPaymentOnChain).toHaveBeenCalledTimes(2);
+  });
+  // ─── Issue #205: money moved but the share stays unpaid on a DB error ───────
+
+  const payStandalone = async (result: { current: ReturnType<typeof usePayment> }) => {
+    await act(async () => {
+      await result.current.payShare({
+        share,
+        expenseTitle: "Dinner",
+        payerWalletAddress: "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+      });
+    });
+  };
+
+  it("persists the signed hash before submitting the transfer", async () => {
+    let storedAtSubmit: string | null = null;
+    jest.mocked(submitSignedTransaction).mockImplementation(async () => {
+      storedAtSubmit = window.localStorage.getItem(PENDING_KEY);
+      return { hash: SIGNED_HASH, ledger: 321, successful: true };
+    });
+    const { result } = renderHook(() => usePayment({ expenseId: "exp-durable" }));
+
+    await payStandalone(result);
+
+    expect(storedAtSubmit).not.toBeNull();
+    const entry = JSON.parse(storedAtSubmit!)["exp-durable:member-1"];
+    expect(entry).toMatchObject({ txHash: SIGNED_HASH, status: "signed", memberId: "member-1" });
+    // Recorded successfully, so the pending entry is gone again.
+    expect(result.current.paymentState.status).toBe("success");
+    expect(window.localStorage.getItem(PENDING_KEY)).toBeNull();
+    expect(result.current.pendingShareIds).toEqual([]);
+  });
+
+  it("shows 'Payment sent — recording pending' and keeps Pay disabled when markSharePaid rejects after the transfer", async () => {
+    jest.mocked(submitSignedTransaction).mockResolvedValue({
+      hash: SIGNED_HASH,
+      ledger: 321,
+      successful: true,
+    });
+    mockMarkSharePaid.mockRejectedValue(new Error("JWT expired"));
+    const { result } = renderHook(() => usePayment({ expenseId: "exp-unrecorded" }));
+
+    await payStandalone(result);
+
+    expect(result.current.paymentState.status).toBe("paid_unrecorded");
+    expect(result.current.paymentState).toMatchObject({ hash: SIGNED_HASH });
+    expect(mockToastInfo).toHaveBeenCalledWith(
+      "Payment sent — recording pending",
+      expect.stringContaining("do not pay again"),
+    );
+    expect(mockToastError).not.toHaveBeenCalledWith("Payment failed", expect.anything());
+    expect(result.current.pendingShareIds).toEqual(["member-1"]);
+    expect(result.current.hasPendingPayment("member-1")).toBe(true);
+    expect(JSON.parse(window.localStorage.getItem(PENDING_KEY)!)["exp-unrecorded:member-1"])
+      .toMatchObject({ txHash: SIGNED_HASH, status: "submitted" });
+
+    // The duplicate guard holds for a standalone expense (no contract check).
+    jest.mocked(buildPaymentTransaction).mockClear();
+    jest.mocked(signXDR).mockClear();
+    await payStandalone(result);
+    expect(buildPaymentTransaction).not.toHaveBeenCalled();
+    expect(signXDR).not.toHaveBeenCalled();
+    expect(mockToastError).toHaveBeenCalledWith("Payment already sent", expect.any(String));
+  });
+
+  it("records the share on 'Retry recording' and then unblocks the share", async () => {
+    jest.mocked(submitSignedTransaction).mockResolvedValue({
+      hash: SIGNED_HASH,
+      ledger: 321,
+      successful: true,
+    });
+    mockMarkSharePaid.mockRejectedValueOnce(new Error("Failed to fetch"));
+    const { result } = renderHook(() => usePayment({ expenseId: "exp-retry" }));
+
+    await payStandalone(result);
+    expect(result.current.paymentState.status).toBe("paid_unrecorded");
+
+    await act(async () => {
+      await result.current.retryRecording();
+    });
+
+    expect(mockMarkSharePaid).toHaveBeenLastCalledWith("exp-retry", "member-1", SIGNED_HASH);
+    expect(result.current.paymentState.status).toBe("success");
+    expect(result.current.pendingShareIds).toEqual([]);
+    expect(window.localStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  it("keeps the share blocked when the submission outcome is unknown", async () => {
+    jest.mocked(submitSignedTransaction).mockRejectedValue(
+      new Error("Transaction submission timed out."),
+    );
+    jest.mocked(isSubmissionIndeterminate).mockReturnValue(true);
+    const { result } = renderHook(() => usePayment({ expenseId: "exp-unknown" }));
+
+    await payStandalone(result);
+
+    expect(result.current.paymentState.status).toBe("pending_confirmation");
+    expect(mockMarkSharePaid).not.toHaveBeenCalled();
+    expect(result.current.pendingShareIds).toEqual(["member-1"]);
+  });
+
+  it("clears the pending entry when the submission definitively failed", async () => {
+    jest.mocked(submitSignedTransaction).mockRejectedValue(
+      new Error("Insufficient XLM balance to complete this payment."),
+    );
+    const { result } = renderHook(() => usePayment({ expenseId: "exp-definitive" }));
+
+    await payStandalone(result);
+
+    expect(result.current.paymentState.status).toBe("error");
+    expect(result.current.pendingShareIds).toEqual([]);
+    expect(window.localStorage.getItem(PENDING_KEY)).toBeNull();
+  });
+
+  describe("after a reload", () => {
+    const seed = (overrides: Record<string, unknown> = {}) => {
+      window.localStorage.setItem(PENDING_KEY, JSON.stringify({
+        "exp-reload:member-1": {
+          expenseId: "exp-reload",
+          memberId: "member-1",
+          txHash: SIGNED_HASH,
+          payerWallet: "GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+          destinationWallet: "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC",
+          amount: "1.5000000",
+          tripId: null,
+          status: "signed",
+          ledger: null,
+          validUntil: new Date(Date.now() + 120_000).toISOString(),
+          onChainRecorded: false,
+          createdAt: new Date().toISOString(),
+          ...overrides,
+        },
+      }));
+    };
+
+    it("reconciles a pending payment that landed on Horizon and records the share", async () => {
+      seed();
+      (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => ({
+        status: 200,
+        ok: true,
+        json: async () => ({ successful: true, ledger: 999 }),
+      }));
+
+      const { result } = renderHook(() => usePayment({ expenseId: "exp-reload" }));
+      // Blocked straight away, before Horizon answers.
+      expect(result.current.pendingShareIds).toEqual(["member-1"]);
+
+      await waitFor(() => {
+        expect(result.current.paymentState.status).toBe("success");
+      });
+      expect((global as unknown as { fetch: jest.Mock }).fetch).toHaveBeenCalledWith(
+        expect.stringContaining(`/transactions/${SIGNED_HASH}`),
+        expect.anything(),
+      );
+      expect(mockMarkSharePaid).toHaveBeenCalledWith("exp-reload", "member-1", SIGNED_HASH);
+      expect(result.current.pendingShareIds).toEqual([]);
+      expect(window.localStorage.getItem(PENDING_KEY)).toBeNull();
+    });
+
+    it("stays paid_unrecorded with Pay blocked if recording still fails after reload", async () => {
+      seed({ status: "submitted", ledger: 500 });
+      mockMarkSharePaid.mockRejectedValue(new Error("offline"));
+
+      const { result } = renderHook(() => usePayment({ expenseId: "exp-reload" }));
+
+      await waitFor(() => {
+        expect(result.current.paymentState.status).toBe("paid_unrecorded");
+      });
+      // A submitted transfer is known to have landed; no Horizon lookup needed.
+      expect((global as unknown as { fetch: jest.Mock }).fetch).not.toHaveBeenCalled();
+      expect(result.current.pendingShareIds).toEqual(["member-1"]);
+    });
+
+    it("treats an 'already marked as paid' response as recorded", async () => {
+      seed({ status: "submitted", ledger: 500 });
+      mockMarkSharePaid.mockRejectedValue(new Error("Share is already marked as paid"));
+
+      const { result } = renderHook(() => usePayment({ expenseId: "exp-reload" }));
+
+      await waitFor(() => {
+        expect(result.current.paymentState.status).toBe("success");
+      });
+      expect(result.current.pendingShareIds).toEqual([]);
+    });
+
+    it("drops a pending payment that failed on the ledger without recording it", async () => {
+      seed();
+      (global as unknown as { fetch: jest.Mock }).fetch = jest.fn(async () => ({
+        status: 200,
+        ok: true,
+        json: async () => ({ successful: false, ledger: 999 }),
+      }));
+
+      const { result } = renderHook(() => usePayment({ expenseId: "exp-reload" }));
+
+      await waitFor(() => {
+        expect(result.current.pendingShareIds).toEqual([]);
+      });
+      expect(mockMarkSharePaid).not.toHaveBeenCalled();
+      expect(window.localStorage.getItem(PENDING_KEY)).toBeNull();
+    });
+
+    it("drops a signed payment that expired without ever reaching Horizon", async () => {
+      seed({ validUntil: new Date(Date.now() - 10 * 60_000).toISOString() });
+
+      const { result } = renderHook(() => usePayment({ expenseId: "exp-reload" }));
+
+      await waitFor(() => {
+        expect(result.current.pendingShareIds).toEqual([]);
+      });
+      expect(result.current.paymentState.status).toBe("idle");
+      expect(mockMarkSharePaid).not.toHaveBeenCalled();
+    });
+
+    it("keeps a signed payment blocked while Horizon has not seen it yet", async () => {
+      seed();
+
+      const { result } = renderHook(() => usePayment({ expenseId: "exp-reload" }));
+
+      await waitFor(() => {
+        expect(result.current.paymentState.status).toBe("pending_confirmation");
+      });
+      expect(result.current.pendingShareIds).toEqual(["member-1"]);
+      expect(mockMarkSharePaid).not.toHaveBeenCalled();
+    });
   });
 });

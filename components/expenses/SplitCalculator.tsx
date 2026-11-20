@@ -18,6 +18,8 @@ interface SplitCalculatorProps {
   onPay?: (share: SplitShare) => void;
   /** ID of the share whose payment is currently in-flight (shows spinner). */
   payingShareId?: string;
+  /** Member ids whose share has a sent-but-unrecorded payment. */
+  pendingShareIds?: string[];
   /** Disable pay buttons */
   disablePay?: boolean;
   /** Connected wallet address — Pay button only shows on the matching row. */
@@ -35,6 +37,7 @@ export function SplitCalculator({
   expenseTitle = "Expense",
   onPay,
   payingShareId,
+  pendingShareIds,
   disablePay = false,
   connectedWalletAddress,
   payerWalletAddress,
@@ -98,6 +101,7 @@ export function SplitCalculator({
             expenseTitle={expenseTitle}
             onPay={disablePay ? undefined : onPay}
             isPaying={payingShareId === share.memberId}
+            hasPendingPayment={pendingShareIds?.includes(share.memberId) ?? false}
             connectedWalletAddress={connectedWalletAddress}
             payerWalletAddress={payerWalletAddress}
           />

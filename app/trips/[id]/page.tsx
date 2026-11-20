@@ -50,7 +50,7 @@ function TripExpenseCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [payingShareId, setPayingShareId] = useState<string | null>(null);
-  const { payShare, paymentState, reset, retryOnChainRecord } = usePayment({ expenseId: expense.id });
+  const { payShare, paymentState, reset, retryOnChainRecord, retryRecording, pendingShareIds } = usePayment({ expenseId: expense.id });
 
   const paidCount = expense.shares.filter((s) => s.paid).length;
   const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
@@ -145,6 +145,7 @@ function TripExpenseCard({
                 expenseTitle={expense.title}
                 onPay={handlePay}
                 payingShareId={payingShareId ?? undefined}
+                pendingShareIds={pendingShareIds}
                 connectedWalletAddress={currentUserPublicKey}
               />
               {paymentState.status !== "idle" && (
@@ -153,6 +154,7 @@ function TripExpenseCard({
                     state={paymentState}
                     onReset={reset}
                     onRetryOnChain={retryOnChainRecord}
+                    onRetryRecording={retryRecording}
                   />
                 </div>
               )}
