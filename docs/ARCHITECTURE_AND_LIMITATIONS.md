@@ -59,6 +59,25 @@ SettleX uses:
   matches no row on any table. "Sign out everywhere" writes a wallet-wide
   tombstone that denies every token issued at or before that moment.
 
+## Trip Settlement Model (Issue #203)
+
+- Direct share payments mark one share paid through `mark_share_paid`.
+- Settle-up transfers pay a **net** amount, which does not line up with whole
+  shares. Each one is recorded as its own `trip_settlements` row (from, to,
+  amount, tx_hash) through the `record_trip_settlement` RPC. Only the sending
+  member can record it, and a transaction hash can back either one settlement
+  or one share payment, never both.
+- A member's trip balance is `owed - paid shares - settlements`
+  (`lib/settlement/netBalance.ts`). Paying every suggested transfer brings
+  every balance to zero, so the trip shows "All settled up".
+- Shares are never marked paid by a settlement. An unpaid share the netting
+  covers shows "Settled via net transfer" (or "Offset by netting" when debts
+  cancelled exactly) and offers no Pay button.
+- Each settlement also gets one on-chain receipt for the exact net amount,
+  under the contract `expense_id` `stl-<tx hash prefix>`.
+- `trips.settled` is unchanged: the database still only allows settling a
+  trip once every linked expense's shares are marked paid.
+
 ## Known Limitations
 
 - Project is testnet-oriented; mainnet operational controls are not included.
