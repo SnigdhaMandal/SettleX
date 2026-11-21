@@ -192,10 +192,10 @@ describe("Settlement on-chain recording (Issue #209)", () => {
     await waitFor(() => {
       expect(recordPaymentOnChain).toHaveBeenCalledWith(
         expect.objectContaining({
-          memberPublicKey: SENDER_WALLET,
+          debtorPublicKey: SENDER_WALLET,
           tripId: "trip-1",
           expenseId: "exp-1",
-          payerPublicKey: RECEIVER_WALLET,
+          creditorPublicKey: RECEIVER_WALLET,
           amountXlm: "10.0000000",
           txHash: TX_HASH,
         })
@@ -243,5 +243,46 @@ describe("Settlement on-chain recording (Issue #209)", () => {
       expect(recordPaymentOnChain).toHaveBeenCalledTimes(2);
       expect(screen.getByText(/payment successful!/i)).toBeTruthy();
     });
+  });
+
+  it("settles the right member when two members share a display name (Issue #202)", async () => {
+    const ALEX_ONE_WALLET = "GCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC";
+    const ALEX_TWO_WALLET = SENDER_WALLET;
+    const alice = { id: "member-alice", name: "Alice", walletAddress: RECEIVER_WALLET };
+    const alexOne = { id: "member-alex-1", name: "Alex", walletAddress: ALEX_ONE_WALLET };
+    const alexTwo = { id: "member-alex-2", name: "Alex", walletAddress: ALEX_TWO_WALLET };
+    const dupTrip: Trip = { ...trip, members: [alice, alexOne, alexTwo] };
+    const dupExpenses: Expense[] = [{
+      ...expenses[0],
+      totalAmount: "30.0000000",
+      members: [alice, alexOne, alexTwo],
+      shares: [
+        { memberId: alice.id, name: alice.name, walletAddress: alice.walletAddress, amount: "10.0000000", paid: true },
+        { memberId: alexOne.id, name: alexOne.name, walletAddress: alexOne.walletAddress, amount: "10.0000000", paid: false },
+        { memberId: alexTwo.id, name: alexTwo.name, walletAddress: alexTwo.walletAddress, amount: "10.0000000", paid: false },
+      ],
+    }];
+
+    render(<SettlementSummary trip={dupTrip} expenses={dupExpenses} />);
+
+    // Two Alexes stay two debts, not one merged 20 XLM debt.
+    const buttons = screen.getAllByRole("button", { name: /pay 10/i });
+    expect(buttons).toHaveLength(2);
+    const enabled = buttons.filter((b) => !(b as HTMLButtonElement).disabled);
+    expect(enabled).toHaveLength(1);
+
+    fireEvent.click(enabled[0]);
+
+    await waitFor(() => {
+      expect(mockMarkSharePaid).toHaveBeenCalledWith("exp-1", "member-alex-2", TX_HASH);
+    });
+    expect(mockMarkSharePaid).toHaveBeenCalledTimes(1);
+    expect(recordPaymentOnChain).toHaveBeenCalledWith(
+      expect.objectContaining({
+        debtorPublicKey: ALEX_TWO_WALLET,
+        creditorPublicKey: RECEIVER_WALLET,
+        expenseId: "exp-1",
+      }),
+    );
   });
 });
