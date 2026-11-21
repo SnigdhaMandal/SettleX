@@ -6,8 +6,8 @@ import { AlertCircle, ArrowRight, Scale, CheckCircle2, Database } from "lucide-r
 import type { Expense } from "@/types/expense";
 import type { Trip } from "@/types/trip";
 import type { ContractPaymentEvent } from "@/types/contract";
-import type { NetPayment, RawDebt } from "@/lib/settlement/netBalance";
-import { computeNetPayments } from "@/lib/settlement/netBalance";
+import type { NetPayment } from "@/lib/settlement/netBalance";
+import { computeNetPayments, deriveRawDebts } from "@/lib/settlement/netBalance";
 import { buildPaymentTransaction } from "@/lib/stellar/buildTransaction";
 import { settlementMemo } from "@/lib/stellar/memo";
 import {
@@ -31,6 +31,7 @@ import type { PaymentState } from "@/hooks/usePayment";
 import { cn, formatXLM } from "@/lib/utils";
 import { userFacingMessage } from "@/lib/errors/userMessage";
 import { selectCoveredShares } from "@/lib/settlement/shareBudget";
+import { sameWallet } from "@/lib/payments/shareOwnership";
 import {
   checkTransactionOnHorizon,
   deletePendingPaymentRemote,
@@ -51,11 +52,17 @@ function isAlreadyRecorded(err: unknown): boolean {
   return /already marked as paid|already used on another/i.test(message);
 }
 
+/**
+ * Arguments for one `recordPaymentOnChain` call. Field names match
+ * `RecordPaymentParams` exactly so the record can be spread into the call.
+ */
 interface PendingOnChainRecord {
-  memberPublicKey: string;
+  /** DEBTOR: the connected wallet that sent the settlement. */
+  debtorPublicKey: string;
   tripId: string;
   expenseId: string;
-  payerPublicKey: string;
+  /** CREDITOR: the wallet of the member who paid the expense. */
+  creditorPublicKey: string;
   amountXlm: string;
   txHash: string;
   ledger: number;
@@ -84,38 +91,6 @@ function filterMemberEvents(
   return events.filter((event) =>
     membersByExpense.get(event.expenseId)?.has(event.member.toLowerCase()) ?? false,
   );
-}
-
-function deriveRawDebts(expenses: Expense[], onChainEvents: ContractPaymentEvent[] = []): RawDebt[] {
-  const attestedOnChainSet = new Set(
-    onChainEvents
-      .filter((e) => e.attested === true)
-      .map((e) => `${e.expenseId}-${e.member.toLowerCase()}`),
-  );
-  
-  const debts: RawDebt[] = [];
-  for (const expense of expenses) {
-    for (const share of expense.shares) {
-      const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
-      if (!payer || share.memberId === expense.paidByMemberId) continue;
-      
-      const isPaidOnChain =
-        share.walletAddress &&
-        attestedOnChainSet.has(`${expense.id}-${share.walletAddress.toLowerCase()}`);
-      if (share.paid || isPaidOnChain) continue;
-      
-      debts.push({
-        from:       share.name,
-        fromId:     share.memberId,
-        to:         payer.name,
-        toId:       payer.id,
-        amount:     share.amount,
-        fromWallet: share.walletAddress,
-        toWallet:   payer.walletAddress,
-      });
-    }
-  }
-  return debts;
 }
 
 function deriveUnverifiedClaims(
@@ -193,7 +168,7 @@ function NetPaymentRow({
     Boolean(payment.toWallet) &&
     isNetworkCompatible &&
     paymentState.status === "idle" &&
-    publicKey === payment.fromWallet;
+    sameWallet(publicKey, payment.fromWallet);
 
   const handlePay = async () => {
     if (!publicKey || !payment.toWallet) return;
@@ -307,10 +282,10 @@ function NetPaymentRow({
           const shareAmount = sh?.amount || "0";
 
           const rec: PendingOnChainRecord = {
-            memberPublicKey: publicKey,
+            debtorPublicKey: publicKey,
             tripId,
             expenseId: cs.expenseId,
-            payerPublicKey: payerWallet,
+            creditorPublicKey: payerWallet,
             amountXlm: shareAmount,
             txHash: submittedHash,
             ledger: result.ledger,
@@ -551,11 +526,12 @@ function NetPaymentRow({
         const sh = exp?.shares.find((s) => s.memberId === cs.memberId);
         const expPayer = exp?.members.find((m) => m.id === exp.paidByMemberId);
         const payerWallet = expPayer?.walletAddress || payment.toWallet;
+        if (!publicKey || !payerWallet) continue;
         const rec: PendingOnChainRecord = {
-          memberPublicKey: publicKey!,
+          debtorPublicKey: publicKey,
           tripId,
           expenseId: cs.expenseId,
-          payerPublicKey: payerWallet,
+          creditorPublicKey: payerWallet,
           amountXlm: sh?.amount || "0",
           txHash: hash,
           ledger: horizon.ledger,
@@ -669,7 +645,7 @@ function NetPaymentRow({
         </p>
       )}
 
-      {!isDone && paymentState.status === "idle" && publicKey && publicKey !== payment.fromWallet && (
+      {!isDone && paymentState.status === "idle" && publicKey && !sameWallet(publicKey, payment.fromWallet) && (
         <p className="text-[10px] text-[#AAA] pl-1">
           Connect {payment.from}&apos;s wallet to pay
         </p>

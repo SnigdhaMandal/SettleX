@@ -1,5 +1,13 @@
 import { stroopsToXlm, xlmToStroops } from "@/lib/split/calculator";
+import type { Expense } from "@/types/expense";
+import type { ContractPaymentEvent } from "@/types/contract";
 
+/**
+ * Balances are keyed by member id, never by display name (Issue #202): two
+ * members called "Alex" are different people. `fromId` / `toId` are the
+ * member ids that `selectCoveredShares` matches against `share.memberId` and
+ * `expense.paidByMemberId`, so they must always be set.
+ */
 export interface NetPayment {
   from: string;
   fromId: string;
@@ -18,6 +26,47 @@ export interface RawDebt {
   amount: number | string | bigint;
   fromWallet?: string;
   toWallet?: string;
+}
+
+/**
+ * One gross debt per unpaid share: share owner -> member who paid the expense.
+ * Shares already marked paid, or with an attested on-chain record, are skipped.
+ */
+export function deriveRawDebts(
+  expenses: Expense[],
+  onChainEvents: ContractPaymentEvent[] = [],
+): RawDebt[] {
+  const attestedOnChainSet = new Set(
+    onChainEvents
+      .filter((e) => e.attested === true)
+      .map((e) => `${e.expenseId}-${e.member.toLowerCase()}`),
+  );
+
+  const debts: RawDebt[] = [];
+  for (const expense of expenses) {
+    const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
+    if (!payer) continue;
+
+    for (const share of expense.shares) {
+      if (share.memberId === payer.id) continue;
+
+      const isPaidOnChain =
+        share.walletAddress &&
+        attestedOnChainSet.has(`${expense.id}-${share.walletAddress.toLowerCase()}`);
+      if (share.paid || isPaidOnChain) continue;
+
+      debts.push({
+        from:       share.name,
+        fromId:     share.memberId,
+        to:         payer.name,
+        toId:       payer.id,
+        amount:     share.amount,
+        fromWallet: share.walletAddress,
+        toWallet:   payer.walletAddress,
+      });
+    }
+  }
+  return debts;
 }
 
 export function computeNetPayments(debts: RawDebt[]): NetPayment[] {
