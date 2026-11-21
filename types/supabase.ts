@@ -257,6 +257,50 @@ export type Database = {
           }
         ];
       };
+      trip_settlements: {
+        Row: {
+          id: string;
+          trip_id: string;
+          from_member_id: string;
+          to_member_id: string;
+          from_wallet: string;
+          to_wallet: string;
+          amount: string;
+          tx_hash: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          trip_id: string;
+          from_member_id: string;
+          to_member_id: string;
+          from_wallet: string;
+          to_wallet: string;
+          amount: string;
+          tx_hash: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          trip_id?: string;
+          from_member_id?: string;
+          to_member_id?: string;
+          from_wallet?: string;
+          to_wallet?: string;
+          amount?: string;
+          tx_hash?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "trip_settlements_trip_id_fkey";
+            columns: ["trip_id"];
+            isOneToOne: false;
+            referencedRelation: "trips";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       trip_expenses: {
         Row: {
           trip_id: string;
@@ -364,6 +408,16 @@ export type Database = {
           p_tx_hash: string;
         };
         Returns: Database["public"]["Tables"]["expenses"]["Row"][];
+      };
+      record_trip_settlement: {
+        Args: {
+          p_trip_id: string;
+          p_from_member_id: string;
+          p_to_member_id: string;
+          p_amount: string;
+          p_tx_hash: string;
+        };
+        Returns: Database["public"]["Tables"]["trip_settlements"]["Row"][];
       };
       resolve_user_profile: {
         Args: {
