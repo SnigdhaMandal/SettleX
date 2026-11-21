@@ -20,6 +20,8 @@ import { useTrip } from "@/hooks/useTrip";
 import { useExpense } from "@/hooks/useExpense";
 import { usePayment } from "@/hooks/usePayment";
 import { useContractEvents } from "@/hooks/useContractEvents";
+import { useTripSettlements } from "@/hooks/useTripSettlements";
+import { netSettledShares, type NetSettledReason } from "@/lib/settlement/netBalance";
 import { ConnectWalletButton } from "@/components/wallet/ConnectWalletButton";
 import { AuthGuard } from "@/components/auth/AuthGuard";
 import { Modal } from "@/components/ui/Modal";
@@ -43,16 +45,20 @@ function TripExpenseCard({
   expense,
   currentUserPublicKey,
   tripId,
+  netSettled,
 }: {
   expense: Expense;
   currentUserPublicKey?: string | null;
   tripId: string;
+  /** Unpaid shares of this expense covered by netting, by member id (Issue #203). */
+  netSettled: Map<string, NetSettledReason>;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [payingShareId, setPayingShareId] = useState<string | null>(null);
   const { payShare, reconcileQrPayment, paymentState, reset, retryOnChainRecord, retryRecording, pendingShareIds } = usePayment({ expenseId: expense.id });
 
-  const paidCount = expense.shares.filter((s) => s.paid).length;
+  const paidCount = expense.shares.filter((s) => s.paid || netSettled.has(s.memberId)).length;
+  const fullySettled = expense.settled || paidCount === expense.shares.length;
   const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
   const createdAt = new Date(expense.createdAt).toLocaleDateString("en-US", {
     month: "short",
@@ -104,7 +110,7 @@ function TripExpenseCard({
           </div>
         </div>
         <div className="flex items-center gap-2 shrink-0">
-          {expense.settled ? (
+          {fullySettled ? (
             <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#B9FF66]/30 text-[#2D6600] rounded-full">
               Settled
             </span>
@@ -156,6 +162,7 @@ function TripExpenseCard({
                 onReconcileQr={handleReconcileQr}
                 payingShareId={payingShareId ?? undefined}
                 pendingShareIds={pendingShareIds}
+                netSettledShares={netSettled}
                 connectedWalletAddress={currentUserPublicKey}
               />
               {paymentState.status !== "idle" && (
@@ -197,6 +204,11 @@ export default function TripDetailPage() {
   const trip = getTrip(params.id);
 
   const { events: onChainEvents, error: eventsError } = useContractEvents(trip?.id);
+  const {
+    settlements,
+    addSettlement,
+    refresh: refreshSettlements,
+  } = useTripSettlements(trip?.id);
 
   // ── Auto-settle trip when ALL linked expenses are paid ─────────────────────
   // Runs whenever any expense changes (e.g. a share gets marked paid).
@@ -231,6 +243,19 @@ export default function TripDetailPage() {
   }
 
   const tripExpenses = expenses.filter((e) => trip.expenseIds.includes(e.id));
+  // Shares a recorded settle-up transfer (or exact offsetting) has covered,
+  // keyed `${expenseId}:${memberId}` (Issue #203).
+  const netCovered = netSettledShares(tripExpenses, settlements, onChainEvents);
+  const netCoveredFor = (expenseId: string) => {
+    const out = new Map<string, NetSettledReason>();
+    netCovered.forEach((reason, key) => {
+      const [eid, memberId] = [key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1)];
+      if (eid === expenseId) out.set(memberId, reason);
+    });
+    return out;
+  };
+  const isShareSettled = (expenseId: string, share: SplitShare) =>
+    share.paid || netCovered.has(`${expenseId}:${share.memberId}`);
   const totalStroops = tripExpenses.reduce(
     (sum, e) => {
       try {
@@ -241,15 +266,19 @@ export default function TripDetailPage() {
     },
     0n
   );
-  const paidShares = tripExpenses.flatMap((e) => e.shares).filter((s) => s.paid).length;
+  const paidShares = tripExpenses
+    .flatMap((e) => e.shares.map((s) => isShareSettled(e.id, s)))
+    .filter(Boolean).length;
   const totalShares = tripExpenses.flatMap((e) => e.shares).length;
 
   // Per-member settlement: find all shares belonging to the connected wallet
   const myShares = tripExpenses.flatMap((e) =>
-    e.shares.filter((s) => s.walletAddress === publicKey)
+    e.shares
+      .filter((s) => s.walletAddress === publicKey)
+      .map((s) => ({ share: s, settled: isShareSettled(e.id, s) }))
   );
-  const myPaidShares = myShares.filter((s) => s.paid);
-  const myFullySettled = myShares.length > 0 && myShares.every((s) => s.paid);
+  const myPaidShares = myShares.filter((s) => s.settled);
+  const myFullySettled = myShares.length > 0 && myShares.every((s) => s.settled);
 
   return (
     <AuthGuard>
@@ -305,7 +334,7 @@ export default function TripDetailPage() {
                   )}
                   {totalShares > 0 && (
                     <span className="text-[#2D6600]">
-                      {paidShares}/{totalShares} shares paid
+                      {paidShares}/{totalShares} shares settled
                     </span>
                   )}
                 </div>
@@ -372,14 +401,14 @@ export default function TripDetailPage() {
                   <>
                     <p className="text-sm font-bold text-[#2D6600]">Your part is fully settled!</p>
                     <p className="text-xs text-[#5a9400]">
-                      You paid all {myShares.length} of your share{myShares.length !== 1 ? "s" : ""} in this trip.
+                      All {myShares.length} of your share{myShares.length !== 1 ? "s" : ""} in this trip {myShares.length !== 1 ? "are" : "is"} settled.
                     </p>
                   </>
                 ) : (
                   <>
                     <p className="text-sm font-bold text-[#0F0F14]">Your payment progress</p>
                     <p className="text-xs text-[#888]">
-                      {myPaidShares.length} of {myShares.length} share{myShares.length !== 1 ? "s" : ""} paid
+                      {myPaidShares.length} of {myShares.length} share{myShares.length !== 1 ? "s" : ""} settled
                     </p>
                   </>
                 )}
@@ -454,6 +483,7 @@ export default function TripDetailPage() {
                           expense={expense}
                           currentUserPublicKey={publicKey}
                           tripId={trip.id}
+                          netSettled={netCoveredFor(expense.id)}
                         />
                       ))}
                     </AnimatePresence>
@@ -468,7 +498,14 @@ export default function TripDetailPage() {
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.15 }}
               >
-                <SettlementSummary trip={trip} expenses={tripExpenses} onChainEvents={onChainEvents} />
+                <SettlementSummary
+                  trip={trip}
+                  expenses={tripExpenses}
+                  onChainEvents={onChainEvents}
+                  settlements={settlements}
+                  onSettlementRecorded={addSettlement}
+                  onSettlementsStale={() => void refreshSettlements()}
+                />
               </motion.div>
             )}
           </AnimatePresence>

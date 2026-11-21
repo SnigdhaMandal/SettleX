@@ -12,6 +12,7 @@ import { useWallet } from "@/hooks/useWallet";
 import { shareMemo } from "@/lib/stellar/memo";
 import { canWalletPayShare } from "@/lib/payments/shareOwnership";
 import type { SplitShare } from "@/types/expense";
+import type { NetSettledReason } from "@/lib/settlement/netBalance";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -27,6 +28,12 @@ interface PaymentRowProps {
   isPaying?: boolean;
   /** A transfer for this share may already have moved: Pay stays disabled. */
   hasPendingPayment?: boolean;
+  /**
+   * Set when trip netting covers this unpaid share (Issue #203): a recorded
+   * settle-up transfer ("net-transfer"), or debts that cancelled out
+   * ("offset"). The share needs no direct payment, so Pay and QR are hidden.
+   */
+  netSettled?: NetSettledReason;
   /** Connected wallet. Pay (and the QR code) are shown only when it owns this
    *  share; with no wallet connected, nobody's share is payable. */
   connectedWalletAddress?: string | null;
@@ -111,6 +118,7 @@ export function PaymentRow({
   onPay,
   isPaying = false,
   hasPendingPayment = false,
+  netSettled,
   connectedWalletAddress,
   payerWalletAddress,
   onReconcileQr,
@@ -133,6 +141,8 @@ export function PaymentRow({
     creditorWallet: payerWalletAddress,
   });
 
+  const settled = share.paid || Boolean(netSettled);
+
   // When paidBy is recorded and doesn't match the share owner, someone else marked this share paid
   const isMarkedByOther = Boolean(
     share.paid &&
@@ -149,7 +159,7 @@ export function PaymentRow({
         transition={{ delay: index * 0.05, duration: 0.25 }}
         className={cn(
           "flex flex-col gap-2 px-4 py-3 rounded-xl border transition-all",
-          share.paid
+          settled
             ? "bg-[#F0FFDB] border-[#B9FF66]/40"
             : "bg-white border-[#E5E5E5] hover:border-[#D0D0D0]"
         )}
@@ -161,7 +171,7 @@ export function PaymentRow({
             <div
               className={cn(
                 "w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold",
-                share.paid
+                settled
                   ? "bg-[#B9FF66] text-[#0F0F14]"
                   : "bg-[#F0F0F0] text-[#555]"
               )}
@@ -173,7 +183,7 @@ export function PaymentRow({
               <p className="text-sm font-semibold text-[#0F0F14] truncate">
                 {share.name}
               </p>
-              {share.walletAddress && !share.paid && (
+              {share.walletAddress && !settled && (
                 <a
                   href={explorerUrl ?? "#"}
                   target="_blank"
@@ -238,6 +248,17 @@ export function PaymentRow({
                   ✓ Paid
                 </span>
               </div>
+            ) : netSettled ? (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#B9FF66]/30 text-[#2D6600] rounded-full"
+                title={
+                  netSettled === "net-transfer"
+                    ? "Covered by a recorded settle-up transfer for this trip"
+                    : "Cancelled out by what you are owed in this trip; no transfer needed"
+                }
+              >
+                {netSettled === "net-transfer" ? "✓ Settled via net transfer" : "✓ Offset by netting"}
+              </span>
             ) : isMyRow ? (
               <PayButton
                 amount={share.amount}

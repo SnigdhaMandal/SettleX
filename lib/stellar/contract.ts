@@ -22,7 +22,7 @@ import type {
   GetPaymentsResult,
   IsPaidResult,
 } from "@/types/contract";
-import { ContractErrorCode, PoolErrorCode } from "@/types/contract";
+import { ContractErrorCode } from "@/types/contract";
 
 const SOROBAN_BASE_FEE  = "1000";
 const MAX_POLL_ATTEMPTS  = 20;
@@ -34,31 +34,6 @@ export function decodeContractError(raw: string): string {
   const match = raw.match(/Error\(Contract,\s*#(\d+)\)/);
   if (match) {
     const code = Number(match[1]);
-
-    if (code >= 100) {
-      switch (code) {
-        case PoolErrorCode.AlreadyInitialized:
-          return "Pool is already initialized.";
-        case PoolErrorCode.NotInitialized:
-          return "Pool contract is not initialized yet.";
-        case PoolErrorCode.Unauthorized:
-          return "Pool authorization failed. An operator approval may be required.";
-        case PoolErrorCode.InvalidAmount:
-          return "Pool payment amount must be greater than zero.";
-        case PoolErrorCode.InsufficientBalance:
-          return "Pool balance is insufficient for this transfer.";
-        case PoolErrorCode.BalanceOverflow:
-          return "Pool balance overflowed.";
-        case PoolErrorCode.VersionMismatch:
-          return "Pool storage version mismatch.";
-        case PoolErrorCode.InvalidActor:
-          return "Invalid pool actor for this operation.";
-        case PoolErrorCode.AmountTooLarge:
-          return "Pool amount is above the allowed limit.";
-        default:
-          return `Pool error #${code}.`;
-      }
-    }
 
     switch (code) {
       case ContractErrorCode.InvalidAmount:
@@ -174,31 +149,6 @@ export interface RecordPaymentResult {
   success: boolean;
   ledger?: number;
   error?: string;
-}
-
-export interface PoolPrecheckResult {
-  ok: boolean;
-  requiredStroops: bigint;
-  balanceStroops?: bigint;
-  shortfallStroops?: bigint;
-  error?: string;
-}
-
-export async function precheckPoolBalance(
-  callerPublicKey: string,
-  debtorPublicKey: string,
-  amountXlm: string,
-): Promise<PoolPrecheckResult> {
-  const requiredStroops = xlmToStroops(amountXlm);
-
-  if (!contractReady("precheckPoolBalance")) {
-    return { ok: false, requiredStroops, error: "Contract not configured." };
-  }
-
-  // The pool is a separate operator-managed accounting ledger. Payment receipt
-  // recording does not currently consume pool credits, so this compatibility
-  // precheck deliberately does not imply that a member can allocate credit.
-  return { ok: true, requiredStroops, balanceStroops: requiredStroops };
 }
 
 export async function recordPaymentOnChain(

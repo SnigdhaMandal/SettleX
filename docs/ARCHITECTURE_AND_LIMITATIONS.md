@@ -9,12 +9,10 @@ SettleX uses:
 - Supabase for app data via authenticated Next.js REST proxy; visible-page
   expense/trip sync uses polling
 - Stellar payment operations for value transfer
-- Soroban settlement contract for immutable payment recording
-- Separate pool contract for operator-managed accounting allocations.
-  `deposit` requires the configured pool admin; a member can never mint their
-  own balance. `withdraw` requires both the configured settlement contract and
-  the member. These credits are not token custody and are separate from the
-  Horizon payment receipt flow.
+- Soroban settlement contract for immutable payment recording. It is the only
+  contract: `record_payment` is a pure ledger write that makes no
+  cross-contract call and moves no value. The former pool contract was never
+  invoked by `record_payment` and was removed in Issue #178.
 
 ## Key Assumptions
 
@@ -61,6 +59,25 @@ SettleX uses:
   matches no row on any table. "Sign out everywhere" writes a wallet-wide
   tombstone that denies every token issued at or before that moment.
 
+## Trip Settlement Model (Issue #203)
+
+- Direct share payments mark one share paid through `mark_share_paid`.
+- Settle-up transfers pay a **net** amount, which does not line up with whole
+  shares. Each one is recorded as its own `trip_settlements` row (from, to,
+  amount, tx_hash) through the `record_trip_settlement` RPC. Only the sending
+  member can record it, and a transaction hash can back either one settlement
+  or one share payment, never both.
+- A member's trip balance is `owed - paid shares - settlements`
+  (`lib/settlement/netBalance.ts`). Paying every suggested transfer brings
+  every balance to zero, so the trip shows "All settled up".
+- Shares are never marked paid by a settlement. An unpaid share the netting
+  covers shows "Settled via net transfer" (or "Offset by netting" when debts
+  cancelled exactly) and offers no Pay button.
+- Each settlement also gets one on-chain receipt for the exact net amount,
+  under the contract `expense_id` `stl-<tx hash prefix>`.
+- `trips.settled` is unchanged: the database still only allows settling a
+  trip once every linked expense's shares are marked paid.
+
 ## Known Limitations
 
 - Project is testnet-oriented; mainnet operational controls are not included.
@@ -105,7 +122,7 @@ SettleX uses:
   member to rewrite every column in the row. Schema version checks and RLS/
   trigger breach tests are therefore required before production use.
 - Some screenshots in README are desktop captures; mobile screenshots should be added for evaluator clarity.
-- Pool balances are operator-approved internal accounting credits, not native XLM/token custody transfers on-chain. Since pool schema v2, a member cannot self-credit: every allocation requires pool-admin authorization.
+- No contract custodies or transfers XLM/tokens. The value transfer is the Horizon payment alone; the contract only records its hash.
 - `record_payment` stores the provided `payer`, `amount` and `tx_hash` without
   verifying any of them against Horizon. With no attestor configured the record
   is **self-attested** — it proves a member wrote a string, nothing more — and
@@ -149,7 +166,7 @@ SettleX uses:
 - Add automated e2e tests (Playwright) with mobile viewport assertions.
 - Add a script to validate README proof links are live.
 - Add an automated checklist CI job that verifies required docs/sections exist.
-- Replace the accounting pool with a token/native-asset backed settlement model (transfer in/out) for economic guarantees; do not treat operator allocations as a substitute for custody.
+- Move value transfer into the contract (for example a Stellar Asset Contract `transfer` inside `record_payment`) if economic guarantees are needed; until then the contract is a receipt log only.
 - Build and deploy the off-chain verifier service that checks Horizon before
   co-signing, then point `set_attestor` at it. The contract-side hook already
   exists; only the service is missing.

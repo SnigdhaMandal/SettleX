@@ -6,6 +6,7 @@ import { formatXLM } from "@/lib/utils";
 import { xlmToStroops, stroopsToXlm } from "@/lib/split/calculator";
 import { PaymentRow } from "./PaymentRow";
 import type { SplitShare } from "@/types/expense";
+import type { NetSettledReason } from "@/lib/settlement/netBalance";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,11 @@ interface SplitCalculatorProps {
   payingShareId?: string;
   /** Member ids whose share has a sent-but-unrecorded payment. */
   pendingShareIds?: string[];
+  /**
+   * Unpaid shares covered by trip netting, by member id (Issue #203). These
+   * need no direct payment, so they show as settled with no Pay button.
+   */
+  netSettledShares?: Map<string, NetSettledReason>;
   /** Disable pay buttons */
   disablePay?: boolean;
   /** Connected wallet address — Pay button only shows on the matching row. */
@@ -44,6 +50,7 @@ export function SplitCalculator({
   onReconcileQr,
   payingShareId,
   pendingShareIds,
+  netSettledShares,
   disablePay = false,
   connectedWalletAddress,
   payerWalletAddress,
@@ -54,7 +61,7 @@ export function SplitCalculator({
   const splitTotalStroops = shares.reduce((s, x) => {
     try { return s + xlmToStroops(x.amount || "0"); } catch { return s; }
   }, 0n);
-  const paidCount = shares.filter((s) => s.paid).length;
+  const paidCount = shares.filter((s) => s.paid || netSettledShares?.has(s.memberId)).length;
 
   if (shares.length === 0) {
     return (
@@ -110,6 +117,7 @@ export function SplitCalculator({
             onReconcileQr={disablePay ? undefined : onReconcileQr}
             isPaying={payingShareId === share.memberId}
             hasPendingPayment={pendingShareIds?.includes(share.memberId) ?? false}
+            netSettled={share.paid ? undefined : netSettledShares?.get(share.memberId)}
             connectedWalletAddress={connectedWalletAddress}
             payerWalletAddress={payerWalletAddress}
           />

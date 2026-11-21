@@ -91,7 +91,7 @@ const INTERNAL_MARKERS: readonly RegExp[] = [
  *
  * Braces, angle brackets, backticks and SQL-style double quotes are excluded
  * because they signal identifiers and serialised data rather than prose. `#` is
- * allowed for the contract decoder's numbered fallbacks ("Pool error #137."),
+ * allowed for the contract decoder's numbered fallbacks ("Contract error #137."),
  * which are the user-facing text for an unmapped contract code.
  */
 const LOOKS_LIKE_PROSE = /^[A-Z0-9][A-Za-z0-9 ,.'’\-—–:()!?/%+#]*$/;
