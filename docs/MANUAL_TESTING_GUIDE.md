@@ -31,10 +31,8 @@ For **each** installed wallet (Freighter, xBull, Lobstr, Rabet):
 - [ ] **Reject** the signature → app shows "cancelled", no state change.
 - [ ] Pay the same share again → blocked as already settled.
 
-## 3a. Pool authorization regression (operator only)
-- [ ] On a pool schema v2 deployment, invoke `deposit(member, amount)` with only the member signature: it must fail and the member balance must remain unchanged.
-- [ ] Invoke the same allocation with the configured pool administrator: it succeeds and the member accounting balance increases by exactly `amount`.
-- [ ] Confirm operator material calls this an **accounting allocation**, never an XLM/USDC deposit. The pool does not transfer or custody assets in this release.
+## 3a. Contract receipt scope
+- [ ] Open a `record_payment` transaction on Stellar Expert: it invokes only the settlement contract (no nested contract call) and moves no XLM. The XLM transfer is the separate Horizon payment.
 
 ## 4. Cross-user sync (needs Supabase)
 - [ ] Open the same trip in a second browser/user; an expense or payment update appears in the other within about five seconds while the page is visible.

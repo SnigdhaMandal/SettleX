@@ -131,13 +131,11 @@ jobs:
       - name: Build contract for WASM
         run: |
           stellar contract build --manifest-path contract/Cargo.toml --package settlex-contract
-          stellar contract build --manifest-path contract/Cargo.toml --package settlement-pool-contract
 
       - name: Check WASM size
         run: |
           WASM_FILES=(
             contract/target/wasm32v1-none/release/settlex_contract.wasm
-            contract/target/wasm32v1-none/release/settlement_pool_contract.wasm
           )
           for WASM_FILE in "${WASM_FILES[@]}"; do
             if [ ! -f "$WASM_FILE" ]; then

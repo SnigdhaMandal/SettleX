@@ -13,8 +13,8 @@
   <a href="https://stellar.expert/explorer/testnet/contract/CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI">
     <img src="https://img.shields.io/badge/Contract-Testnet%20Deployed-4CAF50?style=flat-square&logo=stellar" alt="Contract Deployed" />
   </a>
-  <a href="https://stellar.expert/explorer/testnet/tx/04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967">
-    <img src="https://img.shields.io/badge/Sample%20Tx-Verified-blue?style=flat-square&logo=stellar" alt="Sample Transaction" />
+  <a href="https://stellar.expert/explorer/testnet/tx/f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e">
+    <img src="https://img.shields.io/badge/Init%20Tx-Testnet-blue?style=flat-square&logo=stellar" alt="Settlement init transaction" />
   </a>
   <a href="https://github.com/SnigdhaMandal/SettleX/actions/workflows/ci.yml">
     <img src="https://github.com/SnigdhaMandal/SettleX/actions/workflows/ci.yml/badge.svg" alt="CI Pipeline" />
@@ -205,14 +205,15 @@ The memo is a one-way digest, so the public ledger shows no expense titles or me
 
 ## Smart Contract
 
-SettleX deploys a **Soroban smart contract** on Stellar Testnet as an immutable, tamper-proof ledger of all settled payments.
+SettleX deploys a single **Soroban smart contract** on Stellar Testnet as an append-only receipt log of settled payments.
+
+**What the contract does and does not do.** The XLM moves in an ordinary Horizon payment that the debtor signs. Afterwards the debtor calls `record_payment`, which stores the payment's transaction hash against `(trip, expense, member)`. `record_payment` is a pure ledger write: it makes **no cross-contract call**, transfers no tokens, and checks or consumes no balance anywhere. There is no pool contract in this repository.
 
 ### Deployed Contracts (Testnet)
 
 | Contract Role | Contract ID | Explorer |
 | ------------- | ----------- | -------- |
 | Settlement contract | `CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI` | [View](https://stellar.expert/explorer/testnet/contract/CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI) |
-| Pool contract (legacy v1 — do not use) | `CB4P4EXLGS56IXVNU3PLJO2BHF5BEEPBBYJAHXEPZDSD2OISQIGO53JA` | [View](https://stellar.expert/explorer/testnet/contract/CB4P4EXLGS56IXVNU3PLJO2BHF5BEEPBBYJAHXEPZDSD2OISQIGO53JA) |
 
 Network: Stellar Testnet  
 Language: Rust (`soroban-sdk` v22.0.11)
@@ -220,30 +221,28 @@ Language: Rust (`soroban-sdk` v22.0.11)
 ### Verified On-Chain Transactions
 
 - Settlement deploy tx: [826092e11281bd8fe3c8997ef0a4886b1bd3728069c6855ec4e3866f0a8f9d06](https://stellar.expert/explorer/testnet/tx/826092e11281bd8fe3c8997ef0a4886b1bd3728069c6855ec4e3866f0a8f9d06)
-- Pool deploy tx: [fa245da3ce0a478a9146cccdfa0b1b7f918985c0c138dec3f061f104e5b8f39e](https://stellar.expert/explorer/testnet/tx/fa245da3ce0a478a9146cccdfa0b1b7f918985c0c138dec3f061f104e5b8f39e)
-- Pool init tx (`pool_ini`): [a04a0a2f79e06448156b52ebd07060281cab5bee323889e92c584e0aaf50546d](https://stellar.expert/explorer/testnet/tx/a04a0a2f79e06448156b52ebd07060281cab5bee323889e92c584e0aaf50546d)
 - Settlement init tx (`stx_ini`): [f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e](https://stellar.expert/explorer/testnet/tx/f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e)
-- Historical pool interaction tx (legacy v1 only): [04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967](https://stellar.expert/explorer/testnet/tx/04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967)
 
-The historical transaction above is not security evidence for the current code. It predates the SX-179 pool authorization fix; deploy pool schema v2 before using any pool allocation.
+Earlier README revisions listed a pool contract (`CB4P4EXL…53JA`) and cited a
+"pool interaction" transaction (`04c679c7…`) as proof that `record_payment`
+withdraws from the pool in the same transaction. That claim does not match the
+code: `record_payment` has never consumed pool credits in the current source,
+and the pool contract has been removed from the repository (Issue #178). The
+old pool instance on testnet is unused by SettleX and must not be treated as
+part of the deployment.
 
 New deployments must use [`scripts/deploy-contract.sh`](scripts/deploy-contract.sh).
-Both instances use Soroban constructors, so their admin state is initialized
-atomically during deployment. The script deploys the settlement instance,
-deploys the pool instance with the settlement address, and submits the
-admin-authenticated pool-reference update. Do not deploy the WASM and call
-`init` or `init_pool` manually; those legacy entry points reject calls after
-constructor initialization and are retained only for compatibility with older
-instances.
+The settlement contract uses a Soroban constructor, so its admin state is
+initialized atomically during deployment. Do not deploy the WASM and call
+`init` manually; that legacy entry point rejects calls after constructor
+initialization and is retained only for compatibility with older instances.
 
 Security hardening note:
-- **Pool credits are operator-managed accounting allocations, not tokens.** `deposit(member, amount)` requires the configured pool admin's authorization; a member's own signature cannot create, increase, or replenish a credit. This closes SX-179's unlimited self-crediting bug.
-- The pool does **not** custody XLM, USDC, or any other asset, and a pool balance is not proof of funds. Only an authorized operator may allocate credits. Do not present credits as deposits or use the pool as a value-transfer system.
-- `withdraw` still requires auth from **both** the configured settlement contract and the member, so no direct member or third-party contract withdrawal is authorized. It is separate from the Horizon payment and receipt-recording flows in this release.
+- `record_payment` requires the debtor's (`member`) signature and makes no nested contract call; `test_record_payment_makes_no_cross_contract_call` asserts that the only authorization in the call tree is the member's, with no sub-invocations.
 - Settlement records now carry an `attested` flag. With no attestor configured a record is **self-attested** — it proves only that a member wrote a string, and the contract verifies neither the `payer`, the `amount`, nor the `tx_hash` against Horizon. Treat the Stellar transaction on the explorer as the evidence, not the in-app record. `set_attestor` makes a verifier's co-signature mandatory and marks records `attested: true`; the verifier service itself is not yet built, so attestor-backed verification is not live in this repo.
 - `clear_paid` (admin-only) clears the `ExpensePaid` flag, so a bogus or mistaken record can no longer permanently block the legitimate one. It preserves the original entry in trip history.
 
-> **Redeploy required.** Pool `CONTRACT_VERSION` is now `2`; the deployed v1 pool is vulnerable and must not be used. Upgrade/migrate a supported instance or deploy a fresh v2 pool, then update operational records with its ID. `PaymentRecord` also gained a field in settlement schema v2.
+> **Schema note.** `PaymentRecord` gained the `attested` field in settlement schema v2. Upgrade and `migrate` older settlement instances before use.
 
 ---
 
@@ -281,8 +280,9 @@ This section maps the required submission checklist to concrete proof in this re
 | Live demo link | [https://settle-x-pi.vercel.app/](https://settle-x-pi.vercel.app/) |
 | Screenshot: mobile responsive view | UI pages were hardened for mobile in Phase 9. Add one fresh phone viewport screenshot to `public/mobile-responsive.png` and reference it here before final submission. |
 | Screenshot or badge: CI/CD pipeline running | CI badge at the top of this README (GitHub Actions `ci.yml`) |
-| Contract addresses and transaction hash (inter-contract) | [Deployed Contracts](#deployed-contracts-testnet) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
-| Token or pool address (if custom token or pool deployed) | Pool contract in [Deployed Contracts](#deployed-contracts-testnet) |
+| Contract addresses and transaction hash | [Deployed Contracts](#deployed-contracts-testnet) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
+| Inter-contract call | **Not implemented.** `record_payment` is a single-contract ledger write; see [Smart Contract](#smart-contract) |
+| Token or pool address (if custom token or pool deployed) | Not applicable: no custom token or pool contract is deployed |
 
 ### Contract Functions
 
@@ -291,36 +291,20 @@ This section maps the required submission checklist to concrete proof in this re
 | Function | Type | Authorization | Purpose |
 | --- | --- | --- | --- |
 | `__constructor(admin)` | Constructor | Admin | Initializes contract admin and schema version at deployment |
-| `init(admin, pool_contract)` | Write | Admin | Legacy initialization entrypoint |
+| `init(admin)` | Write | Admin | Legacy initialization entrypoint (rejected after constructor initialization) |
 | `upgrade(new_wasm_hash)` | Write | Admin | Atomically upgrades contract code to a new WASM hash |
 | `migrate(from_version)` | Write | Admin | Migrates contract state between schema versions |
-| `set_pool_contract(new_pool_contract)` | Write | Admin | Updates the linked settlement pool contract address |
-| `get_pool_contract()` | Read | None | Returns the current linked pool contract address |
 | `set_attestor(attestor)` | Write | Admin | Sets required co-signing attestor address; emits `AttestorEventV1` |
 | `clear_attestor()` | Write | Admin | Clears attestor, reverting records to self-attested |
 | `get_attestor()` | Read | None | Returns current attestor (if any) and bumps instance TTL |
 | `clear_paid(expense_id, member)` | Write | Admin | Emergency escape hatch: clears `ExpensePaid` flag to unblock a griefed expense |
-| `record_payment(trip_id, expense_id, payer, member, amount, tx_hash)` | Write | Member (+ Attestor if set) | Stores on-chain payment receipt with 32-byte transaction hash (`BytesN<32>`) |
+| `record_payment(trip_id, expense_id, payer, member, amount, tx_hash)` | Write | Member (+ Attestor if set) | Stores on-chain payment receipt with 32-byte transaction hash (`BytesN<32>`). Pure ledger write: no cross-contract call, no token movement |
 | `get_payment(trip_id, expense_id, member)` | Read | None | Fetches payment record for specific member |
 | `get_payments(trip_id, offset, limit)` | Read | None | Returns a bounded page of payment history |
 | `is_paid(expense_id, member)` | Read | None | Checks if a member has already settled a specific share |
 | `extend_trip(trip_id, payment_offset, expense_offset, limit)` | Write | None (Permissionless) | Renews storage TTLs for bounded history pages |
 | `get_version()` | Read | None | Returns current contract schema version |
 | `get_admin()` | Read | None | Returns current contract admin address |
-
-#### Pool Contract (`SettlementPoolContract`)
-
-| Function | Type | Authorization | Purpose |
-| --- | --- | --- | --- |
-| `__constructor(admin, settlement_contract)` | Constructor | Admin | Initializes pool admin and linked settlement contract |
-| `init_pool(admin, settlement_contract)` | Write | Admin | Legacy pool initialization entrypoint |
-| `upgrade(new_wasm_hash)` | Write | Admin | Atomically upgrades pool contract code |
-| `migrate(from_version)` | Write | Admin | Migrates pool storage between versions |
-| `set_settlement_contract(new_settlement_contract)` | Write | Admin | Updates authorized settlement contract address |
-| `get_config()` | Read | None | Returns the pool admin and authorized settlement contract address |
-| `deposit(member, amount)` | Write | Pool Admin | Allocates an accounting credit; it does not transfer or custody tokens |
-| `withdraw(member, amount)` | Write | Settlement Contract & Member | Decrements an authorized accounting allocation; it does not transfer tokens |
-| `balance_of(member)` | Read | None | Returns an operator-approved accounting credit balance |
 
 `get_payments` and `is_paid` are pure simulated reads; they do not renew
 storage TTLs. To keep history live, submit `extend_trip` as a real transaction
@@ -340,7 +324,7 @@ restore it, or restore the trip's data before calling `extend_trip`.
 | #3 | `EmptyId` | Trip ID or expense ID is empty |
 | #4 | `AlreadyInitialized` | Contract has already been initialized |
 | #5 | `NotInitialized` | Contract has not been initialized yet |
-| #6 | `InvalidActor` | Invalid caller / address (e.g. payer equals member, or admin equals pool) |
+| #6 | `InvalidActor` | Invalid caller / address (e.g. payer equals member, or attestor equals admin) |
 | #7 | `IdTooLong` | Trip ID or expense ID exceeds maximum allowed length (64 bytes) |
 | #8 | `AmountTooLarge` | Payment amount exceeds `MAX_AMOUNT_STROOPS` (1e15 stroops / 1e8 XLM) |
 | #9 | `VersionMismatch` | State version mismatch during migration |
@@ -349,20 +333,6 @@ restore it, or restore the trip's data before calling `extend_trip`.
 | #12 | `Unauthorized` | Caller lacks authorization (e.g. non-admin or missing attestor signature) |
 | #13 | `InvalidPage` | Bounded pagination parameters are invalid (e.g. limit is 0) |
 | #14 | `IndexOverflow` | Bounded trip index exceeded maximum capacity |
-
-#### Pool Contract Errors
-
-| Code | Name | Meaning |
-| ---- | ---- | ------- |
-| #101 | `AlreadyInitialized` | Pool has already been initialized |
-| #102 | `NotInitialized` | Pool has not been initialized yet |
-| #103 | `Unauthorized` | Caller is not authorized for pool operation |
-| #104 | `InvalidAmount` | Deposit or withdrawal amount is zero or negative |
-| #105 | `InsufficientBalance` | Member has insufficient balance for withdrawal |
-| #106 | `BalanceOverflow` | Operator allocation would cause member balance to overflow |
-| #107 | `VersionMismatch` | Pool state version mismatch during migration |
-| #108 | `InvalidActor` | Invalid actor address specified |
-| #109 | `AmountTooLarge` | Deposit or withdrawal exceeds `MAX_AMOUNT_STROOPS` |
 
 ### Why a Smart Contract?
 
@@ -577,8 +547,7 @@ settlex/
 │   └── settlement/netBalance.ts  # Net-balance optimisation algorithm
 │
 ├── contract/
-│   ├── contracts/settlement/      # Settlement contract crate and WASM
-│   └── contracts/pool/            # Pool contract crate and WASM
+│   └── contracts/settlement/      # Settlement contract crate and WASM
 │
 ├── __tests__/
 │   ├── split/calculator.test.ts
