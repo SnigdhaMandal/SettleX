@@ -312,23 +312,16 @@ describe("MAX_AMOUNT_XLM consistency across client, database, and contract", () 
     expect(sqlContent).toContain(`p_total_amount::NUMERIC > ${MAX_AMOUNT_XLM}`);
   });
 
-  it("matches the maximum amount limit in Soroban contracts", () => {
+  it("matches the maximum amount limit in the Soroban settlement contract", () => {
     const settlementPath = path.resolve(
       process.cwd(),
       "contract/contracts/settlement/src/lib.rs",
     );
-    const poolPath = path.resolve(
-      process.cwd(),
-      "contract/contracts/pool/src/lib.rs",
-    );
-
     const settlementContent = fs.readFileSync(settlementPath, "utf-8");
-    const poolContent = fs.readFileSync(poolPath, "utf-8");
 
     // Rust contracts enforce: const MAX_AMOUNT_STROOPS: i128 = 1_000_000_000_000_000;
     const expectedRustConstant = `const MAX_AMOUNT_STROOPS: i128 = 1_000_000_000_000_000;`;
     expect(settlementContent).toContain(expectedRustConstant);
-    expect(poolContent).toContain(expectedRustConstant);
   });
 });
 

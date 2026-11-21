@@ -197,7 +197,7 @@ describe("usePayment integration flow", () => {
 
   it("supports retry when on-chain recording initially fails", async () => {
     jest.mocked(recordPaymentOnChain)
-      .mockResolvedValueOnce({ success: false, error: "Pool balance too low" })
+      .mockResolvedValueOnce({ success: false, error: "Contract simulation returned an unexpected result." })
       .mockResolvedValueOnce({ success: true, ledger: 400 });
 
     const { result } = renderHook(() => usePayment({ expenseId: "exp-2" }));

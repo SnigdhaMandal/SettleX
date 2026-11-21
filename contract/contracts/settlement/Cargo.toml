@@ -12,4 +12,3 @@ soroban-sdk = "22.0.11"
 
 [dev-dependencies]
 soroban-sdk = { version = "22.0.11", features = ["testutils"] }
-settlement-pool-contract = { path = "../pool" }

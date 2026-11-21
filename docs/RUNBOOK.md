@@ -52,13 +52,13 @@ Run contract tests:
 Recommended flow:
 
 1. Run `./scripts/deploy-contract.sh <secret-key-or-alias> [network]`.
-   Constructors atomically initialize both instances, and the script then
-   submits the admin-authenticated cross-reference update.
-2. Record the printed contract IDs and transaction output.
-3. Before allocating any credit, confirm the deployed pool WASM and release record are schema version `2`. The previous v1 deployment allowed member self-crediting and is retired.
-4. Execute an administrator-authorized `deposit(member, amount)` and verify that the same call signed only by `member` fails. This pool is an accounting ledger; do not describe this operation as a token deposit.
-5. Update `NEXT_PUBLIC_CONTRACT_ID` with the printed settlement contract ID.
-6. Save all explorer links in README/docs.
+   The constructor atomically initializes the settlement instance. There is no
+   second contract to deploy or wire up: `record_payment` makes no
+   cross-contract call (the pool contract was removed in Issue #178).
+2. Record the printed contract ID and transaction output.
+3. Update `NEXT_PUBLIC_CONTRACT_ID` with the printed settlement contract ID.
+4. Save all explorer links in README/docs. Do not cite a pool transaction as
+   proof of settlement behaviour.
 
 ## 5. CI/CD Verification
 
