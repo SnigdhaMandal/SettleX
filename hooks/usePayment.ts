@@ -36,6 +36,7 @@ import {
   syncPendingPaymentRemote,
   type PendingPayment,
 } from "@/lib/payments/pendingPayments";
+import { normalizeTxHash, verifyQrSharePayment } from "@/lib/payments/qrReconcile";
 import type { SplitShare } from "@/types/expense";
 
 type OnChainStep = "simulating" | "signing" | "sending" | "confirming";
@@ -629,6 +630,141 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     ],
   );
 
+  /**
+   * "I paid via QR" (Issue #204): a QR payment happens in another wallet app,
+   * so its hash never comes back on its own. The owner pastes it; it is
+   * checked against Horizon (memo, sender, recipient, exact XLM amount) and
+   * then recorded exactly like an in-app payment.
+   */
+  const reconcileQrPayment = useCallback(
+    async ({
+      share,
+      payerWalletAddress,
+      tripId,
+      txHash: rawHash,
+    }: {
+      share: SplitShare;
+      payerWalletAddress: string;
+      tripId?: string;
+      txHash: string;
+    }): Promise<boolean> => {
+      if (inFlightRef.current) return false;
+      if (!publicKey) {
+        toastError("Wallet not connected", "Please connect your Stellar wallet first.");
+        return false;
+      }
+      const denial = sharePaymentDenial({
+        share,
+        connectedWallet: publicKey,
+        creditorWallet: payerWalletAddress,
+      });
+      if (denial) {
+        toastError("Cannot record payment", denial);
+        return false;
+      }
+      if (share.paid) {
+        toastInfo("Already paid", `${share.name}'s share is already marked as paid.`);
+        return false;
+      }
+      const txHash = normalizeTxHash(rawHash);
+      if (!txHash) {
+        toastError("Invalid transaction hash", "Paste the 64-character hash shown by your wallet.");
+        return false;
+      }
+      const existing = pendingByMember[share.memberId] ?? getPendingPayment(publicKey, expenseId, share.memberId);
+      if (existing && existing.txHash !== txHash) {
+        toastError(
+          "Payment already sent",
+          "Another payment for this share is waiting to be recorded. Retry recording it instead.",
+        );
+        return false;
+      }
+
+      inFlightRef.current = true;
+      try {
+        setPaymentState({ status: "verifying", hash: txHash });
+        const verified = await verifyQrSharePayment({
+          txHash,
+          debtorWallet: publicKey,
+          creditorWallet: payerWalletAddress,
+          amount: share.amount,
+          memo: shareMemo(expenseId, share.memberId),
+        });
+        if (!verified.ok) {
+          setPaymentState({ status: "error", message: verified.reason });
+          toastError("Payment not verified", verified.reason);
+          return false;
+        }
+
+        // Verified on Horizon: the money moved. Persist before recording, the
+        // same as an in-app payment after submission.
+        let entry: PendingPayment = {
+          expenseId,
+          memberId: share.memberId,
+          txHash,
+          payerWallet: publicKey,
+          destinationWallet: payerWalletAddress,
+          amount: share.amount,
+          tripId: tripId ?? null,
+          status: "submitted",
+          ledger: verified.ledger,
+          validUntil: null,
+          onChainRecorded: false,
+          createdAt: new Date().toISOString(),
+        };
+        await persistPending(entry, false);
+
+        if (CONTRACT_ID && tripId) {
+          setPaymentState({ status: "recording", step: "simulating" });
+          const contractResult = await recordPaymentOnChain({
+            debtorPublicKey: publicKey,
+            tripId,
+            expenseId,
+            creditorPublicKey: payerWalletAddress,
+            amountXlm: share.amount,
+            txHash,
+            onStatus: (step) => setPaymentState({ status: "recording", step }),
+          });
+          if (contractResult.success) {
+            entry = { ...entry, onChainRecorded: true };
+            await persistPending(entry, false);
+          }
+        }
+
+        const recorded = await recordShare(entry);
+        if (!recorded.ok) {
+          setPaymentState({
+            status: "paid_unrecorded",
+            hash: txHash,
+            ledger: verified.ledger,
+            onChain: entry.onChainRecorded,
+            message: recorded.message,
+          });
+          toastInfo("Payment verified — recording pending", DO_NOT_PAY_AGAIN);
+          return false;
+        }
+
+        countMetric("payment.qr_reconciled");
+        finishRecorded(entry, verified.ledger, true);
+        scheduleBalanceRefresh();
+        return true;
+      } finally {
+        inFlightRef.current = false;
+      }
+    },
+    [
+      publicKey,
+      pendingByMember,
+      expenseId,
+      persistPending,
+      recordShare,
+      finishRecorded,
+      scheduleBalanceRefresh,
+      toastError,
+      toastInfo,
+    ],
+  );
+
   const pendingShareIds = Object.keys(pendingByMember);
   const hashOf = (state: PaymentState): string | null =>
     "hash" in state ? state.hash : null;
@@ -637,6 +773,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
   return {
     paymentState,
     payShare,
+    reconcileQrPayment,
     reset,
     retryOnChainRecord,
     retryRecording,

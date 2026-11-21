@@ -52,7 +52,7 @@ function ExpenseCard({
     !!currentUserPublicKey &&
     !!payerMember?.walletAddress &&
     payerMember.walletAddress === currentUserPublicKey;
-  const { payShare, paymentState, reset, retryOnChainRecord, retryRecording, pendingShareIds } = usePayment({ expenseId: expense.id });
+  const { payShare, reconcileQrPayment, paymentState, reset, retryOnChainRecord, retryRecording, pendingShareIds } = usePayment({ expenseId: expense.id });
 
   const paidCount = expense.shares.filter((s) => s.paid).length;
   const payer = expense.members.find((m) => m.id === expense.paidByMemberId);
@@ -72,6 +72,14 @@ function ExpenseCard({
     });
     setPayingShareId(null);
   };
+
+  const handleReconcileQr = (share: SplitShare, txHash: string) =>
+    reconcileQrPayment({
+      share,
+      payerWalletAddress: payer?.walletAddress ?? "",
+      tripId: owningTrip?.id,
+      txHash,
+    });
 
   return (
     <motion.div
@@ -177,6 +185,7 @@ function ExpenseCard({
                 totalAmount={expense.totalAmount}
                 expenseTitle={expense.title}
                 onPay={handlePay}
+                onReconcileQr={handleReconcileQr}
                 payingShareId={payingShareId ?? undefined}
                 pendingShareIds={pendingShareIds}
                 connectedWalletAddress={currentUserPublicKey}

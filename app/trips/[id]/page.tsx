@@ -55,7 +55,7 @@ function TripExpenseCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [payingShareId, setPayingShareId] = useState<string | null>(null);
-  const { payShare, paymentState, reset, retryOnChainRecord, retryRecording, pendingShareIds } = usePayment({ expenseId: expense.id });
+  const { payShare, reconcileQrPayment, paymentState, reset, retryOnChainRecord, retryRecording, pendingShareIds } = usePayment({ expenseId: expense.id });
 
   const paidCount = expense.shares.filter((s) => s.paid || netSettled.has(s.memberId)).length;
   const fullySettled = expense.settled || paidCount === expense.shares.length;
@@ -76,6 +76,14 @@ function TripExpenseCard({
     });
     setPayingShareId(null);
   };
+
+  const handleReconcileQr = (share: SplitShare, txHash: string) =>
+    reconcileQrPayment({
+      share,
+      payerWalletAddress: payer?.walletAddress ?? "",
+      tripId: tripId,
+      txHash,
+    });
 
   return (
     <motion.div
@@ -151,6 +159,7 @@ function TripExpenseCard({
                 totalAmount={expense.totalAmount}
                 expenseTitle={expense.title}
                 onPay={handlePay}
+                onReconcileQr={handleReconcileQr}
                 payingShareId={payingShareId ?? undefined}
                 pendingShareIds={pendingShareIds}
                 netSettledShares={netSettled}

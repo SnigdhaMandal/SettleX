@@ -22,6 +22,8 @@ export interface HorizonVerificationResult {
     from?: string;
     to?: string;
     amount?: string;
+    /** Horizon `asset_type`, e.g. "native" for XLM. */
+    assetType?: string;
   }>;
 }
 
@@ -78,7 +80,7 @@ export async function verifyTransactionOnHorizon(
     const successful = txData.successful !== false;
 
     // Check transaction operations if available
-    let operations: Array<{ type: string; from?: string; to?: string; amount?: string }> = [];
+    let operations: Array<{ type: string; from?: string; to?: string; amount?: string; assetType?: string }> = [];
     try {
       const opsRes = await fetch(`${HORIZON_URL}/transactions/${normalizedHash}/operations`, {
         cache: "no-store",
@@ -92,6 +94,7 @@ export async function verifyTransactionOnHorizon(
           from: op.from || op.source_account || op.funder,
           to: op.to || op.into || op.account,
           amount: op.amount || op.starting_balance,
+          assetType: op.asset_type,
         }));
       }
     } catch {
