@@ -18,6 +18,8 @@ interface SplitCalculatorProps {
   expenseTitle?: string;
   /** Called when user clicks Pay on a row. */
   onPay?: (share: SplitShare) => void;
+  /** Records a QR payment from a pasted transaction hash (Issue #204). */
+  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>;
   /** ID of the share whose payment is currently in-flight (shows spinner). */
   payingShareId?: string;
   /** Member ids whose share has a sent-but-unrecorded payment. */
@@ -39,6 +41,7 @@ export function SplitCalculator({
   totalAmount,
   expenseTitle = "Expense",
   onPay,
+  onReconcileQr,
   payingShareId,
   pendingShareIds,
   disablePay = false,
@@ -104,6 +107,7 @@ export function SplitCalculator({
             index={i}
             expenseTitle={expenseTitle}
             onPay={disablePay ? undefined : onPay}
+            onReconcileQr={disablePay ? undefined : onReconcileQr}
             isPaying={payingShareId === share.memberId}
             hasPendingPayment={pendingShareIds?.includes(share.memberId) ?? false}
             connectedWalletAddress={connectedWalletAddress}

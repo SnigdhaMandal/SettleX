@@ -201,6 +201,10 @@ Every SettleX payment carries a 28-byte `MEMO_TEXT` that identifies exactly what
 
 The memo is a one-way digest, so the public ledger shows no expense titles or member names. Anyone who can see the expense can recompute it. Given a transaction hash, `lookupPaymentByTxHash()` reads the memo from Horizon and returns the share or settlement it pays. For older payments made before share identifiers, it falls back to the share whose recorded `txHash` matches. `buildPaymentTransaction()` rejects any memo that is not in this format.
 
+### QR payments (SEP-0007)
+
+A share's QR code is a `web+stellar:pay` URI that pays the **creditor** (the member who paid the bill) the share's exact 7-decimal amount, with the share's memo. It always includes `network_passphrase`, because SEP-0007 wallets assume Mainnet when it is missing, and all values are percent-encoded. A payment made from another wallet app returns no hash to SettleX, so the share owner pastes the transaction hash under the QR ("I paid via QR"). It is recorded only if Horizon shows a successful native XLM payment with this share's memo, from the share's wallet to the creditor, for exactly the share amount. QR URIs are unsigned: `origin_domain` and `signature` need a URI-signing key published in the app's `stellar.toml`, which this deployment does not have.
+
 ---
 
 ## Smart Contract

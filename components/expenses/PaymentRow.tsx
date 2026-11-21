@@ -32,6 +32,74 @@ interface PaymentRowProps {
   connectedWalletAddress?: string | null;
   /** Creditor: wallet of the member who paid the bill, i.e. where payments go. */
   payerWalletAddress?: string;
+  /**
+   * "I paid via QR" (Issue #204): records a QR payment from its pasted
+   * transaction hash after checking it on Horizon. Resolves true when recorded.
+   */
+  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>;
+}
+
+/** Paste-the-hash form for a share paid by scanning its QR code. */
+function QrHashForm({
+  disabled,
+  onSubmit,
+}: {
+  disabled: boolean;
+  onSubmit: (txHash: string) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hash, setHash] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid = /^[0-9a-fA-F]{64}$/.test(hash.trim());
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-[11px] font-semibold text-[#888] hover:text-[#0F0F14] underline-offset-2 hover:underline"
+      >
+        I paid via QR — paste the transaction hash
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="flex flex-col sm:flex-row gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!valid || busy) return;
+        setBusy(true);
+        try {
+          if (await onSubmit(hash.trim())) {
+            setHash("");
+            setOpen(false);
+          }
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <label className="sr-only" htmlFor="qr-tx-hash">Transaction hash</label>
+      <input
+        id="qr-tx-hash"
+        value={hash}
+        onChange={(e) => setHash(e.target.value)}
+        placeholder="64-character transaction hash"
+        spellCheck={false}
+        autoComplete="off"
+        className="flex-1 min-w-0 text-[11px] font-mono px-2 py-1.5 rounded-lg border border-[#E5E5E5] focus:outline-none focus:border-[#0F0F14]"
+      />
+      <button
+        type="submit"
+        disabled={!valid || busy || disabled}
+        className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-[#0F0F14] text-[#B9FF66] disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {busy ? "Checking…" : "Verify & record"}
+      </button>
+    </form>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
@@ -45,6 +113,7 @@ export function PaymentRow({
   hasPendingPayment = false,
   connectedWalletAddress,
   payerWalletAddress,
+  onReconcileQr,
 }: PaymentRowProps) {
   const [showReceipt, setShowReceipt] = useState(false);
   const { isNetworkCompatible } = useWallet();
@@ -191,10 +260,16 @@ export function PaymentRow({
             payment goes to the creditor (who paid the bill), not to the share's
             own wallet. */}
         {!share.paid && !hasPendingPayment && isMyRow && payerWalletAddress && memo && (
-          <div className="pl-11">
+          <div className="pl-11 flex flex-col gap-2">
             <QRToggle
               data={{ destination: payerWalletAddress, amount: share.amount, memo }}
             />
+            {onReconcileQr && (
+              <QrHashForm
+                disabled={isPaying || !isNetworkCompatible}
+                onSubmit={(txHash) => onReconcileQr(share, txHash)}
+              />
+            )}
           </div>
         )}
       </motion.div>
