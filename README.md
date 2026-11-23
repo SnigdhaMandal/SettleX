@@ -386,7 +386,7 @@ Create .env.local from .env.local.example. The contract ID is intentionally blan
 | SUPABASE_JWT_SECRET | Signs wallet-authenticated JWTs used by RLS |
 | AUTH_CHALLENGE_SECRET | Challenge HMAC secret; required in production and different from JWT secret |
 | AUTH_SESSION_TTL_SECONDS | Optional token lifetime; defaults to 3600 seconds (1 hour), capped at 43200 seconds (12 hours) |
-| SUPABASE_SERVICE_ROLE_KEY | Server-only shared nonce/rate-limit store and session revocation; recommended locally and needed for cross-instance protections |
+| SUPABASE_SERVICE_ROLE_KEY | Required server-only shared nonce store (verification fails closed without it), shared rate limiting, and session revocation |
 | NEXT_PUBLIC_SITE_URL | Canonical application URL for metadata and PWA links |
 | NEXT_PUBLIC_APP_NAME, NEXT_PUBLIC_APP_VERSION | Display metadata |
 
