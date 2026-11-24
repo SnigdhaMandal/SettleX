@@ -9,55 +9,139 @@ import { PayButton } from "@/components/payment/PayButton";
 import { QRToggle } from "@/components/payment/QRCodeDisplay";
 import { ReceiptModal } from "@/components/expenses/ReceiptModal";
 import { useWallet } from "@/hooks/useWallet";
+import { shareMemo } from "@/lib/stellar/memo";
+import { canWalletPayShare } from "@/lib/payments/shareOwnership";
 import type { SplitShare } from "@/types/expense";
+import type { NetSettledReason } from "@/lib/settlement/netBalance";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface PaymentRowProps {
   share: SplitShare;
+  /** Expense this share belongs to; needed to build the identifying memo for QR payments. */
+  expenseId?: string;
   index: number;
   expenseTitle?: string;
   /** Called when user clicks "Pay". */
   onPay?: (share: SplitShare) => void;
   /** When true, show spinner on Pay button (payment in-flight for this share). */
   isPaying?: boolean;
-  /** Connected wallet — Pay button is only shown when this matches share.walletAddress.
-   *  If undefined/null, falls back to the old behaviour (show for all). */
+  /** A transfer for this share may already have moved: Pay stays disabled. */
+  hasPendingPayment?: boolean;
+  /**
+   * Set when trip netting covers this unpaid share (Issue #203): a recorded
+   * settle-up transfer ("net-transfer"), or debts that cancelled out
+   * ("offset"). The share needs no direct payment, so Pay and QR are hidden.
+   */
+  netSettled?: NetSettledReason;
+  /** Connected wallet. Pay (and the QR code) are shown only when it owns this
+   *  share; with no wallet connected, nobody's share is payable. */
   connectedWalletAddress?: string | null;
-  /** Payer's wallet address — guard against showing Pay for the payer row. */
+  /** Creditor: wallet of the member who paid the bill, i.e. where payments go. */
   payerWalletAddress?: string;
+  /**
+   * "I paid via QR" (Issue #204): records a QR payment from its pasted
+   * transaction hash after checking it on Horizon. Resolves true when recorded.
+   */
+  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>;
+}
+
+/** Paste-the-hash form for a share paid by scanning its QR code. */
+function QrHashForm({
+  disabled,
+  onSubmit,
+}: {
+  disabled: boolean;
+  onSubmit: (txHash: string) => Promise<boolean>;
+}) {
+  const [open, setOpen] = useState(false);
+  const [hash, setHash] = useState("");
+  const [busy, setBusy] = useState(false);
+  const valid = /^[0-9a-fA-F]{64}$/.test(hash.trim());
+
+  if (!open) {
+    return (
+      <button
+        type="button"
+        onClick={() => setOpen(true)}
+        className="text-[11px] font-semibold text-[#888] hover:text-[#0F0F14] underline-offset-2 hover:underline"
+      >
+        I paid via QR — paste the transaction hash
+      </button>
+    );
+  }
+
+  return (
+    <form
+      className="flex flex-col sm:flex-row gap-2"
+      onSubmit={async (e) => {
+        e.preventDefault();
+        if (!valid || busy) return;
+        setBusy(true);
+        try {
+          if (await onSubmit(hash.trim())) {
+            setHash("");
+            setOpen(false);
+          }
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <label className="sr-only" htmlFor="qr-tx-hash">Transaction hash</label>
+      <input
+        id="qr-tx-hash"
+        value={hash}
+        onChange={(e) => setHash(e.target.value)}
+        placeholder="64-character transaction hash"
+        spellCheck={false}
+        autoComplete="off"
+        className="flex-1 min-w-0 text-[11px] font-mono px-2 py-1.5 rounded-lg border border-[#E5E5E5] focus:outline-none focus:border-[#0F0F14]"
+      />
+      <button
+        type="submit"
+        disabled={!valid || busy || disabled}
+        className="text-[11px] font-bold px-3 py-1.5 rounded-lg bg-[#0F0F14] text-[#B9FF66] disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        {busy ? "Checking…" : "Verify & record"}
+      </button>
+    </form>
+  );
 }
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function PaymentRow({
   share,
+  expenseId,
   index,
-  expenseTitle = "Expense",
   onPay,
   isPaying = false,
+  hasPendingPayment = false,
+  netSettled,
   connectedWalletAddress,
   payerWalletAddress,
+  onReconcileQr,
 }: PaymentRowProps) {
   const [showReceipt, setShowReceipt] = useState(false);
   const { isNetworkCompatible } = useWallet();
   const explorerUrl = share.walletAddress
     ? `${STELLAR_EXPLORER}/account/${share.walletAddress}`
     : null;
-  const memo = `SettleX|${expenseTitle}|${share.name}`.slice(0, 28);
+  // Same memo as the in-app Pay path, so a QR payment can be matched to this
+  // share too. Without an expense id (an unsaved preview) there is nothing to
+  // identify, so no QR is offered.
+  const memo = expenseId ? shareMemo(expenseId, share.memberId) : undefined;
 
-  // The payer NEVER owes anything — guard even if wallets accidentally overlap.
-  const isPayerRow =
-    !!payerWalletAddress &&
-    !!share.walletAddress &&
-    share.walletAddress === payerWalletAddress;
+  // Only the share's own wallet may pay it, never a third party and never the
+  // member who paid the bill. Same rule payShare enforces (Issue #208).
+  const isMyRow = canWalletPayShare({
+    share,
+    connectedWallet: connectedWalletAddress,
+    creditorWallet: payerWalletAddress,
+  });
 
-  // Show Pay button only when the connected wallet matches this share’s wallet
-  // AND this row does not belong to the payer.
-  const isMyRow =
-    !isPayerRow &&
-    (!connectedWalletAddress ||
-      (!!share.walletAddress && share.walletAddress === connectedWalletAddress));
+  const settled = share.paid || Boolean(netSettled);
 
   // When paidBy is recorded and doesn't match the share owner, someone else marked this share paid
   const isMarkedByOther = Boolean(
@@ -75,7 +159,7 @@ export function PaymentRow({
         transition={{ delay: index * 0.05, duration: 0.25 }}
         className={cn(
           "flex flex-col gap-2 px-4 py-3 rounded-xl border transition-all",
-          share.paid
+          settled
             ? "bg-[#F0FFDB] border-[#B9FF66]/40"
             : "bg-white border-[#E5E5E5] hover:border-[#D0D0D0]"
         )}
@@ -87,7 +171,7 @@ export function PaymentRow({
             <div
               className={cn(
                 "w-8 h-8 rounded-full flex items-center justify-center shrink-0 text-xs font-bold",
-                share.paid
+                settled
                   ? "bg-[#B9FF66] text-[#0F0F14]"
                   : "bg-[#F0F0F0] text-[#555]"
               )}
@@ -99,7 +183,7 @@ export function PaymentRow({
               <p className="text-sm font-semibold text-[#0F0F14] truncate">
                 {share.name}
               </p>
-              {share.walletAddress && !share.paid && (
+              {share.walletAddress && !settled && (
                 <a
                   href={explorerUrl ?? "#"}
                   target="_blank"
@@ -164,13 +248,25 @@ export function PaymentRow({
                   ✓ Paid
                 </span>
               </div>
+            ) : netSettled ? (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 bg-[#B9FF66]/30 text-[#2D6600] rounded-full"
+                title={
+                  netSettled === "net-transfer"
+                    ? "Covered by a recorded settle-up transfer for this trip"
+                    : "Cancelled out by what you are owed in this trip; no transfer needed"
+                }
+              >
+                {netSettled === "net-transfer" ? "✓ Settled via net transfer" : "✓ Offset by netting"}
+              </span>
             ) : isMyRow ? (
               <PayButton
                 amount={share.amount}
                 recipientName={share.name}
                 onClick={() => onPay?.(share)}
                 isLoading={isPaying}
-                disabled={!share.walletAddress || !onPay || !isNetworkCompatible}
+                disabled={!share.walletAddress || !onPay || !isNetworkCompatible || hasPendingPayment}
+                label={hasPendingPayment ? "Payment pending" : undefined}
                 size="sm"
               />
             ) : (
@@ -181,12 +277,20 @@ export function PaymentRow({
           </div>
         </div>
 
-        {/* QR toggle — only if unpaid and has wallet address */}
-        {!share.paid && share.walletAddress && (
-          <div className="pl-11">
+        {/* QR toggle: lets the share's owner pay from a phone wallet. The
+            payment goes to the creditor (who paid the bill), not to the share's
+            own wallet. */}
+        {!share.paid && !hasPendingPayment && isMyRow && payerWalletAddress && memo && (
+          <div className="pl-11 flex flex-col gap-2">
             <QRToggle
-              data={{ destination: share.walletAddress, amount: share.amount, memo }}
+              data={{ destination: payerWalletAddress, amount: share.amount, memo }}
             />
+            {onReconcileQr && (
+              <QrHashForm
+                disabled={isPaying || !isNetworkCompatible}
+                onSubmit={(txHash) => onReconcileQr(share, txHash)}
+              />
+            )}
           </div>
         )}
       </motion.div>
@@ -197,9 +301,11 @@ export function PaymentRow({
           open={showReceipt}
           onClose={() => setShowReceipt(false)}
           txHash={share.txHash}
-          memo={memo}
+          expectedMemo={memo}
           amount={share.amount}
           recipientName={share.name}
+          shareOwner={share.walletAddress}
+          destinationWallet={payerWalletAddress}
           paidBy={share.paidBy}
           markedAt={share.markedAt}
           manual={share.manual}

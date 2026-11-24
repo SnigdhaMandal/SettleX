@@ -3,7 +3,7 @@
 Get SettleX running locally in ~5 minutes.
 
 ## Prerequisites
-- Node.js 18+ and npm 9+
+- Node.js 20+ and npm 9+
 - A Stellar wallet extension set to **Testnet** — [Freighter](https://freighter.app), xBull, Lobstr, or Rabet
 - (Optional) A free [Supabase](https://supabase.com) project for cross-device sync
 
@@ -33,6 +33,11 @@ https://horizon-testnet.stellar.org/friendbot?addr=YOUR_PUBLIC_KEY
 npm run dev
 ```
 Open <http://localhost:3000>, connect your wallet, and create your first expense.
+
+### Contract deployments
+Only the settlement contract is deployed. It records payment receipts and makes
+no cross-contract call; there is no pool contract (removed in Issue #178). Any
+old testnet pool instance is unused by SettleX and must not be reused.
 
 ## 5. Build for production
 ```bash

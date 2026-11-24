@@ -122,8 +122,8 @@ new row violates row-level security policy for table "expenses"
 at a user — leaking the schema and the fact that RLS is the gate.
 
 It is an **allowlist**, not a blanket hide. Much of the app throws text written
-for people ("Lobstr extension is not installed.", "Pool balance is insufficient
-for this transfer."), and replacing those with "something went wrong" would make
+for people ("Lobstr extension is not installed.", "This expense was already
+settled on-chain."), and replacing those with "something went wrong" would make
 the product worse. A message is shown only when it reads like authored prose and
 trips none of the internal markers — Postgres/PostgREST wording, stack frames,
 JSON dumps, tokens, wallet addresses, protocol jargon such as `JWT`, framework
@@ -173,7 +173,7 @@ crash that deep is always internal, so only the reference id is useful.
 | `*.rls_denied` (via `fields.kind`) | RLS rejected a write — auth or policy problem. |
 | `auth.session_handshake_failed` | A wallet could not establish a session; users are stuck on cached data. |
 | `auth.signup_failed` / `auth.signin_failed` | An unrecognised database failure blocked account creation or sign-in. |
-| `trip.realtime_failed` / `expense.realtime_failed` | Lists silently stop updating. |
+| `trip.poll_failed` / `expense.poll_failed` | Cross-user lists stop refreshing; the error is reported once until a refresh succeeds. |
 | `contract.fetch_events_failed` | Sustained = the Soroban RPC is down. |
 | `observability.no_error_provider` | This deployment has no error tracker wired up. |
 

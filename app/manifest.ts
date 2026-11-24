@@ -5,7 +5,7 @@ export default function manifest(): MetadataRoute.Manifest {
     name: "SettleX — Split & Settle On-Chain",
     short_name: "SettleX",
     description:
-      "Split expenses and settle in seconds with USDC or XLM. Non-custodial, verifiable receipts.",
+      "Split expenses and settle in seconds with XLM. Non-custodial, verifiable receipts.",
     id: "/",
     start_url: "/dashboard",
     scope: "/",

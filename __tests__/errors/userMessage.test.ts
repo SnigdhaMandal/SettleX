@@ -65,9 +65,9 @@ describe("messages the app wrote for users are still shown", () => {
     "Freighter did not return an address.",
     "Lobstr extension is not installed.",
     "Payment amount must be greater than zero.",
-    "Pool balance is insufficient for this transfer.",
+    "This expense was already settled on-chain. No double payment needed.",
     // The contract decoder's fallback for an unmapped code.
-    "Pool error #137.",
+    "Contract error #137.",
     "Transaction cancelled in wallet.",
   ];
 

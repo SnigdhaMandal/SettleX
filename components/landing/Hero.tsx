@@ -9,9 +9,8 @@ import {
   Shield,
   Globe,
   CheckCircle2,
-  TrendingUp,
-  Users,
-  Star,
+  Coins,
+  Code2,
 } from "lucide-react";
 import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
@@ -210,59 +209,22 @@ export default function Hero() {
               </Button>
             </motion.div>
 
-            {/* Social proof row */}
+            {/* Capability highlights */}
             <motion.div
               variants={fadeUp}
               custom={4}
-              className="flex flex-col sm:flex-row sm:items-center gap-4"
+              className="flex flex-wrap items-center gap-4 sm:gap-6 pt-2"
             >
-              {/* Avatars */}
-              <div className="flex items-center gap-2">
-                <div className="flex -space-x-2">
-                  {["R", "A", "K", "S"].map((l, i) => (
-                    <div
-                      key={i}
-                      className="w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-xs font-bold text-white"
-                      style={{
-                        backgroundColor: [
-                          "#B9FF66",
-                          "#0F0F14",
-                          "#7DD835",
-                          "#333",
-                        ][i],
-                        color: i === 0 || i === 2 ? "#0F0F14" : "white",
-                      }}
-                    >
-                      {l}
-                    </div>
-                  ))}
-                  <div className="w-8 h-8 rounded-full border-2 border-white bg-[#F0F0F0] flex items-center justify-center text-[10px] font-semibold text-[#888]">
-                    +2K
-                  </div>
-                </div>
-                <div>
-                  <div className="flex items-center gap-0.5">
-                    {[...Array(5)].map((_, i) => (
-                      <Star
-                        key={i}
-                        size={12}
-                        className="text-[#B9FF66] fill-[#B9FF66]"
-                      />
-                    ))}
-                  </div>
-                  <p className="text-xs text-[#888]">2,000+ early users</p>
-                </div>
-              </div>
-
-              <div className="hidden sm:block w-px h-8 bg-[#E5E5E5]" />
-
-              {/* Proof labels */}
               {[
                 { icon: Shield, text: "Non-custodial" },
                 { icon: Zap, text: "~5s finality" },
+                { icon: Coins, text: "Zero platform fees" },
+                { icon: Code2, text: "Open source" },
               ].map(({ icon: Icon, text }) => (
-                <div key={text} className="flex items-center gap-1.5">
-                  <Icon size={14} className="text-[#2D6600]" />
+                <div key={text} className="flex items-center gap-2">
+                  <div className="w-6 h-6 rounded-lg bg-[#B9FF66]/15 flex items-center justify-center">
+                    <Icon size={13} className="text-[#2D6600]" />
+                  </div>
                   <span className="text-sm font-medium text-[#555]">{text}</span>
                 </div>
               ))}
@@ -285,15 +247,15 @@ export default function Hero() {
 
               {/* Floating chips */}
               <FloatingChip
-                icon={TrendingUp}
-                label="Total Settled"
-                value="2.3M XLM"
+                icon={Zap}
+                label="Finality Speed"
+                value="~5 Seconds"
                 className="hidden lg:flex absolute -top-4 -left-14 w-44"
               />
               <FloatingChip
-                icon={Users}
-                label="Active Groups"
-                value="8,200+"
+                icon={Coins}
+                label="Platform Fee"
+                value="0 XLM"
                 className="hidden lg:flex absolute -bottom-4 -right-10 w-40"
               />
 
@@ -307,7 +269,7 @@ export default function Hero() {
                 <div className="overflow-hidden">
                   <p className="text-[10px] text-[#888] mb-0.5">TX Confirmed · Ledger 47,291,034</p>
                   <p className="text-xs font-mono text-[#B9FF66] truncate">
-                    0xabc1…f324 · 300 XLM to Aman
+                    04c679…de967 · 300 XLM to Aman
                   </p>
                 </div>
               </motion.div>

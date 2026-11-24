@@ -90,7 +90,7 @@ const MockTerminal = () => (
         amount: <span className="text-[#B9FF66]">&quot;300.0000000&quot;</span>,
       </div>
       <div className="text-[#888] pl-4">
-        memo: <span className="text-[#aaa]">&quot;SettleX|Dinner|Aman&quot;</span>,
+        memo: <span className="text-[#aaa]">&quot;SX1S:3K7EKTE3UQP44CE5TWSJM6L&quot;</span>,
       </div>
       <div className="text-[#888]">&#125;);</div>
       <div className="mt-3 text-[#555]"># Sign + submit</div>

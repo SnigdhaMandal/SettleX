@@ -13,8 +13,8 @@
   <a href="https://stellar.expert/explorer/testnet/contract/CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI">
     <img src="https://img.shields.io/badge/Contract-Testnet%20Deployed-4CAF50?style=flat-square&logo=stellar" alt="Contract Deployed" />
   </a>
-  <a href="https://stellar.expert/explorer/testnet/tx/04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967">
-    <img src="https://img.shields.io/badge/Sample%20Tx-Verified-blue?style=flat-square&logo=stellar" alt="Sample Transaction" />
+  <a href="https://stellar.expert/explorer/testnet/tx/f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e">
+    <img src="https://img.shields.io/badge/Init%20Tx-Testnet-blue?style=flat-square&logo=stellar" alt="Settlement init transaction" />
   </a>
   <a href="https://github.com/SnigdhaMandal/SettleX/actions/workflows/ci.yml">
     <img src="https://github.com/SnigdhaMandal/SettleX/actions/workflows/ci.yml/badge.svg" alt="CI Pipeline" />
@@ -53,7 +53,7 @@
 
 SettleX solves a fundamental problem with group expense sharing: apps like Splitwise only track IOUs — you still have to chase people for real money. SettleX closes the loop by connecting split calculations directly to on-chain payments.
 
-Every payment produces a **real, verifiable transaction hash** on the Stellar blockchain — that hash, checkable on any explorer, is the evidence a payment happened. An on-chain Soroban smart contract additionally records each settlement so participants share one append-only history. Those records are currently *self-attested*: the contract stores what the member submits without checking it against Horizon, so treat the Stellar transaction as the proof and the contract record as bookkeeping (see [Architecture and Limitations](docs/ARCHITECTURE_AND_LIMITATIONS.md)). The app syncs across all participants in real time — when someone pays, everyone sees it immediately.
+Every payment produces a **real, verifiable transaction hash** on the Stellar blockchain — that hash, checkable on any explorer, is the evidence a payment happened. An on-chain Soroban smart contract additionally records each settlement so participants share one append-only history. Those records are currently *self-attested*: the contract stores what the member submits without checking it against Horizon, so treat the Stellar transaction as the proof and the contract record as bookkeeping (see [Architecture and Limitations](docs/ARCHITECTURE_AND_LIMITATIONS.md)). The app refreshes shared expenses and trips about every five seconds while a page is visible.
 
 **Core design principles:**
 
@@ -77,7 +77,7 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 | Real-time event listening from contract (`pmt_rec` events)   | Live   |
 | Attestor-backed payment verification                         | Not live yet |
 | Trip mode — group expenses with net-balance settle-up        | Live   |
-| Live cross-user sync via Supabase Realtime                   | Live   |
+| Cross-user expense/trip sync via secure 5-second polling     | Live   |
 | Net-balance algorithm (minimises transactions needed)        | Live   |
 | Mobile-responsive UI                                         | Live   |
 
@@ -93,10 +93,10 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 | Wallet support   | `@creit.tech/stellar-wallets-kit` v2          |
 | Smart contract   | Soroban (Rust, `soroban-sdk` v21)              |
 | Network          | Stellar Testnet (Horizon + Soroban RPC)        |
-| Database         | Supabase (PostgreSQL + Realtime)               |
+| Database         | Supabase (PostgreSQL via authenticated Next.js proxy) |
 | QR codes         | `qrcode.react`                                 |
 | Testing          | Jest 29 + ts-jest (45 unit tests)              |
-| State management | React Context + Supabase + localStorage        |
+| State management | React Context + HttpOnly session cookie + localStorage cache |
 | UI primitives    | Radix UI, Lucide React                         |
 
 ---
@@ -174,7 +174,7 @@ TransactionBuilder constructs Payment operation
   · from:   payer public key
   · to:     payee Stellar address
   · amount: share amount in XLM
-  · memo:   expense ID
+  · memo:   share identifier (see "Payment memos" below)
     |
 Wallet extension signs client-side
 (private key never leaves the browser)
@@ -190,39 +190,63 @@ tx hash stored in app, share marked "paid"
 useContractEvents polls every 10s -> syncs state for all participants
 ```
 
+### Payment memos
+
+Every SettleX payment carries a 28-byte `MEMO_TEXT` that identifies exactly what it pays. The same functions in [`lib/stellar/memo.ts`](lib/stellar/memo.ts) build it for the in-app Pay button, the QR code and trip settle-up:
+
+| Memo | Pays | Built from |
+| --- | --- | --- |
+| `SX1S:<23 base32 chars>` | one member's share of one expense | `sha256("settlex:share:v1:<expenseId>:<memberId>")` |
+| `SX1N:<23 base32 chars>` | one netted trip settlement | `sha256("settlex:settle:v1:<tripId>:<FROM_WALLET>:<TO_WALLET>")` |
+
+The memo is a one-way digest, so the public ledger shows no expense titles or member names. Anyone who can see the expense can recompute it. Given a transaction hash, `lookupPaymentByTxHash()` reads the memo from Horizon and returns the share or settlement it pays. For older payments made before share identifiers, it falls back to the share whose recorded `txHash` matches. `buildPaymentTransaction()` rejects any memo that is not in this format.
+
+### QR payments (SEP-0007)
+
+A share's QR code is a `web+stellar:pay` URI that pays the **creditor** (the member who paid the bill) the share's exact 7-decimal amount, with the share's memo. It always includes `network_passphrase`, because SEP-0007 wallets assume Mainnet when it is missing, and all values are percent-encoded. A payment made from another wallet app returns no hash to SettleX, so the share owner pastes the transaction hash under the QR ("I paid via QR"). It is recorded only if Horizon shows a successful native XLM payment with this share's memo, from the share's wallet to the creditor, for exactly the share amount. QR URIs are unsigned: `origin_domain` and `signature` need a URI-signing key published in the app's `stellar.toml`, which this deployment does not have.
+
 ---
 
 ## Smart Contract
 
-SettleX deploys a **Soroban smart contract** on Stellar Testnet as an immutable, tamper-proof ledger of all settled payments.
+SettleX deploys a single **Soroban smart contract** on Stellar Testnet as an append-only receipt log of settled payments.
+
+**What the contract does and does not do.** The XLM moves in an ordinary Horizon payment that the debtor signs. Afterwards the debtor calls `record_payment`, which stores the payment's transaction hash against `(trip, expense, member)`. `record_payment` is a pure ledger write: it makes **no cross-contract call**, transfers no tokens, and checks or consumes no balance anywhere. There is no pool contract in this repository.
 
 ### Deployed Contracts (Testnet)
 
 | Contract Role | Contract ID | Explorer |
 | ------------- | ----------- | -------- |
 | Settlement contract | `CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI` | [View](https://stellar.expert/explorer/testnet/contract/CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI) |
-| Pool contract | `CB4P4EXLGS56IXVNU3PLJO2BHF5BEEPBBYJAHXEPZDSD2OISQIGO53JA` | [View](https://stellar.expert/explorer/testnet/contract/CB4P4EXLGS56IXVNU3PLJO2BHF5BEEPBBYJAHXEPZDSD2OISQIGO53JA) |
 
 Network: Stellar Testnet  
-Language: Rust (`soroban-sdk` v21.7.6)
+Language: Rust (`soroban-sdk` v22.0.11)
 
 ### Verified On-Chain Transactions
 
 - Settlement deploy tx: [826092e11281bd8fe3c8997ef0a4886b1bd3728069c6855ec4e3866f0a8f9d06](https://stellar.expert/explorer/testnet/tx/826092e11281bd8fe3c8997ef0a4886b1bd3728069c6855ec4e3866f0a8f9d06)
-- Pool deploy tx: [fa245da3ce0a478a9146cccdfa0b1b7f918985c0c138dec3f061f104e5b8f39e](https://stellar.expert/explorer/testnet/tx/fa245da3ce0a478a9146cccdfa0b1b7f918985c0c138dec3f061f104e5b8f39e)
-- Pool init tx (`pool_ini`): [a04a0a2f79e06448156b52ebd07060281cab5bee323889e92c584e0aaf50546d](https://stellar.expert/explorer/testnet/tx/a04a0a2f79e06448156b52ebd07060281cab5bee323889e92c584e0aaf50546d)
 - Settlement init tx (`stx_ini`): [f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e](https://stellar.expert/explorer/testnet/tx/f05c2f59f980a00e99f3f00d57e22b8b10fd0405064096273fd912c9b05a037e)
-- Inter-contract settlement proof tx (`record_payment` + internal pool `withdraw`): [04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967](https://stellar.expert/explorer/testnet/tx/04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de967)
 
-The final proof transaction above is verifiable evidence of the inter-contract path: settlement `record_payment` triggered pool `withdraw` in the same on-chain execution.
+Earlier README revisions listed a pool contract (`CB4P4EXL…53JA`) and cited a
+"pool interaction" transaction (`04c679c7…`) as proof that `record_payment`
+withdraws from the pool in the same transaction. That claim does not match the
+code: `record_payment` has never consumed pool credits in the current source,
+and the pool contract has been removed from the repository (Issue #178). The
+old pool instance on testnet is unused by SettleX and must not be treated as
+part of the deployment.
+
+New deployments must use [`scripts/deploy-contract.sh`](scripts/deploy-contract.sh).
+The settlement contract uses a Soroban constructor, so its admin state is
+initialized atomically during deployment. Do not deploy the WASM and call
+`init` manually; that legacy entry point rejects calls after constructor
+initialization and is retained only for compatibility with older instances.
 
 Security hardening note:
-- Pool credits are now admin-managed in the pool contract to prevent untrusted self-crediting.
-- Pool `withdraw` requires auth from **both** the configured settlement contract and the member. Credits can therefore only be consumed as part of a `record_payment` call — a member cannot drain their own credits directly, and no other contract can spend them. Rotating `set_settlement_contract` immediately revokes the previous contract's ability to withdraw.
+- `record_payment` requires the debtor's (`member`) signature and makes no nested contract call; `test_record_payment_makes_no_cross_contract_call` asserts that the only authorization in the call tree is the member's, with no sub-invocations.
 - Settlement records now carry an `attested` flag. With no attestor configured a record is **self-attested** — it proves only that a member wrote a string, and the contract verifies neither the `payer`, the `amount`, nor the `tx_hash` against Horizon. Treat the Stellar transaction on the explorer as the evidence, not the in-app record. `set_attestor` makes a verifier's co-signature mandatory and marks records `attested: true`; the verifier service itself is not yet built, so attestor-backed verification is not live in this repo.
 - `clear_paid` (admin-only) clears the `ExpensePaid` flag, so a bogus or mistaken record can no longer permanently block the legitimate one. It preserves the original entry in trip history.
 
-> **Redeploy required.** `PaymentRecord` gained a field and `CONTRACT_VERSION` is now `2`. Records written by a v1 deployment cannot be read by this build — deploy fresh contracts and update `NEXT_PUBLIC_CONTRACT_ID`.
+> **Schema note.** `PaymentRecord` gained the `attested` field in settlement schema v2. Upgrade and `migrate` older settlement instances before use.
 
 ---
 
@@ -260,24 +284,59 @@ This section maps the required submission checklist to concrete proof in this re
 | Live demo link | [https://settle-x-pi.vercel.app/](https://settle-x-pi.vercel.app/) |
 | Screenshot: mobile responsive view | UI pages were hardened for mobile in Phase 9. Add one fresh phone viewport screenshot to `public/mobile-responsive.png` and reference it here before final submission. |
 | Screenshot or badge: CI/CD pipeline running | CI badge at the top of this README (GitHub Actions `ci.yml`) |
-| Contract addresses and transaction hash (inter-contract) | [Deployed Contracts](#deployed-contracts-testnet) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
-| Token or pool address (if custom token or pool deployed) | Pool contract in [Deployed Contracts](#deployed-contracts-testnet) |
+| Contract addresses and transaction hash | [Deployed Contracts](#deployed-contracts-testnet) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
+| Inter-contract call | **Not implemented.** `record_payment` is a single-contract ledger write; see [Smart Contract](#smart-contract) |
+| Token or pool address (if custom token or pool deployed) | Not applicable: no custom token or pool contract is deployed |
 
 ### Contract Functions
 
-| Function                                                              | Type  | Purpose                                                 |
-| --------------------------------------------------------------------- | ----- | ------------------------------------------------------- |
-| `record_payment(trip_id, expense_id, payer, member, amount, tx_hash)` | Write | Stores payment record on-chain after XLM transfer       |
-| `get_payments(trip_id, offset, limit)`                                | Read  | Returns a bounded page of expense payment shards        |
-| `is_paid(expense_id, member)`                                         | Read  | Checks if a member has already settled a specific share |
+#### Settlement Contract (`SettleXContract`)
 
-**Error codes handled by the frontend:**
+| Function | Type | Authorization | Purpose |
+| --- | --- | --- | --- |
+| `__constructor(admin)` | Constructor | Admin | Initializes contract admin and schema version at deployment |
+| `init(admin)` | Write | Admin | Legacy initialization entrypoint (rejected after constructor initialization) |
+| `upgrade(new_wasm_hash)` | Write | Admin | Atomically upgrades contract code to a new WASM hash |
+| `migrate(from_version)` | Write | Admin | Migrates contract state between schema versions |
+| `set_attestor(attestor)` | Write | Admin | Sets required co-signing attestor address; emits `AttestorEventV1` |
+| `clear_attestor()` | Write | Admin | Clears attestor, reverting records to self-attested |
+| `get_attestor()` | Read | None | Returns current attestor (if any) and bumps instance TTL |
+| `clear_paid(expense_id, member)` | Write | Admin | Emergency escape hatch: clears `ExpensePaid` flag to unblock a griefed expense |
+| `record_payment(trip_id, expense_id, payer, member, amount, tx_hash)` | Write | Member (+ Attestor if set) | Stores on-chain payment receipt with 32-byte transaction hash (`BytesN<32>`). Pure ledger write: no cross-contract call, no token movement |
+| `get_payment(trip_id, expense_id, member)` | Read | None | Fetches payment record for specific member |
+| `get_payments(trip_id, offset, limit)` | Read | None | Returns a bounded page of payment history |
+| `is_paid(expense_id, member)` | Read | None | Checks if a member has already settled a specific share |
+| `extend_trip(trip_id, payment_offset, expense_offset, limit)` | Write | None (Permissionless) | Renews storage TTLs for bounded history pages |
+| `get_version()` | Read | None | Returns current contract schema version |
+| `get_admin()` | Read | None | Returns current contract admin address |
 
-| Code | Name            | Meaning                                  |
-| ---- | --------------- | ---------------------------------------- |
-| #1   | `InvalidAmount` | Payment amount is zero or negative       |
-| #2   | `AlreadyPaid`   | This share was already settled on-chain  |
-| #3   | `EmptyId`       | Trip ID or expense ID is an empty string |
+`get_payments` and `is_paid` are pure simulated reads; they do not renew
+storage TTLs. To keep history live, submit `extend_trip` as a real transaction
+(a keeper or any participant may submit it), then repeat with the returned
+payment and expense offsets until both are `None`. If an entry has already
+expired, include the archived footprint in the transaction so Soroban can
+restore it, or restore the trip's data before calling `extend_trip`.
+
+### Contract Error Codes
+
+#### Settlement Contract Errors
+
+| Code | Name | Meaning |
+| ---- | ---- | ------- |
+| #1 | `InvalidAmount` | Payment amount is zero or negative |
+| #2 | `AlreadyPaid` | Share is already settled on-chain |
+| #3 | `EmptyId` | Trip ID or expense ID is empty |
+| #4 | `AlreadyInitialized` | Contract has already been initialized |
+| #5 | `NotInitialized` | Contract has not been initialized yet |
+| #6 | `InvalidActor` | Invalid caller / address (e.g. payer equals member, or attestor equals admin) |
+| #7 | `IdTooLong` | Trip ID or expense ID exceeds maximum allowed length (64 bytes) |
+| #8 | `AmountTooLarge` | Payment amount exceeds `MAX_AMOUNT_STROOPS` (1e15 stroops / 1e8 XLM) |
+| #9 | `VersionMismatch` | State version mismatch during migration |
+| #10 | `TxHashTooLong` | Transaction hash validation error |
+| #11 | `NotPaid` | Attempted to clear an expense payment that was not marked as paid |
+| #12 | `Unauthorized` | Caller lacks authorization (e.g. non-admin or missing attestor signature) |
+| #13 | `InvalidPage` | Bounded pagination parameters are invalid (e.g. limit is 0) |
+| #14 | `IndexOverflow` | Bounded trip index exceeded maximum capacity |
 
 ### Why a Smart Contract?
 
@@ -297,7 +356,7 @@ The contract emits a `pmt_rec` event for every confirmed payment. `hooks/useCont
 
 ### Prerequisites
 
-- **Node.js** v18 or later
+- **Node.js** v20 or later
 - **npm** v9 or later
 - **Freighter Wallet** browser extension — [freighter.app](https://freighter.app)
   - In Freighter: Settings → Network → select **Testnet**
@@ -318,7 +377,7 @@ npm install
 
 ### 3. Create a Supabase project
 
-SettleX uses Supabase for real-time cross-user sync. Without it, data only persists locally in the current browser session.
+SettleX uses Supabase for cross-user sync, refreshed about every five seconds while a page is visible. Without it, data only persists locally in the current browser session.
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the SQL Editor, run the full schema from [`supabase-setup.sql`](supabase-setup.sql) (or follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) for a walkthrough).
@@ -385,7 +444,7 @@ AUTH_SESSION_TTL_SECONDS=43200
 
 > Variables with the `NEXT_PUBLIC_` prefix are read client-side and are inlined into the JavaScript bundle — treat every one of them as public. The Supabase anon key is safe to expose because access is governed by Row Level Security.
 >
-> `SUPABASE_JWT_SECRET` and `AUTH_CHALLENGE_SECRET` are **not** public. They are read only inside the `/api/auth/*` route handlers. Prefixing either with `NEXT_PUBLIC_` would ship it to every visitor and let anyone mint a token for any wallet.
+> `SUPABASE_JWT_SECRET` and `AUTH_CHALLENGE_SECRET` are **not** public. They are read only inside server-side auth and Supabase proxy route handlers. Prefixing either with `NEXT_PUBLIC_` would ship it to every visitor and let anyone mint a token for any wallet.
 
 ---
 
@@ -396,9 +455,9 @@ Your Stellar address is your identity, and the app proves you control it before 
 1. **Challenge** — `POST /api/auth/challenge` returns a transaction built for your address with **sequence number 0**, carrying a random nonce. Sequence 0 is always below an account's real sequence, so the network can never accept it: it is signable but unsubmittable, and costs no fee.
 2. **Sign** — your wallet (Freighter, xBull, Lobstr) signs it locally. Your private key never leaves the extension.
 3. **Verify** — `POST /api/auth/verify` checks the signature against the claimed public key and, only on success, mints a short-lived Supabase JWT whose `wallet_address` claim carries the proven address. The token is signed with `SUPABASE_JWT_SECRET`, which never reaches the browser.
-4. **Authorize** — every RLS policy reads that claim via `public.settlex_wallet()`. Requests without a valid token get no rows at all.
+4. **Authorize** — `/api/auth/verify` sets the JWT as an `HttpOnly`, `SameSite=Lax` cookie and does not return it in JSON. Supabase REST calls go through same-origin Next.js handlers, which validate the cookie and forward the JWT to PostgREST. Every RLS policy reads the claim via `public.settlex_wallet()`; requests without a valid token get no rows.
 
-The token is cached in `localStorage` and reused until it expires (12 hours by default), so you sign roughly once a day rather than once per action.
+The browser never reads or stores the JWT in `localStorage`; only non-secret session metadata is held in memory. The cookie survives reloads until expiry (one hour by default, configurable up to 12 hours), so a valid session can be checked on reload without another signature. Near expiry, the UI asks the wallet to sign again. Because an HttpOnly cookie cannot authenticate a browser WebSocket, expense and trip updates use five-second polling while the page is visible instead of Supabase Realtime. This is slightly less immediate but keeps the bearer token out of JavaScript. HttpOnly prevents token extraction, but an XSS can still perform actions through the active page until the session expires or is signed out.
 
 > **Upgrading an existing deployment:** earlier versions authorized on an `x-wallet-address` request header that the browser set itself. Because the anon key is public, anyone could send that header with any address and read or modify every user's data. Re-run [`supabase-setup.sql`](supabase-setup.sql) to replace those policies and set `SUPABASE_JWT_SECRET`. Until you do, the data layer is effectively unauthenticated.
 
@@ -492,7 +551,7 @@ settlex/
 │   └── settlement/netBalance.ts  # Net-balance optimisation algorithm
 │
 ├── contract/
-│   └── src/lib.rs                # Soroban smart contract source (Rust)
+│   └── contracts/settlement/      # Settlement contract crate and WASM
 │
 ├── __tests__/
 │   ├── split/calculator.test.ts

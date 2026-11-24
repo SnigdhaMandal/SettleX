@@ -30,10 +30,11 @@ export async function POST(request: Request) {
     );
   }
 
-  const { txHash, destinationWallet, expectedAmount } = (body ?? {}) as {
+  const { txHash, destinationWallet, expectedAmount, sourceWallet } = (body ?? {}) as {
     txHash?: unknown;
     destinationWallet?: unknown;
     expectedAmount?: unknown;
+    sourceWallet?: unknown;
   };
 
   if (!txHash || typeof txHash !== "string") {
@@ -48,6 +49,7 @@ export async function POST(request: Request) {
   const result = await verifyTransactionOnHorizon(txHash, {
     destinationWallet: typeof destinationWallet === "string" ? destinationWallet : undefined,
     expectedAmount: typeof expectedAmount === "string" ? expectedAmount : undefined,
+    sourceWallet: typeof sourceWallet === "string" ? sourceWallet : undefined,
   });
 
   if (!result.exists) {
@@ -84,6 +86,7 @@ export async function GET(request: Request) {
   const txHash = url.searchParams.get("txHash");
   const destinationWallet = url.searchParams.get("destinationWallet") || undefined;
   const expectedAmount = url.searchParams.get("expectedAmount") || undefined;
+  const sourceWallet = url.searchParams.get("sourceWallet") || undefined;
 
   if (!txHash) {
     logger.finish("payment.verify_completed", 400, { reason: "missing_tx_hash" });
@@ -97,6 +100,7 @@ export async function GET(request: Request) {
   const result = await verifyTransactionOnHorizon(txHash, {
     destinationWallet,
     expectedAmount,
+    sourceWallet,
   });
 
   if (!result.exists) {

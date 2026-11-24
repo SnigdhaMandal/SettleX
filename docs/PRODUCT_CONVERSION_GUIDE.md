@@ -33,7 +33,7 @@
 
 ### What is genuinely strong (keep and build on)
 
-- **Real architecture, not a mock.** Next.js 14 App Router + TypeScript, a working Soroban contract in [contract/src/lib.rs](../contract/src/lib.rs), Horizon payment building in [lib/stellar/buildTransaction.ts](../lib/stellar/buildTransaction.ts), and a real deployed testnet contract.
+- **Real architecture, not a mock.** Next.js 14 App Router + TypeScript, a working settlement Soroban contract in [contract/contracts/settlement/src/lib.rs](../contract/contracts/settlement/src/lib.rs), Horizon payment building in [lib/stellar/buildTransaction.ts](../lib/stellar/buildTransaction.ts), and real deployed testnet contracts.
 - **Non-custodial signing.** The private key never leaves the wallet extension — the app only receives a signed XDR envelope. That is the correct trust model and a genuine selling point.
 - **Test discipline.** 45 JS tests + Rust contract tests, CI workflow, release checklist, runbook. Most "projects" don't have this.
 - **A clean, opinionated design system.** The lime `#B9FF66` / near-black `#0F0F14` palette in [tailwind.config.ts](../tailwind.config.ts) is distinctive and coherent.
@@ -383,9 +383,9 @@ This is the deepest gap between "project" and "product," so it gets its own sect
 Per the code and your own [docs/ARCHITECTURE_AND_LIMITATIONS.md](./ARCHITECTURE_AND_LIMITATIONS.md#L27):
 
 1. `buildPaymentTransaction` builds a **native XLM payment** on Horizon; the user signs; it's submitted → a real `tx_hash` results.
-2. Separately, [contract/src/lib.rs `record_payment`](../contract/src/lib.rs#L154) is called with that `tx_hash`. It calls the pool contract's `withdraw` — but the docs state plainly: *"Pool balances are internal contract accounting credits, not native XLM/token custody transfers on-chain,"* and *"record_payment stores provided tx_hash metadata and relies on app flow integrity; it does not cryptographically verify Horizon payment details inside the contract."*
+2. Separately, [the settlement crate's `record_payment`](../contract/contracts/settlement/src/lib.rs) is called with that `tx_hash`. It makes no cross-contract call and moves no value: it *"stores provided tx_hash metadata and relies on app flow integrity; it does not cryptographically verify Horizon payment details inside the contract."* (Earlier docs claimed it also withdrew from a pool contract in the same transaction; the code never did, and the pool was removed in Issue #178.)
 
-**Translation:** the contract is a **notary that believes whatever the client tells it.** The `tx_hash` it stores could be fabricated, reused from an unrelated transfer, or point to a payment of the wrong amount to the wrong person. The `is_paid` duplicate-guard and `AlreadyPaid` error protect against *double-recording*, not against *lying about the payment*. The "pool" adds an appearance of custody that isn't real.
+**Translation:** the contract is a **notary that believes whatever the client tells it.** The `tx_hash` it stores could be fabricated, reused from an unrelated transfer, or point to a payment of the wrong amount to the wrong person. The `is_paid` duplicate-guard and `AlreadyPaid` error protect against *double-recording*, not against *lying about the payment*. Nothing in the repository custodies funds, and it must not be presented as doing so.
 
 For a demo, acceptable and even documented. For a product handling real USDC, **a settlement you can forge is not a settlement.**
 
@@ -398,9 +398,9 @@ Move the value transfer **into** the contract. Instead of "pay on Horizon, then 
 Keep the Horizon payment, but have an off-chain **verifier service** (trusted backend) fetch the `tx_hash` from Horizon, confirm `{from, to, asset, amount, memo}` match the claimed expense, and only then co-sign/authorize the contract record. Removes client trust but introduces a trusted server (weaker than A, but a real improvement and easier than rewriting settlement).
 
 **Option C — Drop the contract's custody pretense; position it honestly as a receipt log (cheapest).**
-If you're not ready for A or B, **remove the pool contract** and stop implying custody. Relabel `record_payment` as an **audit/receipt anchor**: "an immutable, timestamped, on-chain log of settlement claims, each linked to a Horizon tx you can independently verify." Update all copy to say exactly that. This is honest and shippable immediately — it just doesn't claim more than it does.
+If you're not ready for A or B, remove the pool contract (done in Issue #178) and stop implying custody. Relabel `record_payment` as an **audit/receipt anchor**: "an immutable, timestamped, on-chain log of settlement claims, each linked to a Horizon tx you can independently verify." Update all copy to say exactly that. This is honest and shippable immediately — it just doesn't claim more than it does.
 
-> **Recommendation:** Ship **C now** (honesty, this week) and build toward **A** for real USDC settlement (the product). Avoid leaving the current pool illusion in place while marketing "on-chain settlement" — that's precisely the "not honest" outcome you said you want to avoid.
+> **Recommendation:** Ship **C now** (honesty, this week) and build toward **A** for real USDC settlement (the product). Avoid reintroducing a pool illusion while marketing "on-chain settlement" — that's precisely the "not honest" outcome you said you want to avoid.
 
 ### 9.3 Get the contract audited
 Before mainnet with real value, a Soroban security review (e.g., a reputable Soroban auditor) of the final settlement contract is non-negotiable. Budget for it. Ship the audit report link publicly — it's also great trust marketing.

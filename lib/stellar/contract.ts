@@ -6,6 +6,7 @@ import {
   nativeToScVal,
   scValToNative,
   Address,
+  xdr,
 } from "@stellar/stellar-sdk";
 import { sorobanServer } from "./soroban";
 import { signXDR } from "@/lib/freighter";
@@ -21,7 +22,7 @@ import type {
   GetPaymentsResult,
   IsPaidResult,
 } from "@/types/contract";
-import { ContractErrorCode, PoolErrorCode } from "@/types/contract";
+import { ContractErrorCode } from "@/types/contract";
 
 const SOROBAN_BASE_FEE  = "1000";
 const MAX_POLL_ATTEMPTS  = 20;
@@ -33,31 +34,6 @@ export function decodeContractError(raw: string): string {
   const match = raw.match(/Error\(Contract,\s*#(\d+)\)/);
   if (match) {
     const code = Number(match[1]);
-
-    if (code >= 100) {
-      switch (code) {
-        case PoolErrorCode.AlreadyInitialized:
-          return "Pool is already initialized.";
-        case PoolErrorCode.NotInitialized:
-          return "Pool contract is not initialized yet.";
-        case PoolErrorCode.Unauthorized:
-          return "Pool authorization failed.";
-        case PoolErrorCode.InvalidAmount:
-          return "Pool payment amount must be greater than zero.";
-        case PoolErrorCode.InsufficientBalance:
-          return "Pool balance is insufficient for this transfer.";
-        case PoolErrorCode.BalanceOverflow:
-          return "Pool balance overflowed.";
-        case PoolErrorCode.VersionMismatch:
-          return "Pool storage version mismatch.";
-        case PoolErrorCode.InvalidActor:
-          return "Invalid pool actor for this operation.";
-        case PoolErrorCode.AmountTooLarge:
-          return "Pool amount is above the allowed limit.";
-        default:
-          return `Pool error #${code}.`;
-      }
-    }
 
     switch (code) {
       case ContractErrorCode.InvalidAmount:
@@ -109,6 +85,18 @@ async function loadAccount(publicKey: string): Promise<Account> {
   return new Account(publicKey, data.sequence);
 }
 
+// Placeholder public key for read simulations; simulation does not check
+// signatures, balances, or sequences, so any valid G-address works.
+const SIMULATION_ACCOUNT_ADDRESS = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAY";
+
+function createSimulationAccount(callerPublicKey?: string): Account {
+  const address =
+    callerPublicKey && callerPublicKey.startsWith("G") && callerPublicKey.length === 56
+      ? callerPublicKey
+      : SIMULATION_ACCOUNT_ADDRESS;
+  return new Account(address, "0");
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
@@ -126,11 +114,32 @@ function contractReady(caller: string): boolean {
   return true;
 }
 
+/*
+ * ─── Naming: the contract's `payer` / `member` are inverted (Issue #208) ────
+ *
+ * In the settlement contract (contract/contracts/settlement/src/lib.rs):
+ *
+ *   payer  = the CREDITOR: the member who paid the bill and RECEIVES the XLM
+ *   member = the DEBTOR:   the member who owed a share and SENT the XLM
+ *
+ * That is the reverse of everyday usage and of the UI, where "Payer" is the
+ * person who paid the bill. The names are part of the deployed contract's
+ * interface (stored PaymentRecord fields and event payloads), so they stay
+ * there; this wrapper speaks creditor/debtor instead, and maps them onto the
+ * contract's argument order in one place below. When reading records or
+ * events, treat `payer` as the creditor and `member` as the debtor.
+ */
+
 export interface RecordPaymentParams {
-  memberPublicKey: string;
+  /**
+   * DEBTOR: owner of the share, who sent the XLM. Signs the record
+   * (the contract's `member`, which must `require_auth`).
+   */
+  debtorPublicKey: string;
   tripId: string;
   expenseId: string;
-  payerPublicKey: string;
+  /** CREDITOR: who received the XLM, the member who paid the bill (the contract's `payer`). */
+  creditorPublicKey: string;
   amountXlm: string;
   txHash: string;
   onStatus?: (step: "simulating" | "signing" | "sending" | "confirming") => void;
@@ -142,30 +151,6 @@ export interface RecordPaymentResult {
   error?: string;
 }
 
-export interface PoolPrecheckResult {
-  ok: boolean;
-  requiredStroops: bigint;
-  balanceStroops?: bigint;
-  shortfallStroops?: bigint;
-  error?: string;
-}
-
-export async function precheckPoolBalance(
-  callerPublicKey: string,
-  memberPublicKey: string,
-  amountXlm: string,
-): Promise<PoolPrecheckResult> {
-  const requiredStroops = xlmToStroops(amountXlm);
-
-  if (!contractReady("precheckPoolBalance")) {
-    return { ok: false, requiredStroops, error: "Contract not configured." };
-  }
-
-  // Pure ledger write model (Issue #131): recording payments is a pure ledger write
-  // to the SettleX contract and does not require pre-funded pool credits.
-  return { ok: true, requiredStroops, balanceStroops: requiredStroops };
-}
-
 export async function recordPaymentOnChain(
   params: RecordPaymentParams
 ): Promise<RecordPaymentResult> {
@@ -174,25 +159,32 @@ export async function recordPaymentOnChain(
   }
 
   const {
-    memberPublicKey,
+    debtorPublicKey,
     tripId,
     expenseId,
-    payerPublicKey,
+    creditorPublicKey,
     amountXlm,
     txHash,
     onStatus,
   } = params;
 
   try {
-    const account  = await loadAccount(memberPublicKey);
+    if (debtorPublicKey === creditorPublicKey) {
+      // The contract rejects this too (InvalidActor); fail before asking to sign.
+      throw new Error("The sender and recipient of a share payment must differ.");
+    }
+
+    const account  = await loadAccount(debtorPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     const amountStroops = xlmToStroops(amountXlm);
+    // record_payment(trip_id, expense_id, payer, member, amount, tx_hash)
+    //                                     ^creditor ^debtor
     const contractArgs = [
       nativeToScVal(tripId,           { type: "string" }),
       nativeToScVal(expenseId,        { type: "string" }),
-      new Address(payerPublicKey).toScVal(),
-      new Address(memberPublicKey).toScVal(),
+      new Address(creditorPublicKey).toScVal(),
+      new Address(debtorPublicKey).toScVal(),
       nativeToScVal(amountStroops,    { type: "i128" }),
       nativeToScVal(txHash,           { type: "string" }),
     ];
@@ -218,7 +210,7 @@ export async function recordPaymentOnChain(
     const assembled = rpc.assembleTransaction(tx, simResult).build();
 
     onStatus?.("signing");
-    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE);
+    const signedXdr = await signXDR(assembled.toXDR(), NETWORK_PASSPHRASE, debtorPublicKey);
 
     onStatus?.("sending");
     const sendResult = await sorobanServer.sendTransaction(
@@ -226,9 +218,35 @@ export async function recordPaymentOnChain(
     );
 
     if (sendResult.status === "ERROR") {
+      const sendEvents =
+        (sendResult as { diagnosticEventsXdr?: unknown[]; diagnosticEvents?: unknown[] })
+          .diagnosticEventsXdr ??
+        (sendResult as { diagnosticEventsXdr?: unknown[]; diagnosticEvents?: unknown[] })
+          .diagnosticEvents;
+      const diagErr = extractDiagnosticError(sendEvents);
+      if (diagErr) {
+        throw new Error(decodeContractError(diagErr));
+      }
+
+      const errorDetail =
+        (sendResult as { errorResult?: { result?: () => { toXDR?: (f?: string) => string }; toXDR?: (f?: string) => string }; errorResultXdr?: string })
+          .errorResult?.result?.()?.toXDR?.("base64") ??
+        (sendResult as { errorResult?: { toXDR?: (f?: string) => string } })
+          .errorResult?.toXDR?.("base64") ??
+        (sendResult as { errorResultXdr?: string }).errorResultXdr ??
+        "unknown error";
       throw new Error(
-        `Contract send failed: ${sendResult.errorResult?.result()?.toXDR("base64") ?? "unknown error"}`
+        decodeContractError(`Contract send failed: ${errorDetail}`)
       );
+    }
+    if (sendResult.status === "TRY_AGAIN_LATER") {
+      throw new Error("The network is currently busy. Please try submitting again later.");
+    }
+    if (sendResult.status === "DUPLICATE") {
+      throw new Error("Transaction is a duplicate and was already submitted.");
+    }
+    if (sendResult.status !== "PENDING") {
+      throw new Error(`Unexpected transaction submission status: ${sendResult.status}`);
     }
 
     onStatus?.("confirming");
@@ -242,10 +260,23 @@ export async function recordPaymentOnChain(
         return { success: true, ledger: (pollResult as { ledger: number }).ledger };
       }
       if (pollResult.status === rpc.Api.GetTransactionStatus.FAILED) {
-        const failedResult = pollResult as { resultXdr?: { toXDR?: () => unknown } };
-        const rawMsg = failedResult.resultXdr
-          ? `Contract error: ${String(failedResult.resultXdr)}`
-          : "Contract transaction was submitted but failed on-chain.";
+        const failedResult = pollResult as {
+          resultXdr?: unknown;
+          diagnosticEventsXdr?: unknown[];
+          diagnosticEvents?: unknown[];
+        };
+
+        const events = failedResult.diagnosticEventsXdr ?? failedResult.diagnosticEvents;
+        const diagnosticError = extractDiagnosticError(events);
+
+        const resultXdrBase64 = toBase64Xdr(failedResult.resultXdr);
+
+        const rawMsg =
+          diagnosticError ??
+          (resultXdrBase64
+            ? `Contract error: ${resultXdrBase64}`
+            : "Contract transaction was submitted but failed on-chain.");
+
         throw new Error(decodeContractError(rawMsg));
       }
     }
@@ -269,7 +300,7 @@ export async function getContractPayments(
   }
 
   try {
-    const account  = await loadAccount(callerPublicKey);
+    const account  = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     type RawPayment = {
@@ -287,6 +318,8 @@ export async function getContractPayments(
       next_offset?: number | bigint | null;
     };
 
+    // This is intentionally simulation-only. get_payments is a pure read;
+    // TTL maintenance must be submitted as an extend_trip transaction.
     const rawPayments: RawPayment[] = [];
     let offset = 0;
 
@@ -311,7 +344,10 @@ export async function getContractPayments(
         rpc.Api.isSimulationError(simResult) ||
         !rpc.Api.isSimulationSuccess(simResult)
       ) {
-        throw new Error("Simulation failed when reading trip payments.");
+        const errDetail = rpc.Api.isSimulationError(simResult)
+          ? decodeContractError(simResult.error)
+          : "Simulation failed when reading trip payments.";
+        throw new Error(errDetail);
       }
 
       const retval = simResult.result?.retval;
@@ -335,8 +371,8 @@ export async function getContractPayments(
     const payments: ContractPaymentRecord[] = rawPayments.map((r) => ({
       tripId:        tripId,
       expenseId:     r.expense_id,
-      payer:         r.payer,
-      member:        r.member,
+      payer:         r.payer,   // creditor
+      member:        r.member,  // debtor
       amountStroops: r.amount,
       txHash:        r.tx_hash,
       timestamp:     Number(r.timestamp),
@@ -362,17 +398,22 @@ export async function getContractPayments(
   }
 }
 
+/**
+ * Whether the DEBTOR's share of `expenseId` is recorded as paid on-chain
+ * (the contract's `is_paid(expense_id, member)`). Pass the share owner's
+ * wallet, the same account `recordPaymentOnChain` records as the debtor.
+ */
 export async function checkIsPaid(
   callerPublicKey: string,
   expenseId: string,
-  memberPublicKey: string
+  debtorPublicKey: string
 ): Promise<IsPaidResult> {
   if (!contractReady("checkIsPaid")) {
     return { paid: false, success: false, error: "Contract not configured." };
   }
 
   try {
-    const account  = await loadAccount(callerPublicKey);
+    const account  = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     const tx = new TransactionBuilder(account, {
@@ -383,19 +424,23 @@ export async function checkIsPaid(
         contract.call(
           "is_paid",
           nativeToScVal(expenseId,      { type: "string" }),
-          new Address(memberPublicKey).toScVal()
+          new Address(debtorPublicKey).toScVal()
         )
       )
       .setTimeout(30)
       .build();
 
+    // This is intentionally simulation-only. is_paid does not mutate TTLs.
     const simResult = await sorobanServer.simulateTransaction(tx);
 
     if (
       rpc.Api.isSimulationError(simResult) ||
       !rpc.Api.isSimulationSuccess(simResult)
     ) {
-      throw new Error("Simulation failed when checking payment status.");
+      const errDetail = rpc.Api.isSimulationError(simResult)
+        ? decodeContractError(simResult.error)
+        : "Simulation failed when checking payment status.";
+      throw new Error(errDetail);
     }
 
     const retval = simResult.result?.retval;

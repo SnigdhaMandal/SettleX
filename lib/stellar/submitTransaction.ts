@@ -30,6 +30,51 @@ export function extractTxHash(tx: any): string {
   return "";
 }
 
+/**
+ * Thrown when a submission's outcome is unknown: Horizon timed out, the
+ * connection dropped, or it reported a sequence race, and polling by hash did
+ * not find the transaction either. The transaction may still land, so callers
+ * must not treat this like a definitive rejection (the money may have moved).
+ */
+export class SubmissionIndeterminateError extends Error {
+  readonly txHash: string;
+
+  constructor(message: string, txHash: string) {
+    super(message);
+    this.name = "SubmissionIndeterminateError";
+    this.txHash = txHash;
+  }
+}
+
+export function isSubmissionIndeterminate(err: unknown): boolean {
+  return err instanceof Error && err.name === "SubmissionIndeterminateError";
+}
+
+export interface SignedTransactionInfo {
+  /** Lowercase hex hash, identical to the one Horizon will report. */
+  hash: string;
+  /** ISO time after which the transaction can no longer be included, if bounded. */
+  validUntil: string | null;
+}
+
+/**
+ * Reads the hash and expiry of a signed transaction before it is submitted.
+ * The hash is fixed once signed, so it can be persisted ahead of submission
+ * and used to reconcile with Horizon if the app dies mid-payment.
+ */
+export function inspectSignedTransaction(signedXDR: string): SignedTransactionInfo {
+  const tx = TransactionBuilder.fromXDR(signedXDR, NETWORK_PASSPHRASE);
+  const hash = extractTxHash(tx).toLowerCase();
+  if (!hash) throw new Error("Could not read the signed transaction hash.");
+
+  const maxTime = Number((tx as { timeBounds?: { maxTime?: string } }).timeBounds?.maxTime ?? 0);
+  const validUntil = Number.isFinite(maxTime) && maxTime > 0
+    ? new Date(maxTime * 1000).toISOString()
+    : null;
+
+  return { hash, validUntil };
+}
+
 export async function pollTransactionByHash(
   txHash: string,
   maxWaitMs = 25000,
@@ -41,7 +86,7 @@ export async function pollTransactionByHash(
   while (Date.now() - startTime < maxWaitMs) {
     try {
       if (typeof server?.transactions === "function" && typeof server.transactions().transaction === "function") {
-        const txRecord = await server.transactions().transaction(txHash);
+        const txRecord = await server.transactions().transaction(txHash).call();
         if (txRecord && txRecord.successful !== false) {
           return {
             hash: txRecord.hash || txHash,
@@ -174,13 +219,14 @@ export async function submitSignedTransaction(
 
     // If tx_bad_seq was reported and hash polling didn't find it, report bad sequence error
     if (check.message) {
-      throw new Error(check.message);
+      throw new SubmissionIndeterminateError(check.message, txHash);
     }
 
     // Otherwise, if indeterminate and not confirmed after polling, provide an actionable warning
-    throw new Error(
+    throw new SubmissionIndeterminateError(
       "Transaction submission timed out. The network might still be processing your transaction. " +
-      "Please check your transaction history or wait a moment before trying again to avoid duplicate payments."
+      "Please check your transaction history or wait a moment before trying again to avoid duplicate payments.",
+      txHash,
     );
   }
 }

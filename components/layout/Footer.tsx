@@ -3,30 +3,26 @@
 import React from "react";
 import Link from "next/link";
 import { motion } from "framer-motion";
-import { Twitter, Github, ExternalLink, ArrowUpRight } from "lucide-react";
+import { Github, ExternalLink, ArrowUpRight } from "lucide-react";
 import { SettleXLogo } from "@/components/ui/Logo";
 
 const footerLinks = {
   Product: [
-    { label: "Features", href: "#features" },
-    { label: "How It Works", href: "#how-it-works" },
-    { label: "Pricing", href: "#pricing" },
-    { label: "Changelog", href: "#" },
-    { label: "Roadmap", href: "#" },
+    { label: "Features", href: "/#features" },
+    { label: "How It Works", href: "/#how-it-works" },
+    { label: "Pricing", href: "/#pricing" },
   ],
   Developers: [
-    { label: "Documentation", href: "#" },
-    { label: "GitHub", href: "#", external: true },
+    { label: "Documentation", href: "https://github.com/SnigdhaMandal/SettleX/tree/main/docs", external: true },
+    { label: "GitHub", href: "https://github.com/SnigdhaMandal/SettleX", external: true },
     { label: "Stellar SDK", href: "https://stellar.org/developers", external: true },
     { label: "Horizon API", href: "https://horizon.stellar.org", external: true },
     { label: "Freighter Wallet", href: "https://freighter.app", external: true },
   ],
-  Company: [
-    { label: "About", href: "#" },
-    { label: "Blog", href: "#" },
-    { label: "Contact", href: "#" },
-    { label: "Privacy Policy", href: "#" },
-    { label: "Terms of Service", href: "#" },
+  Legal: [
+    { label: "Privacy Policy", href: "/privacy" },
+    { label: "Terms of Service", href: "/terms" },
+    { label: "Contact & Support", href: "https://github.com/SnigdhaMandal/SettleX/issues", external: true },
   ],
 };
 
@@ -53,19 +49,15 @@ export default function Footer() {
 
             {/* Social links */}
             <div className="flex items-center gap-3">
-              {[
-                { icon: Twitter, href: "#", label: "Twitter" },
-                { icon: Github, href: "#", label: "GitHub" },
-              ].map(({ icon: Icon, href, label }) => (
-                <a
-                  key={label}
-                  href={href}
-                  aria-label={label}
-                  className="flex items-center justify-center w-9 h-9 rounded-xl bg-white/5 border border-white/10 text-[#888] hover:text-white hover:border-[#B9FF66]/40 hover:bg-[#B9FF66]/10 transition-all duration-200"
-                >
-                  <Icon size={16} />
-                </a>
-              ))}
+              <a
+                href="https://github.com/SnigdhaMandal/SettleX"
+                target="_blank"
+                rel="noopener noreferrer"
+                aria-label="GitHub"
+                className="flex items-center justify-center w-9 h-9 rounded-xl bg-white/5 border border-white/10 text-[#888] hover:text-white hover:border-[#B9FF66]/40 hover:bg-[#B9FF66]/10 transition-all duration-200"
+              >
+                <Github size={16} />
+              </a>
               <a
                 href="https://stellar.org"
                 target="_blank"

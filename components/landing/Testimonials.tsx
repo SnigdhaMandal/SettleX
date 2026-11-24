@@ -51,7 +51,7 @@ const proofs = [
   {
     icon: Map,
     title: "Testnet live, mainnet on the roadmap",
-    text: "SettleX runs on Stellar Testnet today, with USDC settlement and a mainnet launch on a published roadmap. We say exactly where we are.",
+    text: "SettleX runs on Stellar Testnet today, with a mainnet launch on a published roadmap. We say exactly where we are.",
     href: `${EXPLORER}/contract/${CONTRACT_ID}`,
     cta: "View the live contract",
   },

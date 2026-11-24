@@ -11,14 +11,11 @@ import type { Trip } from "@/types/trip";
 import { getWalletScopedKey, LS_TRIPS } from "@/lib/utils/constants";
 import {
   getAuthenticatedClient,
+  hasProvenSession,
   onSessionChange,
-  readStoredSession,
   requireAuthenticatedClient,
 } from "@/lib/supabase/session";
-import type {
-  RealtimePostgresChangesPayload,
-  SupabaseClient,
-} from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/types/supabase";
 import { useWalletContext } from "./WalletContext";
 import { parseTripRow } from "@/lib/supabase/rowGuards";
@@ -27,19 +24,18 @@ import { supabaseErrorFields } from "@/lib/observability/supabaseError";
 
 
 /**
- * True only when this browser holds an unexpired session token minted for this
- * exact wallet — i.e. the wallet has signed a server challenge at some point.
+ * True only after the server has confirmed an active session for this wallet.
  *
  * The offline cache is readable by anyone at this keyboard, so possession of an
  * address alone must not unlock it: otherwise a wallet that connects and never
  * signs (or declines to) would be shown the rows of whichever account cached
- * them. Proof of ownership gates the read; the token still authorizes nothing
- * on its own, because the server re-verifies it on every request.
+ * them. The cookie itself is never read by browser code; the server verifies it
+ * before this in-memory marker is set.
  */
 function hasProvenOwnership(walletAddress: string | null): boolean {
   if (!walletAddress) return false;
   try {
-    return !!readStoredSession(walletAddress);
+    return hasProvenSession(walletAddress);
   } catch {
     return false;
   }
@@ -84,6 +80,13 @@ function isCachedTripForWallet(trip: Trip, walletAddress: string | null): boolea
   );
 }
 
+/**
+ * Raised when a write loses to a concurrent one. Local state already holds the
+ * winning row, so the caller should reapply its change rather than retry the
+ * same stale payload.
+ */
+export class TripConflictError extends Error {}
+
 function dbRowToTrip(row: unknown): Trip {
   return parseTripRow(row);
 }
@@ -108,6 +111,7 @@ function tripToDbInsertRow(
     expense_ids: trip.expenseIds,
     created_at: trip.createdAt,
     settled: trip.settled,
+    version: trip.version ?? 1,
     created_by_wallet: creatorWallet,
     member_wallets: allMemberWallets,
     accepted_wallets: [creatorWallet],
@@ -141,8 +145,54 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("settlex:consent-changed", refresh);
   }, []);
 
+  // Listen for atomic expense creations in trips
+  useEffect(() => {
+    const handleExpenseCreated = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tripId: string; expenseId: string }>;
+      const { tripId, expenseId } = customEvent.detail || {};
+      if (tripId && expenseId) {
+        setTrips((prev) => {
+          const updated = prev.map((t) => {
+            if (t.id !== tripId) return t;
+            if (t.expenseIds.includes(expenseId)) return t;
+            return { ...t, expenseIds: [...t.expenseIds, expenseId] };
+          });
+          const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+
+    const handleExpenseDeleted = (e: Event) => {
+      const customEvent = e as CustomEvent<{ expenseId: string }>;
+      const expenseId = customEvent.detail?.expenseId;
+      if (expenseId) {
+        setTrips((prev) => {
+          const updated = prev.map((t) => {
+            if (!t.expenseIds.includes(expenseId)) return t;
+            return {
+              ...t,
+              expenseIds: t.expenseIds.filter((id) => id !== expenseId),
+            };
+          });
+          const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+
+    window.addEventListener("settlex:trip-expense-created", handleExpenseCreated);
+    window.addEventListener("settlex:expense-deleted", handleExpenseDeleted);
+    return () => {
+      window.removeEventListener("settlex:trip-expense-created", handleExpenseCreated);
+      window.removeEventListener("settlex:expense-deleted", handleExpenseDeleted);
+    };
+  }, [publicKey]);
+
   // Resolve the authenticated client once per wallet so the initial load and
-  // the realtime feed share it. Concurrent callers reuse a single handshake,
+  // periodic refresh share it. Concurrent callers reuse a single handshake,
   // so the wallet is only ever asked to sign once.
   useEffect(() => {
     let cancelled = false;
@@ -239,90 +289,60 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
   }, [client, publicKey, consentGeneration]);
 
 
-  // Realtime authorizes on the socket's own JWT, so the feed has to run on the
-  // authenticated client too — the anon client would receive nothing.
+  // The JWT stays in an HttpOnly cookie, so database changes are polled through
+  // the authenticated REST proxy rather than exposed to a Realtime socket.
   useEffect(() => {
     if (!client || !publicKey) return;
 
     const cacheKey = getWalletScopedKey(LS_TRIPS, publicKey);
+    let stopped = false;
+    let inFlight = false;
+    let failureReported = false;
 
-    const channel = client
-      .channel("trips-changes")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "trips" },
-        (
-          payload: RealtimePostgresChangesPayload<
-            Database["public"]["Tables"]["trips"]["Row"]
-          >
-        ) => {
-          const row = payload.new;
-          if (!row) return;
-          if (!isRowForWallet(row, publicKey)) {
-            setTrips((prev) => {
-              const updated = prev.filter((trip) => trip.id !== row.id);
-              localStorage.setItem(cacheKey, JSON.stringify(updated));
-              return updated;
-            });
-            return;
-          }
-          const newTrip = dbRowToTrip(row);
-          setTrips((prev) => {
-            if (prev.some((t) => t.id === newTrip.id)) return prev;
-            const updated = [newTrip, ...prev];
-            localStorage.setItem(cacheKey, JSON.stringify(updated));
-            return updated;
+    const refresh = async () => {
+      if (
+        stopped ||
+        inFlight ||
+        document.visibilityState !== "visible" ||
+        !hasProvenSession(publicKey)
+      ) return;
+      inFlight = true;
+      try {
+        const { data, error } = await client
+          .from("trips")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        if (stopped || !data) return;
+
+        const trips = data
+          .filter((row) => isRowForWallet(row, publicKey))
+          .map(dbRowToTrip);
+        setTrips(trips);
+        localStorage.setItem(cacheKey, JSON.stringify(trips));
+        failureReported = false;
+      } catch (error) {
+        if (!stopped && !failureReported) {
+          reportError("trip.poll_failed", error, {
+            fields: supabaseErrorFields(error),
           });
+          failureReported = true;
         }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "trips" },
-        (
-          payload: RealtimePostgresChangesPayload<
-            Database["public"]["Tables"]["trips"]["Row"]
-          >
-        ) => {
-          const row = payload.new;
-          if (!row || !isRowForWallet(row, publicKey)) return;
-          const updatedTrip = dbRowToTrip(row);
-          setTrips((prev) => {
-            const updated = prev.map((t) =>
-              t.id === updatedTrip.id ? updatedTrip : t
-            );
-            localStorage.setItem(cacheKey, JSON.stringify(updated));
-            return updated;
-          });
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "trips" },
-        (
-          payload: RealtimePostgresChangesPayload<
-            Database["public"]["Tables"]["trips"]["Row"]
-          >
-        ) => {
-          // `old` is typed `{}` for INSERT events; a DELETE carries the row.
-          const row = payload.old as Partial<Database["public"]["Tables"]["trips"]["Row"]> | undefined;
-          if (!row || !isRowForWallet(row, publicKey)) return;
-          const deletedId = row?.id;
-          if (!deletedId) return;
-          setTrips((prev) => {
-            const updated = prev.filter((t) => t.id !== deletedId);
-            localStorage.setItem(cacheKey, JSON.stringify(updated));
-            return updated;
-          });
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          reportError("trip.realtime_failed", err, { fields: { status } });
-        }
-      });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const interval = setInterval(() => void refresh(), 5000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      void client.removeChannel(channel);
+      stopped = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [client, publicKey]);
 
@@ -399,22 +419,63 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         if (updates.expenseIds !== undefined) dbUpdates.expense_ids = updates.expenseIds;
         if (updates.settled !== undefined) dbUpdates.settled = updates.settled;
 
-        const { error } = await client
+        // Guard the write with the version we based `merged` on.
+        const baseVersion = current.version ?? 1;
+        dbUpdates.version = baseVersion + 1;
+
+        const { data, error } = await client
           .from("trips")
           .update(dbUpdates)
-          .eq("id", id);
+          .eq("id", id)
+          .eq("version", baseVersion)
+          .select("*");
 
         if (error) throw error;
+
+        // Zero rows means the predicate did not match: someone else wrote first.
+        // Re-read so the caller sees the winning row rather than a stale local
+        // copy, and fail loudly instead of pretending the edit landed.
+        if (!data || data.length === 0) {
+          const { data: fresh } = await client
+            .from("trips")
+            .select("*")
+            .eq("id", id)
+            .single();
+
+          if (fresh) {
+            const winner = dbRowToTrip(fresh);
+            setTrips((prev) => {
+              const synced = prev.map((t) => (t.id === id ? winner : t));
+              localStorage.setItem(cacheKey, JSON.stringify(synced));
+              return synced;
+            });
+          }
+
+          throw new TripConflictError(
+            "This trip was changed by someone else while you were editing. " +
+              "Your view has been refreshed — please reapply your change."
+          );
+        }
+
+        // Adopt the row the database actually stored
+        const stored = dbRowToTrip(data[0]);
+        setTrips((prev) => {
+          const synced = prev.map((t) => (t.id === id ? stored : t));
+          localStorage.setItem(cacheKey, JSON.stringify(synced));
+          return synced;
+        });
       } catch (err) {
         reportError("trip.update_failed", err, {
           fields: { tripId: id, ...supabaseErrorFields(err) },
         });
-        // Roll back optimistic update on error
-        setTrips((prev) => {
-          const rolled = prev.map((t) => (t.id === id ? current : t));
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
-          return rolled;
-        });
+        // A conflict already replaced local state with the winning row.
+        if (!(err instanceof TripConflictError)) {
+          setTrips((prev) => {
+            const rolled = prev.map((t) => (t.id === id ? current : t));
+            localStorage.setItem(cacheKey, JSON.stringify(rolled));
+            return rolled;
+          });
+        }
         throw err;
       }
     },
@@ -440,6 +501,15 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         const { error } = await client.from("trips").delete().eq("id", id);
 
         if (error) throw error;
+
+        // Notify ExpenseContext that this trip and its expenses were deleted
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("settlex:trip-deleted", {
+              detail: { tripId: id, expenseIds: current.expenseIds },
+            })
+          );
+        }
       } catch (err) {
         reportError("trip.delete_failed", err, {
           fields: { tripId: id, ...supabaseErrorFields(err) },
@@ -454,25 +524,30 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [trips, getClient]
+    [trips, getClient, publicKey]
   );
 
   const addExpenseToTrip = useCallback(
     async (tripId: string, expenseId: string) => {
-      const current = trips.find((t) => t.id === tripId);
-      if (!current || current.expenseIds.includes(expenseId)) return;
-
       const cacheKey = publicKey ? getWalletScopedKey(LS_TRIPS, publicKey) : LS_TRIPS;
-      const expenseIds = [...current.expenseIds, expenseId];
 
-      // Optimistic update
+      // Optimistic update: use functional update so concurrent calls merge expenseIds
+      let alreadyIncluded = false;
       setTrips((prev) => {
+        const target = prev.find((t) => t.id === tripId);
+        if (!target) return prev;
+        if (target.expenseIds.includes(expenseId)) {
+          alreadyIncluded = true;
+          return prev;
+        }
         const updated = prev.map((t) =>
-          t.id === tripId ? { ...t, expenseIds } : t
+          t.id === tripId ? { ...t, expenseIds: [...t.expenseIds, expenseId] } : t
         );
         localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
+
+      if (alreadyIncluded) return;
 
       try {
         const client = await getClient();
@@ -480,7 +555,7 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         // 1. Primary path: Call validated server-side RPC add_expense_to_trip
         let rpcSucceeded = false;
         try {
-          const { error: rpcErr } = await client.rpc("add_expense_to_trip", {
+          const { data: rpcData, error: rpcErr } = await client.rpc("add_expense_to_trip", {
             p_trip_id: tripId,
             p_expense_id: expenseId,
           });
@@ -497,6 +572,28 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
             }
           } else {
             rpcSucceeded = true;
+            if (rpcData) {
+              const rows = Array.isArray(rpcData) ? rpcData : [rpcData];
+              if (rows.length > 0) {
+                const storedTrip = dbRowToTrip(rows[0]);
+                setTrips((prev) => {
+                  const updated = prev.map((t) => {
+                    if (t.id !== tripId) return t;
+                    // Preserve any local in-flight additions while adopting server state
+                    const mergedExpenseIds = Array.from(
+                      new Set([...storedTrip.expenseIds, ...t.expenseIds])
+                    );
+                    return {
+                      ...t,
+                      ...storedTrip,
+                      expenseIds: mergedExpenseIds,
+                    };
+                  });
+                  localStorage.setItem(cacheKey, JSON.stringify(updated));
+                  return updated;
+                });
+              }
+            }
           }
         } catch (rpcErr) {
           const msg = (rpcErr as { message?: string })?.message || "";
@@ -513,14 +610,73 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
           });
         }
 
-        // 2. Fallback path: Direct update if RPC not present in environment
+        // 2. Fallback path: Direct guarded OCC update with retry if RPC not present in environment
         if (!rpcSucceeded) {
-          const { error } = await client
-            .from("trips")
-            .update({ expense_ids: expenseIds })
-            .eq("id", tripId);
+          const maxRetries = 3;
+          let success = false;
+          for (let attempt = 0; attempt < maxRetries; attempt++) {
+            const { data: freshRow, error: fetchErr } = await client
+              .from("trips")
+              .select("*")
+              .eq("id", tripId)
+              .single();
 
-          if (error) throw error;
+            if (fetchErr) throw fetchErr;
+            if (!freshRow) throw new Error("Trip not found");
+
+            const freshTrip = dbRowToTrip(freshRow);
+            if (freshTrip.settled) {
+              throw new Error("Cannot add expenses to a settled trip");
+            }
+
+            if (freshTrip.expenseIds.includes(expenseId)) {
+              success = true;
+              setTrips((prev) => {
+                const updated = prev.map((t) => (t.id === tripId ? { ...t, ...freshTrip } : t));
+                localStorage.setItem(cacheKey, JSON.stringify(updated));
+                return updated;
+              });
+              break;
+            }
+
+            const baseVersion = freshTrip.version ?? 1;
+            const nextExpenseIds = [...freshTrip.expenseIds, expenseId];
+
+            const { data: updateData, error: updateErr } = await client
+              .from("trips")
+              .update({
+                expense_ids: nextExpenseIds,
+                version: baseVersion + 1,
+              })
+              .eq("id", tripId)
+              .eq("version", baseVersion)
+              .select("*");
+
+            if (updateErr) throw updateErr;
+
+            if (updateData && updateData.length > 0) {
+              const stored = dbRowToTrip(updateData[0]);
+              setTrips((prev) => {
+                const updated = prev.map((t) => {
+                  if (t.id !== tripId) return t;
+                  const mergedExpenseIds = Array.from(
+                    new Set([...stored.expenseIds, ...t.expenseIds])
+                  );
+                  return { ...t, ...stored, expenseIds: mergedExpenseIds };
+                });
+                localStorage.setItem(cacheKey, JSON.stringify(updated));
+                return updated;
+              });
+              success = true;
+              break;
+            }
+          }
+
+          if (!success) {
+            throw new TripConflictError(
+              "Failed to add expense to trip due to concurrent updates"
+            );
+          }
         }
 
         if (typeof window !== "undefined") {
@@ -530,16 +686,22 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
         reportError("trip.add_expense_failed", err, {
           fields: { tripId, ...supabaseErrorFields(err) },
         });
-        // Roll back optimistic update on error
+        // Roll back ONLY the failed expenseId from optimistic state
         setTrips((prev) => {
-          const rolled = prev.map((t) => (t.id === tripId ? current : t));
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
-          return rolled;
+          const updated = prev.map((t) => {
+            if (t.id !== tripId) return t;
+            return {
+              ...t,
+              expenseIds: t.expenseIds.filter((id) => id !== expenseId),
+            };
+          });
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
         });
         throw err;
       }
     },
-    [trips, getClient, publicKey]
+    [getClient, publicKey]
   );
 
   const settleTrip = useCallback(
@@ -558,26 +720,59 @@ export function TripProvider({ children }: { children: React.ReactNode }) {
 
       try {
         const client = await getClient();
-        const { error } = await client
+        const baseVersion = current.version ?? 1;
+        const { data, error } = await client
           .from("trips")
-          .update({ settled: true })
-          .eq("id", id);
+          .update({ settled: true, version: baseVersion + 1 })
+          .eq("id", id)
+          .eq("version", baseVersion)
+          .select("*");
 
         if (error) throw error;
+
+        if (!data || data.length === 0) {
+          const { data: fresh } = await client
+            .from("trips")
+            .select("*")
+            .eq("id", id)
+            .single();
+
+          if (fresh) {
+            const winner = dbRowToTrip(fresh);
+            setTrips((prev) => {
+              const synced = prev.map((t) => (t.id === id ? winner : t));
+              localStorage.setItem(cacheKey, JSON.stringify(synced));
+              return synced;
+            });
+          }
+
+          throw new TripConflictError(
+            "This trip was changed by someone else. Your view has been refreshed."
+          );
+        }
+
+        const stored = dbRowToTrip(data[0]);
+        setTrips((prev) => {
+          const synced = prev.map((t) => (t.id === id ? stored : t));
+          localStorage.setItem(cacheKey, JSON.stringify(synced));
+          return synced;
+        });
       } catch (err) {
         reportError("trip.settle_failed", err, {
           fields: { tripId: id, ...supabaseErrorFields(err) },
         });
-        // Roll back optimistic update on error
-        setTrips((prev) => {
-          const rolled = prev.map((t) => (t.id === id ? current : t));
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
-          return rolled;
-        });
+        // Roll back optimistic update on error if not conflict
+        if (!(err instanceof TripConflictError)) {
+          setTrips((prev) => {
+            const rolled = prev.map((t) => (t.id === id ? current : t));
+            localStorage.setItem(cacheKey, JSON.stringify(rolled));
+            return rolled;
+          });
+        }
         throw err;
       }
     },
-    [trips, getClient]
+    [trips, getClient, publicKey]
   );
 
   const getTrip = useCallback(

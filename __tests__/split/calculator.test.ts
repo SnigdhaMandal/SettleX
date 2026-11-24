@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import path from "node:path";
 import {
   calculateEqualSplit,
   calculateCustomSplit,
@@ -7,6 +9,10 @@ import {
   isValidSplitWeight,
   MIN_SPLIT_WEIGHT,
   MAX_SPLIT_WEIGHT,
+  MAX_AMOUNT_XLM,
+  MAX_AMOUNT_STROOPS,
+  MAX_DECIMALS_XLM,
+  STROOPS_PER_XLM,
   xlmToStroops,
   stroopsToXlm,
 } from "@/lib/split/calculator";
@@ -33,6 +39,34 @@ describe("xlmToStroops & stroopsToXlm", () => {
     expect(stroopsToXlm(1n)).toBe("0.0000001");
     expect(stroopsToXlm(1_005_000_000n)).toBe("100.5000000");
     expect(stroopsToXlm(0n)).toBe("0.0000000");
+  });
+
+  it("strictly rejects inputs with exponents / scientific notation", () => {
+    expect(() => xlmToStroops("1e-7")).toThrow("exponents not allowed");
+    expect(() => xlmToStroops("1e5")).toThrow("exponents not allowed");
+    expect(() => xlmToStroops("1.5e3")).toThrow("exponents not allowed");
+    expect(() => xlmToStroops("1E10")).toThrow("exponents not allowed");
+  });
+
+  it("strictly rejects inputs with more than 7 decimal places instead of truncating", () => {
+    expect(() => xlmToStroops("1.123456789")).toThrow("exceeds maximum 7 decimal places");
+    expect(() => xlmToStroops("0.12345678")).toThrow("exceeds maximum 7 decimal places");
+    expect(() => xlmToStroops("0.00000001")).toThrow("exceeds maximum 7 decimal places");
+  });
+
+  it("accepts inputs with up to 7 decimal places", () => {
+    expect(xlmToStroops("1.1234567")).toBe(11_234_567n);
+    expect(xlmToStroops("0.0000001")).toBe(1n);
+    expect(xlmToStroops("100.5")).toBe(1_005_000_000n);
+  });
+
+  it("rejects invalid amount formats", () => {
+    expect(() => xlmToStroops("")).toThrow("empty string");
+    expect(() => xlmToStroops("   ")).toThrow("empty string");
+    expect(() => xlmToStroops(".")).toThrow("Invalid XLM amount format");
+    expect(() => xlmToStroops("1.2.3")).toThrow("Invalid XLM amount format");
+    expect(() => xlmToStroops("1,000")).toThrow("Invalid XLM amount format");
+    expect(() => xlmToStroops("abc")).toThrow("Invalid XLM amount format");
   });
 });
 
@@ -200,11 +234,17 @@ describe("isValidXLMAmount", () => {
     ["1", true],
     ["0.0000001", true],
     ["100000000", true],
+    ["100000000.0000000", true],
     ["0", false],
     ["-1", false],
     ["abc", false],
     ["", false],
     ["100000001", false],
+    ["100000000.0000001", false],
+    ["1.123456789", false],
+    ["1e-7", false],
+    ["1e5", false],
+    ["1,000", false],
   ])("isValidXLMAmount(%s) === %s", (input, expected) => {
     expect(isValidXLMAmount(input)).toBe(expected);
   });
@@ -252,6 +292,36 @@ describe("isValidSplitWeight", () => {
     expect(isValidSplitWeight(undefined)).toBe(false);
     expect(isValidSplitWeight(NaN)).toBe(false);
     expect(isValidSplitWeight(Infinity)).toBe(false);
+  });
+});
+
+// ─── MAX_AMOUNT_XLM Cross-System Consistency ─────────────────────────────────
+
+describe("MAX_AMOUNT_XLM consistency across client, database, and contract", () => {
+  it("defines MAX_AMOUNT_XLM and MAX_AMOUNT_STROOPS consistently in client constants", () => {
+    expect(MAX_AMOUNT_XLM).toBe(100_000_000); // 1e8 XLM
+    expect(MAX_AMOUNT_STROOPS).toBe(1_000_000_000_000_000n); // 1e15 stroops
+    expect(MAX_AMOUNT_STROOPS).toBe(BigInt(MAX_AMOUNT_XLM) * STROOPS_PER_XLM);
+    expect(MAX_DECIMALS_XLM).toBe(7);
+  });
+
+  it("matches the maximum amount limit in supabase SQL schema", () => {
+    const sqlPath = path.resolve(process.cwd(), "supabase-setup.sql");
+    const sqlContent = fs.readFileSync(sqlPath, "utf-8");
+    // Database enforces: p_total_amount::NUMERIC > 100000000
+    expect(sqlContent).toContain(`p_total_amount::NUMERIC > ${MAX_AMOUNT_XLM}`);
+  });
+
+  it("matches the maximum amount limit in the Soroban settlement contract", () => {
+    const settlementPath = path.resolve(
+      process.cwd(),
+      "contract/contracts/settlement/src/lib.rs",
+    );
+    const settlementContent = fs.readFileSync(settlementPath, "utf-8");
+
+    // Rust contracts enforce: const MAX_AMOUNT_STROOPS: i128 = 1_000_000_000_000_000;
+    const expectedRustConstant = `const MAX_AMOUNT_STROOPS: i128 = 1_000_000_000_000_000;`;
+    expect(settlementContent).toContain(expectedRustConstant);
   });
 });
 

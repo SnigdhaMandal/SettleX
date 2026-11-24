@@ -1,17 +1,48 @@
 import { StellarWalletsKit } from "@creit.tech/stellar-wallets-kit/sdk";
-import { FREIGHTER_ID as KIT_FREIGHTER_ID } from "@creit.tech/stellar-wallets-kit/modules/freighter";
-import { RABET_ID } from "@creit.tech/stellar-wallets-kit/modules/rabet";
-import { XBULL_ID } from "@creit.tech/stellar-wallets-kit/modules/xbull";
-import { defaultModules } from "@creit.tech/stellar-wallets-kit/modules/utils";
+import {
+  FreighterModule,
+  FREIGHTER_ID as KIT_FREIGHTER_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/freighter";
+import {
+  LobstrModule,
+  LOBSTR_ID as KIT_LOBSTR_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/lobstr";
+import {
+  RabetModule,
+  RABET_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/rabet";
+import {
+  xBullModule,
+  XBULL_ID,
+} from "@creit.tech/stellar-wallets-kit/modules/xbull";
 import { Networks } from "@creit.tech/stellar-wallets-kit/types";
 import {
   NETWORK_PASSPHRASE,
+  LS_PUBLIC_KEY,
   type StellarNetwork,
   normalizeStellarNetwork,
 } from "@/lib/utils/constants";
 
 export const FREIGHTER_ID = KIT_FREIGHTER_ID;
+export const LOBSTR_ID = KIT_LOBSTR_ID;
+export { XBULL_ID, RABET_ID };
 export type WalletId = string;
+
+export const TESTED_WALLET_IDS = [
+  KIT_FREIGHTER_ID,
+  XBULL_ID,
+  KIT_LOBSTR_ID,
+  RABET_ID,
+] as const;
+
+export function getTestedModules() {
+  return [
+    new FreighterModule(),
+    new xBullModule(),
+    new LobstrModule(),
+    new RabetModule(),
+  ];
+}
 
 interface WalletModalOptions {
   onWalletSelected: (wallet: { id: WalletId }) => Promise<void> | void;
@@ -65,7 +96,7 @@ function initializeKit(): void {
   if (initialized) return;
 
   StellarWalletsKit.init({
-    modules: defaultModules(),
+    modules: getTestedModules(),
     selectedWalletId,
     network:
       NETWORK_PASSPHRASE === Networks.PUBLIC
@@ -95,6 +126,10 @@ const walletsKit = {
     return selectedWalletId;
   },
 
+  supportsNetworkDetection(walletId: WalletId = selectedWalletId): boolean {
+    return walletId !== KIT_LOBSTR_ID;
+  },
+
   async openModal(opts: WalletModalOptions): Promise<void> {
     try {
       await StellarWalletsKit.authModal();
@@ -121,25 +156,66 @@ const walletsKit = {
   },
 
   async getAddressSilently(): Promise<string | null> {
-    // Only Freighter implements the kit's skipRequestAccess option. Calling
-    // other modules here can open a connection prompt during background polling.
-    if (selectedWalletId !== FREIGHTER_ID) return null;
-
-    try {
-      const { address } = await StellarWalletsKit.selectedModule.getAddress({
-        skipRequestAccess: true,
-      });
-      return address || null;
-    } catch {
-      return null;
+    if (selectedWalletId === FREIGHTER_ID) {
+      try {
+        const { address } = await StellarWalletsKit.selectedModule.getAddress({
+          skipRequestAccess: true,
+        });
+        return address || null;
+      } catch {
+        return null;
+      }
     }
+
+    if (selectedWalletId === XBULL_ID) {
+      const provider = (
+        window as typeof window & {
+          xBullSDK?: { getAddress?: () => Promise<{ address?: string } | string> };
+        }
+      ).xBullSDK;
+      if (provider?.getAddress) {
+        try {
+          const res = await provider.getAddress();
+          const addr = typeof res === "string" ? res : res?.address;
+          return addr || null;
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    if (selectedWalletId === RABET_ID) {
+      const provider = (
+        window as typeof window & {
+          rabet?: { getActiveAccount?: () => Promise<string | { publicKey?: string }> };
+        }
+      ).rabet;
+      if (provider?.getActiveAccount) {
+        try {
+          const res = await provider.getActiveAccount();
+          const addr = typeof res === "string" ? res : res?.publicKey;
+          return addr || null;
+        } catch {
+          return null;
+        }
+      }
+    }
+
+    return null;
   },
 
   signTransaction(
     xdr: string,
-    options: { address: string; networkPassphrase?: string },
+    options?: { address?: string; networkPassphrase?: string },
   ): Promise<{ signedTxXdr: string; signerAddress?: string }> {
-    return StellarWalletsKit.signTransaction(xdr, options);
+    let address = options?.address;
+    if (!address && typeof window !== "undefined") {
+      address = localStorage.getItem(LS_PUBLIC_KEY) || "";
+    }
+    return StellarWalletsKit.signTransaction(xdr, {
+      ...options,
+      address: address || "",
+    });
   },
 
   async getNetworkFromWallet(): Promise<StellarNetwork> {

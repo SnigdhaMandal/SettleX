@@ -128,6 +128,7 @@ export function parseTripRow(row: unknown): Trip {
     acceptedWallets: asStringArray(row.accepted_wallets, "accepted_wallets"),
     declinedWallets: row.declined_wallets ? asStringArray(row.declined_wallets, "declined_wallets") : [],
     settled: asBoolean(row.settled, "settled"),
+    version: asVersion(row.version),
   };
 
   return trip;

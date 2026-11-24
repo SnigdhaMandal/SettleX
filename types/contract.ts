@@ -1,7 +1,12 @@
 export interface ContractPaymentRecord {
   tripId: string;
   expenseId: string;
+  /**
+   * CREDITOR: received the XLM (the member who paid the bill). The contract's
+   * name; it is NOT the account that sent this payment. See lib/stellar/contract.ts.
+   */
   payer: string;
+  /** DEBTOR: owned the share and sent the XLM (the contract's name). */
   member: string;
   amountStroops: bigint;
   txHash: string;
@@ -54,23 +59,12 @@ export enum ContractErrorCode {
   IndexOverflow = 14,
 }
 
-export enum PoolErrorCode {
-  AlreadyInitialized = 101,
-  NotInitialized = 102,
-  Unauthorized = 103,
-  InvalidAmount = 104,
-  InsufficientBalance = 105,
-  BalanceOverflow = 106,
-  VersionMismatch = 107,
-  InvalidActor = 108,
-  AmountTooLarge = 109,
-}
-
 export interface ContractPaymentEvent {
   ledger: number;
   ledgerClosedAt: string;
   tripId: string;
   expenseId: string;
+  /** DEBTOR: the share owner who sent the XLM (the contract's `member`). */
   member: string;
   amountStroops: string;
   txHash: string;

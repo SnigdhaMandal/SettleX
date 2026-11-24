@@ -211,6 +211,59 @@ export type Database = {
         };
         Relationships: [];
       };
+      pending_payments: {
+        Row: {
+          expense_id: string;
+          member_id: string;
+          tx_hash: string;
+          payer_wallet: string;
+          destination_wallet: string;
+          amount: string;
+          trip_id: string | null;
+          status: "signed" | "submitted";
+          ledger: number | null;
+          valid_until: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          expense_id: string;
+          member_id: string;
+          tx_hash: string;
+          payer_wallet?: string;
+          destination_wallet: string;
+          amount: string;
+          trip_id?: string | null;
+          status?: "signed" | "submitted";
+          ledger?: number | null;
+          valid_until?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          expense_id?: string;
+          member_id?: string;
+          tx_hash?: string;
+          payer_wallet?: string;
+          destination_wallet?: string;
+          amount?: string;
+          trip_id?: string | null;
+          status?: "signed" | "submitted";
+          ledger?: number | null;
+          valid_until?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "pending_payments_expense_id_fkey";
+            columns: ["expense_id"];
+            isOneToOne: false;
+            referencedRelation: "expenses";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       trip_expenses: {
         Row: {
           trip_id: string;

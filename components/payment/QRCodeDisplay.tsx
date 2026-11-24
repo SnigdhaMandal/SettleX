@@ -6,7 +6,8 @@ import { motion, AnimatePresence } from "framer-motion";
 import { QrCode, Copy, Check, X } from "lucide-react";
 import { buildQRPaymentURI } from "@/lib/qr/generator";
 import type { QRPaymentData } from "@/lib/qr/generator";
-import { cn } from "@/lib/utils";
+import { cn, formatXLM } from "@/lib/utils";
+import { STELLAR_NETWORK, stellarNetworkLabel } from "@/lib/utils/constants";
 
 // ─── Inline QR panel ──────────────────────────────────────────────────────────
 
@@ -45,8 +46,12 @@ export function QRCodeDisplay({ data, className }: QRCodeDisplayProps) {
       </div>
 
       <div className="text-center">
+        {/* The exact amount the URI requests, not a rounded copy (Issue #204). */}
         <p className="text-xs font-semibold text-[#555] mb-0.5">
-          Scan to pay {parseFloat(data.amount).toFixed(4)} XLM
+          Scan to pay {formatXLM(data.amount)} XLM
+        </p>
+        <p className="text-[10px] font-semibold text-[#8A5A00]">
+          Stellar {stellarNetworkLabel(STELLAR_NETWORK)} only
         </p>
         <p className="text-[10px] text-[#AAA]">
           Works with Freighter, Lobstr &amp; SEP-0007 wallets
