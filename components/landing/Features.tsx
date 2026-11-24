@@ -75,7 +75,7 @@ const features = [
     icon: Wallet,
     title: "Freighter Integration",
     description:
-      "Connect with one click using the Freighter wallet extension. Full Stellar network support with testnet and mainnet switching.",
+      "Connect with one click using the Freighter wallet extension. Fast, non-custodial transaction signing on Stellar Testnet.",
     tag: "Wallet",
     accent: false,
   },

@@ -41,7 +41,7 @@ const plans = [
       "No SettleX platform fees",
       "Full Horizon API access",
       "Immutable mainnet receipts",
-      "Priority Freighter support",
+      "Direct on-chain verification",
     ],
     cta: "Coming Soon",
     href: "#",
