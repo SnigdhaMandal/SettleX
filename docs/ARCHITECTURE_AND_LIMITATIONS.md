@@ -47,6 +47,11 @@ SettleX uses:
   UI state; the cookie lasts 1 hour by default
   (`AUTH_SESSION_TTL_SECONDS`, capped at 12 hours). Renewing requires wallet
   confirmation (SEP-10 challenge signing), with a visible prompt before expiry.
+- **No Silent Re-signing (SX-038):** SettleX explicitly rejects silent session re-signing.
+  Automatic or silent cryptographic signing without active user intent is considered an anti-pattern
+  in non-custodial Web3 security. When an active session token nears expiry, SettleX displays an in-app
+  expiration warning banner (`SessionExpiryBanner`) and requires explicit user interaction and wallet
+  confirmation (re-signing a SEP-0010 challenge via Freighter) to issue a new session token.
 - Expense and trip changes are polled every five seconds while the page is
   visible. Supabase Realtime WebSockets require a JWT in browser JavaScript, so
   they are intentionally not used with the HttpOnly-cookie model. Polling is
@@ -122,6 +127,11 @@ SettleX uses:
   member to rewrite every column in the row. Schema version checks and RLS/
   trigger breach tests are therefore required before production use.
 - Some screenshots in README are desktop captures; mobile screenshots should be added for evaluator clarity.
+- **No Pool Contract or Pool Withdraw (SX-018):** Legacy architectural drafts envisioned
+  an inter-contract withdrawal from a pool contract when `record_payment` was invoked. In reality,
+  `record_payment` never called a pool contract, and the separate pool crate was removed in
+  Issue #178. SettleX does not custody tokens or withdraw from a liquidity pool; payments are
+  settled directly peer-to-peer on Horizon, and `record_payment` acts solely as an on-chain receipt log.
 - No contract custodies or transfers XLM/tokens. The value transfer is the Horizon payment alone; the contract only records its hash.
 - `record_payment` stores the provided `payer`, `amount` and `tx_hash` without
   verifying any of them against Horizon. With no attestor configured the record
