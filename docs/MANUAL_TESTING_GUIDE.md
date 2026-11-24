@@ -18,7 +18,7 @@ For **each** installed wallet (Freighter, xBull, Lobstr, Rabet):
 
 ## 2. Create & split an expense
 - [ ] Create an expense, add members with Stellar addresses.
-- [ ] Try **equal**, **percentage**, and **custom weight** splits — shares recompute live and sum to the total.
+- [ ] Try **equal** and **custom weight** splits — shares recompute live and sum to the total.
 - [ ] Validation blocks zero/negative amounts and malformed addresses.
 
 ## 3. Pay a share (the core flow)
@@ -27,7 +27,7 @@ For **each** installed wallet (Freighter, xBull, Lobstr, Rabet):
 - [ ] On success you get a **real tx hash**; open it on Stellar Expert and confirm amount/destination.
 - [ ] The share flips to **paid**; balance refreshes within a few seconds.
 - [ ] **Reject** the signature → app shows "cancelled", no state change.
-- [ ] Pay the same share again → blocked as already settled.
+- [ ] If `NEXT_PUBLIC_CONTRACT_ID` is configured, pay the same share again → the on-chain duplicate-settlement check blocks it. Without a configured contract, this protection is not active; don't expect a repeat payment to be blocked.
 
 ## 4. Realtime sync (needs Supabase)
 - [ ] Open the same trip in a second browser/user; a payment in one appears in the other without refresh.
