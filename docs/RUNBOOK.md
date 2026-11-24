@@ -2,7 +2,7 @@
 
 ## 1. Prerequisites
 
-- Node.js 18+
+- Node.js 20+
 - npm 9+
 - Rust toolchain (for contract work)
 - Stellar CLI (for deployment operations)
@@ -20,6 +20,7 @@ Create `.env.local` and set:
 - `NEXT_PUBLIC_CONTRACT_ID`
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- `NEXT_PUBLIC_SITE_URL` — Canonical site URL (e.g. `https://settlex.app` or production deployment origin) for metadata, social cards, and callback resolutions.
 
 Server-only (must **not** carry the `NEXT_PUBLIC_` prefix — that would publish
 them in the browser bundle and let anyone mint a token for any wallet):
@@ -30,7 +31,13 @@ them in the browser bundle and let anyone mint a token for any wallet):
   `SUPABASE_JWT_SECRET`. The server refuses to boot without it, so a missing
   value fails the deploy rather than the first sign-in. Falls back to the JWT
   secret outside production only.
+- `SUPABASE_SERVICE_ROLE_KEY` — Supabase → Settings → API → `service_role` secret key.
+  Required for server-side auth operations (shared challenge replay prevention in
+  `auth_nonces`, distributed rate limiting in `auth_rate_limits`, and token revocation
+  denylisting via `settlex_revoke_token`). Must never carry `NEXT_PUBLIC_` or be exposed to clients.
 - `AUTH_SESSION_TTL_SECONDS` — optional, default 3600 (1h), capped at 43200 (12h).
+  Configures the session cookie lifespan; runtime code enforces a default of 3600 seconds and
+  clamps values exceeding the 43200 seconds (12h) maximum cap.
 
 Set the same server-only values in the deployment environment (Vercel → Project
 Settings → Environment Variables, or equivalent), not just in `.env.local`.
@@ -51,12 +58,17 @@ Run contract tests:
 
 Recommended flow:
 
-1. Build contract via Stellar CLI tooling.
-2. Deploy settlement and pool contract instances.
-3. Initialize pool and settlement references.
-4. Execute one `record_payment` flow that triggers pool withdraw to prove inter-contract behavior.
-5. Update `NEXT_PUBLIC_CONTRACT_ID` with settlement contract ID.
-6. Save all explorer links in README/docs.
+1. Run `./scripts/deploy-contract.sh <secret-key-or-alias> [network]`.
+   The constructor atomically initializes the settlement instance. There is no
+   second contract to deploy or wire up: `record_payment` makes no
+   cross-contract call (the pool contract was removed in Issue #178).
+2. Record the printed contract ID and transaction output.
+3. Update `NEXT_PUBLIC_CONTRACT_ID` with the printed settlement contract ID.
+4. Execute one test settlement `record_payment` flow on testnet to verify the contract
+   records payment receipts directly to the ledger (pure ledger write; no pool contract or
+   pool withdraw call, superseding legacy SX-018 pool withdraw step).
+5. Save all explorer links in README/docs. Do not cite a pool transaction as
+   proof of settlement behaviour.
 
 ## 5. CI/CD Verification
 

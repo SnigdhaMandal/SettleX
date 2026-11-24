@@ -65,6 +65,7 @@ CREATE TABLE IF NOT EXISTS trips (
   created_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   updated_at TIMESTAMPTZ DEFAULT NOW() NOT NULL,
   settled BOOLEAN DEFAULT FALSE NOT NULL,
+  version BIGINT NOT NULL DEFAULT 1,
   -- New: Track creator and member wallets for authentication
   created_by_wallet TEXT NOT NULL,  -- Stellar address of trip creator
   member_wallets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[], -- Invited wallet addresses
@@ -171,6 +172,13 @@ BEGIN
         WHERE table_schema = 'public' AND table_name = 'trips' AND column_name = 'declined_wallets'
     ) THEN
         ALTER TABLE trips ADD COLUMN declined_wallets TEXT[] NOT NULL DEFAULT ARRAY[]::TEXT[];
+    END IF;
+
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.columns 
+        WHERE table_name = 'trips' AND column_name = 'version'
+    ) THEN
+        ALTER TABLE trips ADD COLUMN version BIGINT NOT NULL DEFAULT 1;
     END IF;
 END $$;
 
@@ -913,6 +921,30 @@ BEFORE UPDATE ON expenses
 FOR EACH ROW
 EXECUTE FUNCTION bump_expense_version();
 
+CREATE OR REPLACE FUNCTION bump_trip_version()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+  -- Only when the row's contents actually changed, so a no-op write does not
+  -- invalidate another editor's token for nothing.
+  IF NEW IS DISTINCT FROM OLD THEN
+    IF NEW.version IS NOT DISTINCT FROM OLD.version THEN
+      NEW.version = COALESCE(OLD.version, 0) + 1;
+    END IF;
+  END IF;
+  RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS bump_trips_version ON trips;
+
+CREATE TRIGGER bump_trips_version
+BEFORE UPDATE ON trips
+FOR EACH ROW
+EXECUTE FUNCTION bump_trip_version();
+
 -- Create trigger for trips
 CREATE TRIGGER update_trips_updated_at
 BEFORE UPDATE ON trips
@@ -1212,8 +1244,8 @@ BEGIN
         RAISE EXCEPTION 'created_by_wallet must match the authenticated wallet';
     END IF;
 
-    IF NEW.settled OR pg_catalog.cardinality(NEW.expense_ids) <> 0 THEN
-        RAISE EXCEPTION 'New trips must be unsettled and contain no expenses';
+    IF NEW.settled OR pg_catalog.cardinality(NEW.expense_ids) <> 0 OR NEW.version <> 1 THEN
+        RAISE EXCEPTION 'New trips must be unsettled, contain no expenses, and start at version 1';
     END IF;
     IF pg_catalog.jsonb_typeof(NEW.members) <> 'array'
        OR pg_catalog.jsonb_array_length(NEW.members) < 2 THEN
@@ -1742,6 +1774,13 @@ BEGIN
         END IF;
     END IF;
 
+    -- Version check: must be OLD.version + 1
+    IF NEW.version IS DISTINCT FROM OLD.version THEN
+        IF NEW.version <> OLD.version + 1 THEN
+            RAISE EXCEPTION 'Version must increment by exactly 1';
+        END IF;
+    END IF;
+
     -- Check expense_ids modifications for ALL callers (SX-027 & SX-029)
     IF NEW.expense_ids IS DISTINCT FROM OLD.expense_ids THEN
         IF OLD.settled = true THEN
@@ -1920,6 +1959,134 @@ CREATE TRIGGER sync_trip_expenses_accepted_wallets
 AFTER INSERT OR UPDATE OF expense_ids, accepted_wallets ON trips
 FOR EACH ROW
 EXECUTE FUNCTION sync_trip_expenses_accepted_wallets();
+
+-- ============================================================================
+-- 5.6. DELETE INTEGRITY & CASCADE CLEANUP TRIGGERS (SX-031)
+-- ============================================================================
+
+-- Trigger to validate expense deletion
+CREATE OR REPLACE FUNCTION public.validate_expense_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_caller TEXT;
+BEGIN
+    v_caller := public.settlex_wallet();
+    
+    -- If caller is authenticated, ensure caller is creator or trip creator
+    IF v_caller IS NOT NULL THEN
+        IF v_caller <> OLD.created_by_wallet AND NOT EXISTS (
+            SELECT 1 FROM public.trips t
+            WHERE OLD.id::TEXT = ANY(t.expense_ids) AND t.created_by_wallet = v_caller
+        ) THEN
+            RAISE EXCEPTION 'Not authorized to delete this expense';
+        END IF;
+    END IF;
+
+    -- Cannot delete settled expense or expense with paid shares
+    IF OLD.settled THEN
+        RAISE EXCEPTION 'Cannot delete a settled expense';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1 FROM jsonb_array_elements(OLD.shares) AS s
+        WHERE (s->>'paid')::boolean = true
+    ) OR EXISTS (
+        SELECT 1 FROM public.payments WHERE expense_id = OLD.id
+    ) THEN
+        RAISE EXCEPTION 'Cannot delete an expense with paid shares or payments';
+    END IF;
+
+    RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS validate_expenses_delete ON expenses;
+CREATE TRIGGER validate_expenses_delete
+BEFORE DELETE ON expenses
+FOR EACH ROW
+EXECUTE FUNCTION validate_expense_delete();
+
+-- Trigger to cleanup deleted expense from any trip's expense_ids
+CREATE OR REPLACE FUNCTION public.cleanup_expense_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+BEGIN
+    UPDATE public.trips
+    SET expense_ids = pg_catalog.array_remove(expense_ids, OLD.id::TEXT),
+        updated_at = pg_catalog.now()
+    WHERE OLD.id::TEXT = ANY(expense_ids);
+
+    RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS cleanup_expenses_delete ON expenses;
+CREATE TRIGGER cleanup_expenses_delete
+AFTER DELETE ON expenses
+FOR EACH ROW
+EXECUTE FUNCTION cleanup_expense_delete();
+
+-- Trigger to validate trip deletion and cascade delete trip expenses
+CREATE OR REPLACE FUNCTION public.validate_and_cleanup_trip_delete()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_caller TEXT;
+BEGIN
+    v_caller := public.settlex_wallet();
+
+    IF v_caller IS NOT NULL AND v_caller <> OLD.created_by_wallet THEN
+        RAISE EXCEPTION 'Only trip creator can delete trip';
+    END IF;
+
+    -- Deleting a trip with paid shares or settled status is strictly forbidden
+    IF OLD.settled THEN
+        RAISE EXCEPTION 'Cannot delete a settled trip';
+    END IF;
+
+    IF EXISTS (
+        SELECT 1
+        FROM public.expenses e
+        WHERE e.id::TEXT = ANY(OLD.expense_ids)
+          AND (
+              e.settled = true
+              OR EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(e.shares) AS s
+                  WHERE (s->>'paid')::boolean = true
+              )
+              OR EXISTS (
+                  SELECT 1 FROM public.payments p WHERE p.expense_id = e.id
+              )
+          )
+    ) THEN
+        RAISE EXCEPTION 'Cannot delete a trip with paid shares or payments';
+    END IF;
+
+    -- Clean up all associated expenses belonging to this trip
+    IF OLD.expense_ids IS NOT NULL AND pg_catalog.cardinality(OLD.expense_ids) > 0 THEN
+        DELETE FROM public.expenses
+        WHERE id::TEXT = ANY(OLD.expense_ids);
+    END IF;
+
+    RETURN OLD;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS validate_and_cleanup_trips_delete ON trips;
+CREATE TRIGGER validate_and_cleanup_trips_delete
+BEFORE DELETE ON trips
+FOR EACH ROW
+EXECUTE FUNCTION validate_and_cleanup_trip_delete();
 
 -- Pending invitees cannot SELECT the underlying row. This deliberately narrow
 -- RPC exposes only the information needed to make an informed consent choice.
@@ -2418,6 +2585,7 @@ BEGIN
         RETURN QUERY
         UPDATE public.trips
         SET expense_ids = pg_catalog.array_append(expense_ids, p_expense_id::TEXT),
+            version = COALESCE(version, 1) + 1,
             updated_at = pg_catalog.now()
         WHERE id = p_trip_id
         RETURNING *;
@@ -2430,6 +2598,150 @@ $$;
 
 REVOKE ALL ON FUNCTION public.add_expense_to_trip(UUID, UUID) FROM PUBLIC, anon, authenticated;
 GRANT EXECUTE ON FUNCTION public.add_expense_to_trip(UUID, UUID) TO authenticated;
+
+-- Create an expense in a trip atomically (SX-031)
+-- 1. Inserts the expense into expenses table
+-- 2. Records the relationship in trip_expenses join table
+-- 3. Appends expense id to trips.expense_ids and bumps version
+CREATE OR REPLACE FUNCTION public.create_trip_expense(
+    p_trip_id UUID,
+    p_expense JSONB
+)
+RETURNS SETOF public.expenses
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = public
+AS $$
+DECLARE
+    v_caller TEXT;
+    v_trip public.trips%ROWTYPE;
+    v_expense_id UUID;
+    v_title TEXT;
+    v_description TEXT;
+    v_total_amount TEXT;
+    v_currency TEXT;
+    v_split_mode TEXT;
+    v_paid_by_member_id TEXT;
+    v_members JSONB;
+    v_shares JSONB;
+    v_created_at TIMESTAMPTZ;
+    v_member_wallets TEXT[];
+BEGIN
+    v_caller := public.settlex_wallet();
+    IF v_caller IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    -- 1. Lock trip row FOR UPDATE
+    SELECT * INTO v_trip
+    FROM public.trips
+    WHERE id = p_trip_id
+    FOR UPDATE;
+
+    IF v_trip.id IS NULL THEN
+        RAISE EXCEPTION 'Trip not found';
+    END IF;
+
+    IF v_trip.settled THEN
+        RAISE EXCEPTION 'Cannot add expenses to a settled trip';
+    END IF;
+
+    -- Caller must be trip creator or accepted trip member
+    IF v_caller <> v_trip.created_by_wallet
+       AND NOT (v_caller = ANY(v_trip.member_wallets) AND v_caller = ANY(v_trip.accepted_wallets)) THEN
+        RAISE EXCEPTION 'Not authorized to add expenses to this trip';
+    END IF;
+
+    -- Extract expense fields
+    v_expense_id := COALESCE((p_expense->>'id')::UUID, gen_random_uuid());
+    v_title := p_expense->>'title';
+    v_description := p_expense->>'description';
+    v_total_amount := COALESCE(p_expense->>'total_amount', p_expense->>'totalAmount');
+    v_currency := COALESCE(p_expense->>'currency', 'XLM');
+    v_split_mode := COALESCE(p_expense->>'split_mode', p_expense->>'splitMode');
+    v_paid_by_member_id := COALESCE(p_expense->>'paid_by_member_id', p_expense->>'paidByMemberId');
+    v_members := COALESCE(p_expense->'members', '[]'::JSONB);
+    v_shares := COALESCE(p_expense->'shares', '[]'::JSONB);
+    v_created_at := COALESCE((p_expense->>'created_at')::TIMESTAMPTZ, (p_expense->>'createdAt')::TIMESTAMPTZ, pg_catalog.now());
+
+    -- Extract member wallets
+    IF p_expense ? 'member_wallets' AND jsonb_typeof(p_expense->'member_wallets') = 'array' THEN
+        SELECT COALESCE(array_agg(elem::TEXT), ARRAY[]::TEXT[])
+        INTO v_member_wallets
+        FROM jsonb_array_elements_text(p_expense->'member_wallets') AS elem;
+    ELSE
+        SELECT COALESCE(array_agg(DISTINCT m->>'walletAddress'), ARRAY[]::TEXT[])
+        INTO v_member_wallets
+        FROM jsonb_array_elements(v_members) AS m
+        WHERE m->>'walletAddress' IS NOT NULL AND m->>'walletAddress' <> '';
+    END IF;
+
+    IF NOT (v_caller = ANY(v_member_wallets)) THEN
+        v_member_wallets := array_prepend(v_caller, v_member_wallets);
+    END IF;
+
+    -- All expense members must be members of the trip
+    IF NOT (v_member_wallets <@ v_trip.member_wallets) THEN
+        RAISE EXCEPTION 'Cannot link foreign expense or expense caller does not belong to';
+    END IF;
+
+    -- 2. Insert into expenses
+    INSERT INTO public.expenses (
+        id,
+        title,
+        description,
+        total_amount,
+        currency,
+        split_mode,
+        paid_by_member_id,
+        members,
+        shares,
+        created_at,
+        settled,
+        version,
+        created_by_wallet,
+        member_wallets,
+        accepted_wallets,
+        declined_wallets
+    ) VALUES (
+        v_expense_id,
+        v_title,
+        v_description,
+        v_total_amount,
+        v_currency,
+        v_split_mode,
+        v_paid_by_member_id,
+        v_members,
+        v_shares,
+        v_created_at,
+        false,
+        1,
+        v_caller,
+        v_member_wallets,
+        ARRAY[v_caller],
+        ARRAY[]::TEXT[]
+    );
+
+    -- 3. Record in trip_expenses join table
+    INSERT INTO public.trip_expenses (trip_id, expense_id, added_by_wallet)
+    VALUES (p_trip_id, v_expense_id, v_caller)
+    ON CONFLICT (trip_id, expense_id) DO NOTHING;
+
+    -- 4. Append to trips.expense_ids and bump version
+    IF NOT (v_expense_id::TEXT = ANY(v_trip.expense_ids)) THEN
+        UPDATE public.trips
+        SET expense_ids = pg_catalog.array_append(expense_ids, v_expense_id::TEXT),
+            updated_at = pg_catalog.now()
+        WHERE id = p_trip_id;
+    END IF;
+
+    RETURN QUERY
+    SELECT * FROM public.expenses WHERE id = v_expense_id;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.create_trip_expense(UUID, JSONB) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.create_trip_expense(UUID, JSONB) TO authenticated;
 
 -- Resolve only the caller's own profile or a counterparty profile from a shared,
 -- accepted expense/trip. Stellar addresses are public, so requiring a "known"
@@ -2607,3 +2919,294 @@ EXECUTE ON FUNCTION public.auth_consume_nonce (TEXT, TIMESTAMPTZ) TO service_rol
 GRANT
 EXECUTE ON FUNCTION public.auth_rate_limit (TEXT, INTEGER, INTEGER) TO service_role;
 
+
+-- ============================================================================
+-- DURABLE PENDING PAYMENTS (Issue #205)
+-- ============================================================================
+-- Mirrors supabase/migrations/20261120000000_pending_payments.sql. A row is
+-- written after a share payment is signed and before it is submitted, so a
+-- transfer that lands while mark_share_paid fails is never forgotten.
+
+CREATE TABLE IF NOT EXISTS public.pending_payments (
+    expense_id     UUID        NOT NULL REFERENCES public.expenses(id) ON DELETE CASCADE,
+    member_id      TEXT        NOT NULL,
+    tx_hash        TEXT        NOT NULL,
+    payer_wallet   TEXT        NOT NULL DEFAULT public.settlex_wallet(),
+    destination_wallet TEXT    NOT NULL,
+    amount         TEXT        NOT NULL,
+    trip_id        TEXT,
+    status         TEXT        NOT NULL DEFAULT 'signed',
+    ledger         BIGINT,
+    valid_until    TIMESTAMPTZ,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY (expense_id, member_id),
+    CONSTRAINT pending_payments_tx_hash_check CHECK (tx_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT pending_payments_status_check  CHECK (status IN ('signed', 'submitted')),
+    CONSTRAINT pending_payments_member_id_len CHECK (char_length(member_id) <= 128),
+    CONSTRAINT pending_payments_amount_len    CHECK (char_length(amount) <= 32),
+    CONSTRAINT pending_payments_trip_id_len   CHECK (trip_id IS NULL OR char_length(trip_id) <= 128),
+    CONSTRAINT pending_payments_wallet_len    CHECK (
+        char_length(payer_wallet) <= 56 AND char_length(destination_wallet) <= 56
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_pending_payments_tx_hash ON public.pending_payments(tx_hash);
+CREATE INDEX IF NOT EXISTS idx_pending_payments_payer_wallet ON public.pending_payments(payer_wallet);
+
+ALTER TABLE public.pending_payments ENABLE ROW LEVEL SECURITY;
+
+-- Only the wallet that signed the transfer can see or change its pending row.
+-- Inserts additionally require that the caller can see the expense (RLS on
+-- public.expenses applies inside the EXISTS), so rows cannot be planted
+-- against arbitrary expenses.
+DROP POLICY IF EXISTS "Payers can view their pending payments" ON public.pending_payments;
+CREATE POLICY "Payers can view their pending payments" ON public.pending_payments
+    FOR SELECT
+    USING (payer_wallet = public.settlex_wallet());
+
+DROP POLICY IF EXISTS "Payers can create pending payments" ON public.pending_payments;
+CREATE POLICY "Payers can create pending payments" ON public.pending_payments
+    FOR INSERT
+    WITH CHECK (
+        payer_wallet = public.settlex_wallet()
+        AND EXISTS (SELECT 1 FROM public.expenses e WHERE e.id = pending_payments.expense_id)
+    );
+
+DROP POLICY IF EXISTS "Payers can update their pending payments" ON public.pending_payments;
+CREATE POLICY "Payers can update their pending payments" ON public.pending_payments
+    FOR UPDATE
+    USING (payer_wallet = public.settlex_wallet())
+    WITH CHECK (payer_wallet = public.settlex_wallet());
+
+DROP POLICY IF EXISTS "Payers can delete their pending payments" ON public.pending_payments;
+CREATE POLICY "Payers can delete their pending payments" ON public.pending_payments
+    FOR DELETE
+    USING (payer_wallet = public.settlex_wallet());
+
+CREATE OR REPLACE FUNCTION public.pending_payments_touch_updated_at()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SET search_path = ''
+AS $$
+BEGIN
+    NEW.updated_at := pg_catalog.now();
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS pending_payments_touch_updated_at ON public.pending_payments;
+CREATE TRIGGER pending_payments_touch_updated_at
+    BEFORE UPDATE ON public.pending_payments
+    FOR EACH ROW EXECUTE FUNCTION public.pending_payments_touch_updated_at();
+
+-- Once mark_share_paid records the transfer in public.payments, the pending
+-- row has done its job. Clearing it here means a client that crashes right
+-- after a successful write still sees the share as recorded, not pending.
+CREATE OR REPLACE FUNCTION public.pending_payments_clear_on_payment()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    DELETE FROM public.pending_payments
+    WHERE expense_id = NEW.expense_id
+      AND member_id = NEW.member_id;
+    RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.pending_payments_clear_on_payment() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS pending_payments_clear_on_payment ON public.payments;
+CREATE TRIGGER pending_payments_clear_on_payment
+    AFTER INSERT ON public.payments
+    FOR EACH ROW EXECUTE FUNCTION public.pending_payments_clear_on_payment();
+
+GRANT SELECT, INSERT, UPDATE, DELETE ON public.pending_payments TO authenticated;
+
+-- ============================================================================
+-- NET SETTLE-UP TRANSFERS (Issue #203)
+-- ============================================================================
+-- Mirrors supabase/migrations/20261121000000_trip_settlements.sql. A settle-up
+-- transfer is stored as its own row; member balances are computed as
+-- owed - paid shares - settlements. Writes go only through
+-- record_trip_settlement().
+
+CREATE TABLE IF NOT EXISTS public.trip_settlements (
+    id             UUID        PRIMARY KEY DEFAULT gen_random_uuid(),
+    trip_id        UUID        NOT NULL REFERENCES public.trips(id) ON DELETE CASCADE,
+    from_member_id TEXT        NOT NULL,
+    to_member_id   TEXT        NOT NULL,
+    from_wallet    TEXT        NOT NULL,
+    to_wallet      TEXT        NOT NULL,
+    -- XLM with up to 7 decimals, as everywhere else in the schema.
+    amount         TEXT        NOT NULL,
+    tx_hash        TEXT        NOT NULL,
+    created_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    CONSTRAINT trip_settlements_tx_hash_check   CHECK (tx_hash ~ '^[0-9a-f]{64}$'),
+    CONSTRAINT trip_settlements_amount_check    CHECK (
+        amount ~ '^[0-9]{1,9}(\.[0-9]{1,7})?$'
+        AND amount::NUMERIC > 0
+        AND amount::NUMERIC <= 100000000
+    ),
+    CONSTRAINT trip_settlements_distinct_members CHECK (from_member_id <> to_member_id),
+    CONSTRAINT trip_settlements_member_id_len   CHECK (
+        char_length(from_member_id) <= 128 AND char_length(to_member_id) <= 128
+    ),
+    CONSTRAINT trip_settlements_wallet_len      CHECK (
+        char_length(from_wallet) <= 56 AND char_length(to_wallet) <= 56
+    )
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_trip_settlements_tx_hash ON public.trip_settlements(tx_hash);
+CREATE INDEX IF NOT EXISTS idx_trip_settlements_trip_id ON public.trip_settlements(trip_id);
+
+ALTER TABLE public.trip_settlements ENABLE ROW LEVEL SECURITY;
+
+-- Every member of the trip can see its settlements: everyone's balance
+-- depends on them.
+DROP POLICY IF EXISTS "Trip members can view settlements" ON public.trip_settlements;
+CREATE POLICY "Trip members can view settlements" ON public.trip_settlements
+    FOR SELECT
+    USING (
+        EXISTS (
+            SELECT 1 FROM public.trips t
+            WHERE t.id = trip_settlements.trip_id
+              AND (
+                  public.settlex_wallet() = t.created_by_wallet
+                  OR (
+                      public.settlex_wallet() = ANY(t.member_wallets)
+                      AND public.settlex_wallet() = ANY(t.accepted_wallets)
+                  )
+              )
+        )
+    );
+
+-- No INSERT / UPDATE / DELETE policies: settlements are append-only and are
+-- written exclusively by record_trip_settlement().
+REVOKE ALL ON public.trip_settlements FROM PUBLIC, anon, authenticated;
+GRANT SELECT ON public.trip_settlements TO authenticated;
+
+CREATE OR REPLACE FUNCTION public.record_trip_settlement(
+    p_trip_id UUID,
+    p_from_member_id TEXT,
+    p_to_member_id TEXT,
+    p_amount TEXT,
+    p_tx_hash TEXT
+)
+RETURNS SETOF public.trip_settlements
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+DECLARE
+    v_caller_wallet TEXT;
+    v_trip public.trips%ROWTYPE;
+    v_from_wallet TEXT;
+    v_to_wallet TEXT;
+BEGIN
+    v_caller_wallet := public.settlex_wallet();
+    IF v_caller_wallet IS NULL THEN
+        RAISE EXCEPTION 'Not authenticated';
+    END IF;
+
+    IF p_tx_hash IS NULL OR NOT (p_tx_hash ~ '^[0-9a-f]{64}$') THEN
+        RAISE EXCEPTION 'Valid transaction hash is required to record a settlement';
+    END IF;
+
+    IF p_amount IS NULL
+       OR NOT (p_amount ~ '^[0-9]{1,9}(\.[0-9]{1,7})?$')
+       OR p_amount::NUMERIC <= 0
+       OR p_amount::NUMERIC > 100000000 THEN
+        RAISE EXCEPTION 'Settlement amount is invalid';
+    END IF;
+
+    IF p_from_member_id IS NULL OR p_to_member_id IS NULL
+       OR p_from_member_id = p_to_member_id THEN
+        RAISE EXCEPTION 'A settlement needs two different members';
+    END IF;
+
+    -- One Stellar transaction records exactly one settlement, and can never
+    -- also count as a share payment.
+    IF EXISTS (SELECT 1 FROM public.trip_settlements WHERE tx_hash = p_tx_hash) THEN
+        RAISE EXCEPTION 'Settlement already recorded for this transaction';
+    END IF;
+    IF EXISTS (SELECT 1 FROM public.payments WHERE tx_hash = p_tx_hash) THEN
+        RAISE EXCEPTION 'Transaction hash already used on another payment';
+    END IF;
+
+    SELECT * INTO v_trip FROM public.trips WHERE id = p_trip_id FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'Trip not found';
+    END IF;
+
+    IF NOT (
+        v_caller_wallet = v_trip.created_by_wallet
+        OR (
+            v_caller_wallet = ANY(v_trip.member_wallets)
+            AND v_caller_wallet = ANY(v_trip.accepted_wallets)
+        )
+    ) THEN
+        RAISE EXCEPTION 'Accept the trip invitation before recording a settlement';
+    END IF;
+
+    IF v_trip.settled THEN
+        RAISE EXCEPTION 'Trip is already settled';
+    END IF;
+
+    SELECT m->>'walletAddress' INTO v_from_wallet
+    FROM pg_catalog.jsonb_array_elements(v_trip.members) AS m
+    WHERE m->>'id' = p_from_member_id;
+
+    SELECT m->>'walletAddress' INTO v_to_wallet
+    FROM pg_catalog.jsonb_array_elements(v_trip.members) AS m
+    WHERE m->>'id' = p_to_member_id;
+
+    IF v_from_wallet IS NULL OR v_from_wallet = ''
+       OR v_to_wallet IS NULL OR v_to_wallet = '' THEN
+        RAISE EXCEPTION 'Both settlement members must belong to the trip and have a wallet';
+    END IF;
+
+    -- Only the sender records their own transfer.
+    IF v_from_wallet <> v_caller_wallet THEN
+        RAISE EXCEPTION 'Only the sender can record this settlement';
+    END IF;
+
+    RETURN QUERY
+    INSERT INTO public.trip_settlements (
+        trip_id, from_member_id, to_member_id, from_wallet, to_wallet, amount, tx_hash
+    )
+    VALUES (
+        p_trip_id, p_from_member_id, p_to_member_id, v_from_wallet, v_to_wallet, p_amount, p_tx_hash
+    )
+    RETURNING *;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.record_trip_settlement(UUID, TEXT, TEXT, TEXT, TEXT) FROM PUBLIC, anon, authenticated;
+GRANT EXECUTE ON FUNCTION public.record_trip_settlement(UUID, TEXT, TEXT, TEXT, TEXT) TO authenticated;
+
+-- The reverse guard: a hash already used for a settlement cannot be replayed
+-- through mark_share_paid as a direct share payment.
+CREATE OR REPLACE FUNCTION public.payments_reject_settlement_hash()
+RETURNS TRIGGER
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = ''
+AS $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM public.trip_settlements WHERE tx_hash = NEW.tx_hash) THEN
+        RAISE EXCEPTION 'Transaction hash already used on another payment';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+REVOKE ALL ON FUNCTION public.payments_reject_settlement_hash() FROM PUBLIC;
+
+DROP TRIGGER IF EXISTS payments_reject_settlement_hash ON public.payments;
+CREATE TRIGGER payments_reject_settlement_hash
+    BEFORE INSERT ON public.payments
+    FOR EACH ROW EXECUTE FUNCTION public.payments_reject_settlement_hash();

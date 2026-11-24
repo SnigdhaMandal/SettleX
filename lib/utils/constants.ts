@@ -42,19 +42,23 @@ export function stellarNetworkLabel(network: StellarNetwork): string {
   return network === "PUBLIC" ? "Mainnet" : "Testnet";
 }
 
-export const MEMO_PREFIX        = "SettleX";
 export const TX_BASE_FEE        = 100;
 export const TX_TIMEOUT_SECONDS = 180;
 export const TX_MAX_FEE_STROOPS = 10_000;
 export const MEMO_MAX_BYTES     = 28;
 export const MIN_SPLIT_WEIGHT   = 1;
 export const MAX_SPLIT_WEIGHT   = 1000;
+export const MAX_AMOUNT_XLM     = 100_000_000;
+export const STROOPS_PER_XLM    = 10_000_000n;
+export const MAX_AMOUNT_STROOPS = BigInt(MAX_AMOUNT_XLM) * STROOPS_PER_XLM; // 1_000_000_000_000_000n
+export const MAX_DECIMALS_XLM   = 7;
 
-export const LS_PUBLIC_KEY = "settlex:publicKey";
-export const LS_WALLET_ID  = "settlex:walletId";
-export const LS_EXPENSES   = "settlex:expenses";
-export const LS_TRIPS      = "settlex:trips";
-export const LS_USER       = "settlex:user";
+export const LS_PUBLIC_KEY        = "settlex:publicKey";
+export const LS_WALLET_ID         = "settlex:walletId";
+export const LS_NETWORK_CONFIRMED = "settlex:networkConfirmed";
+export const LS_EXPENSES          = "settlex:expenses";
+export const LS_TRIPS             = "settlex:trips";
+export const LS_USER              = "settlex:user";
 
 export function getWalletScopedKey(baseKey: string, walletAddress?: string | null) {
   return walletAddress ? `${baseKey}:${walletAddress}` : baseKey;

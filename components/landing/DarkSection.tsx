@@ -68,7 +68,7 @@ const MockExplorer = () => (
         { label: "Status", value: "✓ Success", color: "#B9FF66" },
         { label: "Ledger", value: "47,291,034" },
         { label: "Amount", value: "300.0000000 XLM" },
-        { label: "Memo", value: "SettleX|Dinner|Aman" },
+        { label: "Memo", value: "SX1S:3K7EKTE3UQP44CE5TWSJM6L" },
         { label: "Fee", value: "0.00001 XLM" },
       ].map(({ label, value, color }) => (
         <div key={label} className="flex items-center justify-between text-xs border-t border-white/5 pt-3">

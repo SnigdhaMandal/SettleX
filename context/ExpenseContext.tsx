@@ -7,39 +7,36 @@ import React, {
   useEffect,
   useState,
 } from "react";
-import type { Expense, SplitShare } from "@/types/expense";
+import type { Expense } from "@/types/expense";
 import { getWalletScopedKey, LS_EXPENSES } from "@/lib/utils/constants";
 import {
   getAuthenticatedClient,
+  hasProvenSession,
   onSessionChange,
-  readStoredSession,
   requireAuthenticatedClient,
 } from "@/lib/supabase/session";
-import type {
-  RealtimePostgresChangesPayload,
-  SupabaseClient,
-} from "@supabase/supabase-js";
+import type { SupabaseClient } from "@supabase/supabase-js";
 import type { Database, Json } from "@/types/supabase";
 import { useWalletContext } from "./WalletContext";
 import { logWarn, reportError } from "@/lib/observability/logger";
 import { supabaseErrorFields } from "@/lib/observability/supabaseError";
 import { parseExpenseRow } from "@/lib/supabase/rowGuards";
+import { userFacingMessage } from "@/lib/errors/userMessage";
 
 
 /**
- * True only when this browser holds an unexpired session token minted for this
- * exact wallet — i.e. the wallet has signed a server challenge at some point.
+ * True only after the server has confirmed an active session for this wallet.
  *
  * The offline cache is readable by anyone at this keyboard, so possession of an
  * address alone must not unlock it: otherwise a wallet that connects and never
  * signs (or declines to) would be shown the rows of whichever account cached
- * them. Proof of ownership gates the read; the token still authorizes nothing
- * on its own, because the server re-verifies it on every request.
+ * them. The cookie itself is never read by browser code; the server verifies it
+ * before this in-memory marker is set.
  */
 function hasProvenOwnership(walletAddress: string | null): boolean {
   if (!walletAddress) return false;
   try {
-    return !!readStoredSession(walletAddress);
+    return hasProvenSession(walletAddress);
   } catch {
     return false;
   }
@@ -48,7 +45,7 @@ function hasProvenOwnership(walletAddress: string | null): boolean {
 
 interface ExpenseContextType {
   expenses: Expense[];
-  addExpense: (expense: Expense) => Promise<void>;
+  addExpense: (expense: Expense, tripId?: string) => Promise<void>;
   updateExpense: (id: string, updates: Partial<Expense>) => Promise<void>;
   deleteExpense: (id: string) => Promise<void>;
   markSharePaid: (expenseId: string, memberId: string, txHash: string) => Promise<void>;
@@ -153,8 +150,26 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener("settlex:consent-changed", refresh);
   }, []);
 
+  // Listen for trip deletion to clean up cascaded expenses locally
+  useEffect(() => {
+    const handleTripDeleted = (e: Event) => {
+      const customEvent = e as CustomEvent<{ tripId: string; expenseIds: string[] }>;
+      const deletedIds = customEvent.detail?.expenseIds;
+      if (deletedIds && deletedIds.length > 0) {
+        setExpenses((prev) => {
+          const updated = prev.filter((exp) => !deletedIds.includes(exp.id));
+          const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
+          localStorage.setItem(cacheKey, JSON.stringify(updated));
+          return updated;
+        });
+      }
+    };
+    window.addEventListener("settlex:trip-deleted", handleTripDeleted);
+    return () => window.removeEventListener("settlex:trip-deleted", handleTripDeleted);
+  }, [publicKey]);
+
   // Resolve the authenticated client once per wallet so the initial load and
-  // the realtime feed share it. Concurrent callers reuse a single handshake,
+  // periodic refresh share it. Concurrent callers reuse a single handshake,
   // so the wallet is only ever asked to sign once.
   useEffect(() => {
     let cancelled = false;
@@ -252,134 +267,184 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     };
   }, [client, publicKey, consentGeneration]);
 
-  // Realtime authorizes on the socket's own JWT, so the feed has to run on the
-  // authenticated client too — the anon client would receive nothing.
+  // The JWT stays in an HttpOnly cookie, so database changes are polled through
+  // the authenticated REST proxy rather than exposed to a Realtime socket.
   useEffect(() => {
     if (!client || !publicKey) return;
 
     const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
+    let stopped = false;
+    let inFlight = false;
+    let failureReported = false;
 
-    const channel = client
-      .channel("expenses-changes")
-      .on(
-        "postgres_changes",
-        { event: "INSERT", schema: "public", table: "expenses" },
-        (
-          payload: RealtimePostgresChangesPayload<
-            Database["public"]["Tables"]["expenses"]["Row"]
-          >
-        ) => {
-          const row = payload.new;
-          if (!row) return;
-          if (!isRowForWallet(row, publicKey)) {
-            setExpenses((prev) => {
-              const updated = prev.filter((expense) => expense.id !== row.id);
-              localStorage.setItem(cacheKey, JSON.stringify(updated));
-              return updated;
-            });
-            return;
-          }
-          const newExpense = dbRowToExpense(row);
-          setExpenses((prev) => {
-            if (prev.some((e) => e.id === newExpense.id)) return prev;
-            const updated = [newExpense, ...prev];
-            localStorage.setItem(cacheKey, JSON.stringify(updated));
-            return updated;
+    const refresh = async () => {
+      if (
+        stopped ||
+        inFlight ||
+        document.visibilityState !== "visible" ||
+        !hasProvenSession(publicKey)
+      ) return;
+      inFlight = true;
+      try {
+        const { data, error } = await client
+          .from("expenses")
+          .select("*")
+          .order("created_at", { ascending: false });
+        if (error) throw error;
+        if (stopped || !data) return;
+
+        const expenses = data
+          .filter((row) => isRowForWallet(row, publicKey))
+          .map(dbRowToExpense);
+        setExpenses(expenses);
+        localStorage.setItem(cacheKey, JSON.stringify(expenses));
+        failureReported = false;
+      } catch (error) {
+        if (!stopped && !failureReported) {
+          reportError("expense.poll_failed", error, {
+            fields: supabaseErrorFields(error),
           });
+          failureReported = true;
         }
-      )
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "expenses" },
-        (
-          payload: RealtimePostgresChangesPayload<
-            Database["public"]["Tables"]["expenses"]["Row"]
-          >
-        ) => {
-          const row = payload.new;
-          if (!row || !isRowForWallet(row, publicKey)) return;
-          const updatedExpense = dbRowToExpense(row);
-          setExpenses((prev) => {
-            const updated = prev.map((e) =>
-              e.id === updatedExpense.id ? updatedExpense : e
-            );
-            localStorage.setItem(cacheKey, JSON.stringify(updated));
-            return updated;
-          });
-        }
-      )
-      .on(
-        "postgres_changes",
-        { event: "DELETE", schema: "public", table: "expenses" },
-        (
-          payload: RealtimePostgresChangesPayload<
-            Database["public"]["Tables"]["expenses"]["Row"]
-          >
-        ) => {
-          // `old` is typed `{}` for INSERT events; a DELETE carries the row.
-          const row = payload.old as Partial<Database["public"]["Tables"]["expenses"]["Row"]> | undefined;
-          if (!row || !isRowForWallet(row, publicKey)) return;
-          const deletedId = row?.id;
-          if (!deletedId) return;
-          setExpenses((prev) => {
-            const updated = prev.filter((e) => e.id !== deletedId);
-            localStorage.setItem(cacheKey, JSON.stringify(updated));
-            return updated;
-          });
-        }
-      )
-      .subscribe((status, err) => {
-        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || status === "CLOSED") {
-          // Realtime dying is silent to the user: the list simply stops
-          // updating, so it must be reported rather than printed.
-          reportError("expense.realtime_failed", err, { fields: { status } });
-        }
-      });
+      } finally {
+        inFlight = false;
+      }
+    };
+
+    const interval = setInterval(() => void refresh(), 5000);
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "visible") void refresh();
+    };
+    document.addEventListener("visibilitychange", onVisibilityChange);
 
     return () => {
-      void client.removeChannel(channel);
+      stopped = true;
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisibilityChange);
     };
   }, [client, publicKey]);
 
-  const addExpense = useCallback(async (expense: Expense) => {
-    if (!publicKey) throw new Error("Wallet not connected");
+  const addExpense = useCallback(
+    async (expense: Expense, tripId?: string) => {
+      if (!publicKey) throw new Error("Wallet not connected");
 
-    const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
+      const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
 
-    const memberWallets = expense.members
-      .map((member) => member.walletAddress)
-      .filter((address): address is string => !!address);
-    const allMemberWallets = memberWallets.includes(publicKey)
-      ? memberWallets
-      : [publicKey, ...memberWallets];
-    const localExpense: Expense = {
-      ...expense,
-      createdByWallet: publicKey,
-      memberWallets: allMemberWallets,
-      acceptedWallets: [publicKey],
-    };
+      const memberWallets = expense.members
+        .map((member) => member.walletAddress)
+        .filter((address): address is string => !!address);
+      const allMemberWallets = memberWallets.includes(publicKey)
+        ? memberWallets
+        : [publicKey, ...memberWallets];
+      const localExpense: Expense = {
+        ...expense,
+        createdByWallet: publicKey,
+        memberWallets: allMemberWallets,
+        acceptedWallets: [publicKey],
+      };
 
-    setExpenses((prev) => {
-      const updated = [localExpense, ...prev];
-      localStorage.setItem(cacheKey, JSON.stringify(updated));
-      return updated;
-    });
-
-    // Persist to Supabase — throw on failure so the caller can handle it
-    const client = await getClient();
-    const { error } = await client
-      .from("expenses")
-      .insert([expenseToDbInsertRow(expense, publicKey)]);
-
-    if (error) {
       setExpenses((prev) => {
-        const rolled = prev.filter((e) => e.id !== expense.id);
-        localStorage.setItem(cacheKey, JSON.stringify(rolled));
-        return rolled;
+        const updated = [localExpense, ...prev];
+        localStorage.setItem(cacheKey, JSON.stringify(updated));
+        return updated;
       });
-      throw error;
-    }
-  }, [getClient, publicKey]);
+
+      try {
+        const client = await getClient();
+        const expensePayload = expenseToDbInsertRow(expense, publicKey);
+
+        if (tripId) {
+          // Atomic path: Use create_trip_expense RPC to create and link in one transaction
+          let rpcSuccess = false;
+          try {
+            const { data, error } = await client.rpc("create_trip_expense", {
+              p_trip_id: tripId,
+              p_expense: expensePayload as unknown as Json,
+            });
+
+            if (error) {
+              const msg = error.message || "";
+              if (
+                msg.includes("Cannot link foreign expense") ||
+                msg.includes("Not authorized") ||
+                msg.includes("Cannot add expenses to a settled trip") ||
+                msg.includes("Trip not found")
+              ) {
+                throw error;
+              }
+            } else {
+              rpcSuccess = true;
+              if (data && data.length > 0) {
+                const stored = dbRowToExpense(data[0]);
+                setExpenses((prev) => {
+                  const synced = prev.map((e) => (e.id === expense.id ? stored : e));
+                  localStorage.setItem(cacheKey, JSON.stringify(synced));
+                  return synced;
+                });
+              }
+            }
+          } catch (rpcErr) {
+            const msg = (rpcErr as { message?: string })?.message || "";
+            if (
+              msg.includes("Cannot link foreign expense") ||
+              msg.includes("Not authorized") ||
+              msg.includes("Cannot add expenses to a settled trip") ||
+              msg.includes("Trip not found")
+            ) {
+              throw rpcErr;
+            }
+            logWarn("expense.create_trip_expense_rpc_unavailable", {
+              fields: { tripId, expenseId: expense.id, ...supabaseErrorFields(rpcErr) },
+            });
+          }
+
+          // Fallback path if RPC is unavailable in the environment
+          if (!rpcSuccess) {
+            const { error: insertErr } = await client
+              .from("expenses")
+              .insert([expensePayload]);
+            if (insertErr) throw insertErr;
+
+            try {
+              const { error: linkErr } = await client.rpc("add_expense_to_trip", {
+                p_trip_id: tripId,
+                p_expense_id: expense.id,
+              });
+              if (linkErr) throw linkErr;
+            } catch (linkErr) {
+              // Roll back the inserted expense from DB so we don't leave an unlinked orphan
+              await client.from("expenses").delete().eq("id", expense.id).catch(() => {});
+              throw linkErr;
+            }
+          }
+
+          if (typeof window !== "undefined") {
+            window.dispatchEvent(
+              new CustomEvent("settlex:trip-expense-created", {
+                detail: { tripId, expenseId: expense.id },
+              })
+            );
+            window.dispatchEvent(new Event("settlex:consent-changed"));
+          }
+        } else {
+          // Standard standalone expense insert
+          const { error } = await client
+            .from("expenses")
+            .insert([expensePayload]);
+
+          if (error) throw error;
+        }
+      } catch (err) {
+        setExpenses((prev) => {
+          const rolled = prev.filter((e) => e.id !== expense.id);
+          localStorage.setItem(cacheKey, JSON.stringify(rolled));
+          return rolled;
+        });
+        throw err;
+      }
+    },
+    [getClient, publicKey]
+  );
 
   const updateExpense = useCallback(
     async (id: string, updates: Partial<Expense>) => {
@@ -507,6 +572,15 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         const { error } = await client.from("expenses").delete().eq("id", id);
 
         if (error) throw error;
+
+        // Notify TripContext to remove dangling references in local trips
+        if (typeof window !== "undefined") {
+          window.dispatchEvent(
+            new CustomEvent("settlex:expense-deleted", {
+              detail: { expenseId: id },
+            })
+          );
+        }
       } catch (err) {
         reportError("expense.delete_failed", err, {
           fields: { expenseId: id, ...supabaseErrorFields(err) },
@@ -521,7 +595,7 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         throw err;
       }
     },
-    [expenses, getClient]
+    [expenses, getClient, publicKey]
   );
 
   const markSharePaid = useCallback(
@@ -557,146 +631,62 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       try {
         const client = await getClient();
 
-        // 1. Primary path: Atomic server-side RPC (row-locked in Postgres)
-        let rpcSucceeded = false;
-        try {
-          const { data: rpcData, error: rpcErr } = await client
-            .rpc("mark_share_paid", {
-              p_expense_id: expenseId,
-              p_member_id: memberId,
-              p_tx_hash: txHash,
-            });
+        // Single write path: the row-locked mark_share_paid RPC. It enforces
+        // the rules a direct UPDATE cannot (caller authorisation, one hash per
+        // payment, no re-marking a paid share, creator restrictions SX-026 /
+        // SX-028), so its rejections are final. There is deliberately no
+        // client-side fallback that writes the shares array directly: that
+        // would turn every business rejection into a silent bypass.
+        const { data: rpcData, error: rpcErr } = await client.rpc("mark_share_paid", {
+          p_expense_id: expenseId,
+          p_member_id: memberId,
+          p_tx_hash: txHash,
+        });
 
-          if (rpcErr) {
-            throw rpcErr;
-          }
-
-          if (rpcData && rpcData.length > 0) {
-            const updatedRow = dbRowToExpense(rpcData[0]);
-            setExpenses((prev) => {
-              const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
-              localStorage.setItem(cacheKey, JSON.stringify(synced));
-              return synced;
-            });
-            rpcSucceeded = true;
-          }
-        } catch (rpcErr) {
-          const errMsg = (rpcErr as { message?: string })?.message || "";
-          if (
-            errMsg.includes("already marked as paid") ||
-            errMsg.includes("already used on another") ||
-            errMsg.includes("Valid transaction hash is required") ||
-            errMsg.includes("Not authorized")
-          ) {
-            throw rpcErr;
-          }
-          logWarn("expense.mark_share_paid_rpc_unavailable", {
-            fields: { expenseId, ...supabaseErrorFields(rpcErr) },
-          });
+        if (rpcErr) throw rpcErr;
+        if (!rpcData || rpcData.length === 0) {
+          throw new Error("The payment could not be recorded. Please try again.");
         }
 
-        if (rpcSucceeded) return;
-
-        // 2. Fallback path: Optimistic Concurrency Control (OCC) with Retry Loop
-        const MAX_RETRIES = 5;
-        let lastError: unknown = null;
-
-        for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-          const { data: freshData, error: fetchErr } = await client
-            .from("expenses")
-            .select("*")
-            .eq("id", expenseId)
-            .single();
-
-          if (fetchErr) throw fetchErr;
-
-          const currentVersion = freshData.version ?? 1;
-          const existingShares = (freshData.shares as SplitShare[]) || [];
-
-          // Merge: preserve any other members marked paid concurrently
-          const freshShares = existingShares.map((s: SplitShare) =>
-            s.memberId === memberId
-              ? {
-                  ...s,
-                  paid: true,
-                  txHash,
-                  paidBy: publicKey || s.paidBy,
-                  markedAt: s.markedAt || nowIso,
-                }
-              : s
-          );
-          const freshSettled = freshShares.every((s: SplitShare) => s.paid);
-
-          // Update conditionally matching the version token
-          const { data: rowsUpdated, error: updateErr } = await client
-            .from("expenses")
-            .update({
-              shares: freshShares as unknown as Json,
-              settled: freshSettled,
-              version: currentVersion + 1,
-            })
-            .eq("id", expenseId)
-            .eq("version", currentVersion)
-            .select("*");
-
-          if (updateErr) {
-            lastError = updateErr;
-            // If column 'version' does not exist in db, fallback to direct update
-            if (String(updateErr.message || "").includes("version")) {
-              const { data: fallbackRows, error: fallbackErr } = await client
-                .from("expenses")
-                .update({
-                  shares: freshShares as unknown as Json,
-                  settled: freshSettled,
-                })
-                .eq("id", expenseId)
-                .select("*");
-
-              if (fallbackErr) throw fallbackErr;
-              if (fallbackRows && fallbackRows.length > 0) {
-                const updatedExpense = dbRowToExpense(fallbackRows[0]);
-                setExpenses((prev) => {
-                  const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
-                  localStorage.setItem(cacheKey, JSON.stringify(synced));
-                  return synced;
-                });
-                return;
-              }
-            }
-          }
-
-          if (rowsUpdated && rowsUpdated.length > 0) {
-            const updatedExpense = dbRowToExpense(rowsUpdated[0]);
-            setExpenses((prev) => {
-              const synced = prev.map((e) => (e.id === expenseId ? updatedExpense : e));
-              localStorage.setItem(cacheKey, JSON.stringify(synced));
-              return synced;
-            });
-            return;
-          }
-
-          // Conflict detected (version changed by concurrent writer) - backoff and retry
-          if (attempt < MAX_RETRIES - 1) {
-            await new Promise((r) => setTimeout(r, 40 * (attempt + 1) + Math.random() * 40));
-          }
-        }
-
-        throw lastError || new Error("Failed to record payment due to concurrent updates. Please try again.");
+        const updatedRow = dbRowToExpense(rpcData[0]);
+        setExpenses((prev) => {
+          const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
+          localStorage.setItem(cacheKey, JSON.stringify(synced));
+          return synced;
+        });
       } catch (err) {
         // The payment settled on Stellar but the database does not reflect it:
         // the ledger and the app now disagree about who has paid.
+        // The caller (usePayment) keeps a durable pending-payment record for
+        // this transfer and blocks Pay until it is recorded, so rolling the
+        // share back here cannot lead to a second payment.
         reportError("expense.mark_share_paid_failed", err, {
           fields: { expenseId, ...supabaseErrorFields(err) },
         });
+        // Undo only this share's optimistic update. Restoring the whole
+        // snapshot would also discard anything that landed meanwhile (a poll,
+        // another member's payment) and is newer than `current`.
+        const previousShare = current.shares.find((s) => s.memberId === memberId);
         setExpenses((prev) => {
-          const rolled = prev.map((e) => (e.id === expenseId ? current : e));
+          const rolled = prev.map((e) => {
+            if (e.id !== expenseId) return e;
+            const shares = e.shares.map((s) =>
+              s.memberId === memberId && s.txHash === txHash && previousShare ? previousShare : s
+            );
+            return { ...e, shares, settled: shares.every((s) => s.paid) };
+          });
           localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
-        throw err;
+        // PostgREST errors are plain objects, not Error instances, so pass the
+        // message itself. Rule rejections written for users ("Share is already
+        // marked as paid") survive; raw database detail becomes the generic line.
+        const rawMessage = (err as { message?: unknown } | null)?.message;
+        const { message } = userFacingMessage(typeof rawMessage === "string" ? rawMessage : err);
+        throw new Error(message, { cause: err });
       }
     },
-    [expenses, getClient]
+    [expenses, getClient, publicKey]
   );
 
   const getExpense = useCallback(

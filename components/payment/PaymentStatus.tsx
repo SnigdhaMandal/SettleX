@@ -2,7 +2,7 @@
 
 import React from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { CheckCircle2, XCircle, Loader2, Database } from "lucide-react";
+import { CheckCircle2, XCircle, Loader2, Database, Clock } from "lucide-react";
 import { TransactionHash } from "./TransactionHash";
 import type { PaymentState } from "@/hooks/usePayment";
 import { cn } from "@/lib/utils";
@@ -11,6 +11,8 @@ interface PaymentStatusProps {
   state: PaymentState;
   onReset?: () => void;
   onRetryOnChain?: () => void;
+  /** Retries recording (or confirming) a transfer that has already been sent. */
+  onRetryRecording?: () => void;
   className?: string;
 }
 
@@ -19,6 +21,7 @@ const STATUS_LABELS: Record<string, string> = {
   signing:    "Waiting for wallet signature…",
   submitting: "Submitting to Stellar network…",
   recording:  "Recording payment on-chain…",
+  verifying:  "Checking the earlier payment on Stellar…",
 };
 
 const RECORDING_STEP_LABELS: Record<string, string> = {
@@ -28,12 +31,23 @@ const RECORDING_STEP_LABELS: Record<string, string> = {
   confirming: "Confirming on-chain settlement…",
 };
 
-export function PaymentStatus({ state, onReset, onRetryOnChain, className }: PaymentStatusProps) {
+export function PaymentStatus({
+  state,
+  onReset,
+  onRetryOnChain,
+  onRetryRecording,
+  className,
+}: PaymentStatusProps) {
   const isLoadingState =
     state.status === "building" ||
     state.status === "signing" ||
     state.status === "submitting" ||
-    state.status === "recording";
+    state.status === "recording" ||
+    state.status === "verifying";
+  const isPendingState =
+    state.status === "partial_success" ||
+    state.status === "paid_unrecorded" ||
+    state.status === "pending_confirmation";
 
   return (
     <AnimatePresence mode="wait">
@@ -46,7 +60,7 @@ export function PaymentStatus({ state, onReset, onRetryOnChain, className }: Pay
           transition={{ duration: 0.2 }}
           className={cn("rounded-xl border p-4", className, {
             "bg-[#F8FFF0] border-[#B9FF66]/40": state.status === "success",
-            "bg-amber-50 border-amber-200":     state.status === "partial_success",
+            "bg-amber-50 border-amber-200":     isPendingState,
             "bg-red-50 border-red-200":         state.status === "error",
             "bg-[#F8F8F8] border-[#E5E5E5]":    isLoadingState,
           })}
@@ -138,6 +152,61 @@ export function PaymentStatus({ state, onReset, onRetryOnChain, className }: Pay
                   </button>
                 )}
               </div>
+            </div>
+          )}
+
+          {/* Paid but unrecorded: XLM sent, database record failed */}
+          {state.status === "paid_unrecorded" && (
+            <div className="space-y-2" role="status">
+              <div className="flex items-center gap-2 flex-wrap">
+                <CheckCircle2 size={16} className="text-[#7A5B00] shrink-0" />
+                <p className="text-sm font-bold text-[#7A5B00]">Payment sent — recording pending</p>
+              </div>
+
+              <p className="text-xs text-amber-700">
+                Your XLM transfer went through, but SettleX couldn&apos;t record it yet
+                ({state.message}). Don&apos;t pay again — retry recording instead.
+              </p>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-[#888]">TX:</span>
+                <TransactionHash hash={state.hash} compact />
+              </div>
+
+              {onRetryRecording && (
+                <button
+                  onClick={onRetryRecording}
+                  className="text-xs font-semibold px-3 py-1 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors mt-1"
+                >
+                  Retry recording
+                </button>
+              )}
+            </div>
+          )}
+
+          {/* Submitted, awaiting Stellar confirmation */}
+          {state.status === "pending_confirmation" && (
+            <div className="space-y-2" role="status">
+              <div className="flex items-center gap-2 flex-wrap">
+                <Clock size={16} className="text-[#7A5B00] shrink-0" />
+                <p className="text-sm font-bold text-[#7A5B00]">Payment awaiting confirmation</p>
+              </div>
+
+              <p className="text-xs text-amber-700">{state.message}</p>
+
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-xs text-[#888]">TX:</span>
+                <TransactionHash hash={state.hash} compact />
+              </div>
+
+              {onRetryRecording && (
+                <button
+                  onClick={onRetryRecording}
+                  className="text-xs font-semibold px-3 py-1 rounded-lg bg-amber-100 text-amber-800 hover:bg-amber-200 transition-colors mt-1"
+                >
+                  Check again
+                </button>
+              )}
             </div>
           )}
 

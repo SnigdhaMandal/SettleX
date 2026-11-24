@@ -1,5 +1,5 @@
 import { decodeContractError } from "@/lib/stellar/contract";
-import { ContractErrorCode, PoolErrorCode } from "@/types/contract";
+import { ContractErrorCode } from "@/types/contract";
 
 describe("decodeContractError", () => {
   it.each([
@@ -17,15 +17,6 @@ describe("decodeContractError", () => {
     [ContractErrorCode.Unauthorized, "Authorization failed for this operation."],
     [ContractErrorCode.InvalidPage, "Payment history page size is invalid."],
     [ContractErrorCode.IndexOverflow, "Payment history index is full."],
-    [PoolErrorCode.AlreadyInitialized, "Pool is already initialized."],
-    [PoolErrorCode.NotInitialized, "Pool contract is not initialized yet."],
-    [PoolErrorCode.Unauthorized, "Pool authorization failed."],
-    [PoolErrorCode.InvalidAmount, "Pool payment amount must be greater than zero."],
-    [PoolErrorCode.InsufficientBalance, "Pool balance is insufficient for this transfer."],
-    [PoolErrorCode.BalanceOverflow, "Pool balance overflowed."],
-    [PoolErrorCode.VersionMismatch, "Pool storage version mismatch."],
-    [PoolErrorCode.InvalidActor, "Invalid pool actor for this operation."],
-    [PoolErrorCode.AmountTooLarge, "Pool amount is above the allowed limit."],
   ])("maps known code #%s to the expected message", (code, expected) => {
     expect(decodeContractError(`Error(Contract, #${code})`)).toBe(expected);
   });
@@ -35,12 +26,19 @@ describe("decodeContractError", () => {
     expect(result).toBe("Contract error #99.");
   });
 
-  it("falls back to a pool-specific message for unknown codes at or above 100", () => {
-    expect(decodeContractError("Error(Contract, #199)")).toBe("Pool error #199.");
+  it("has no pool-specific mapping: the pool contract was removed (Issue #178)", () => {
+    expect(decodeContractError("Error(Contract, #105)")).toBe("Contract error #105.");
   });
 
   it("returns raw message when pattern is not a contract error", () => {
     const raw = "network timeout";
     expect(decodeContractError(raw)).toBe(raw);
+  });
+
+  it("extracts and decodes contract error from longer strings or send messages", () => {
+    const msg = "Contract send failed: Error(Contract, #2)";
+    expect(decodeContractError(msg)).toBe(
+      "This expense was already settled on-chain. No double payment needed."
+    );
   });
 });

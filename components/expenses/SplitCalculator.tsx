@@ -6,18 +6,30 @@ import { formatXLM } from "@/lib/utils";
 import { xlmToStroops, stroopsToXlm } from "@/lib/split/calculator";
 import { PaymentRow } from "./PaymentRow";
 import type { SplitShare } from "@/types/expense";
+import type { NetSettledReason } from "@/lib/settlement/netBalance";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 interface SplitCalculatorProps {
   shares: SplitShare[];
+  /** Saved expense id; enables identifying memos for QR payments. */
+  expenseId?: string;
   payerName: string;
   totalAmount: string;
   expenseTitle?: string;
   /** Called when user clicks Pay on a row. */
   onPay?: (share: SplitShare) => void;
+  /** Records a QR payment from a pasted transaction hash (Issue #204). */
+  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>;
   /** ID of the share whose payment is currently in-flight (shows spinner). */
   payingShareId?: string;
+  /** Member ids whose share has a sent-but-unrecorded payment. */
+  pendingShareIds?: string[];
+  /**
+   * Unpaid shares covered by trip netting, by member id (Issue #203). These
+   * need no direct payment, so they show as settled with no Pay button.
+   */
+  netSettledShares?: Map<string, NetSettledReason>;
   /** Disable pay buttons */
   disablePay?: boolean;
   /** Connected wallet address — Pay button only shows on the matching row. */
@@ -30,11 +42,15 @@ interface SplitCalculatorProps {
 
 export function SplitCalculator({
   shares,
+  expenseId,
   payerName,
   totalAmount,
   expenseTitle = "Expense",
   onPay,
+  onReconcileQr,
   payingShareId,
+  pendingShareIds,
+  netSettledShares,
   disablePay = false,
   connectedWalletAddress,
   payerWalletAddress,
@@ -45,7 +61,7 @@ export function SplitCalculator({
   const splitTotalStroops = shares.reduce((s, x) => {
     try { return s + xlmToStroops(x.amount || "0"); } catch { return s; }
   }, 0n);
-  const paidCount = shares.filter((s) => s.paid).length;
+  const paidCount = shares.filter((s) => s.paid || netSettledShares?.has(s.memberId)).length;
 
   if (shares.length === 0) {
     return (
@@ -94,10 +110,14 @@ export function SplitCalculator({
           <PaymentRow
             key={share.memberId}
             share={share}
+            expenseId={expenseId}
             index={i}
             expenseTitle={expenseTitle}
             onPay={disablePay ? undefined : onPay}
+            onReconcileQr={disablePay ? undefined : onReconcileQr}
             isPaying={payingShareId === share.memberId}
+            hasPendingPayment={pendingShareIds?.includes(share.memberId) ?? false}
+            netSettled={share.paid ? undefined : netSettledShares?.get(share.memberId)}
             connectedWalletAddress={connectedWalletAddress}
             payerWalletAddress={payerWalletAddress}
           />

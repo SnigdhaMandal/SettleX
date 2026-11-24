@@ -28,6 +28,7 @@ export interface WalletActions {
   disconnect: () => void;
   refreshBalance: () => Promise<void>;
   refreshNetwork: () => Promise<StellarNetwork | null>;
+  confirmNetwork: () => void;
   clearError: () => void;
   reconcile: () => Promise<void>;
 }
@@ -36,6 +37,9 @@ export type WalletContextType = WalletState & WalletActions;
 
 export const WALLET_IDS = {
   FREIGHTER: "freighter",
+  XBULL: "xbull",
+  LOBSTR: "lobstr",
+  RABET: "rabet",
 } as const;
 
-export type WalletId = (typeof WALLET_IDS)[keyof typeof WALLET_IDS];
+export type WalletId = (typeof WALLET_IDS)[keyof typeof WALLET_IDS] | string;

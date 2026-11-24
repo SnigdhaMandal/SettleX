@@ -10,6 +10,8 @@ interface PayButtonProps {
   onClick: () => void;
   isLoading?: boolean;
   disabled?: boolean;
+  /** Replaces the "Pay … XLM" label, e.g. while a payment is pending. */
+  label?: string;
   className?: string;
   size?: "sm" | "md";
 }
@@ -20,6 +22,7 @@ export function PayButton({
   onClick,
   isLoading = false,
   disabled = false,
+  label,
   className,
   size = "md",
 }: PayButtonProps) {
@@ -45,7 +48,7 @@ export function PayButton({
       ) : (
         <Zap size={size === "sm" ? 11 : 14} className="fill-[#B9FF66]" />
       )}
-      {isLoading ? "Paying…" : `Pay ${xlm} XLM`}
+      {isLoading ? "Paying…" : label ?? `Pay ${xlm} XLM`}
     </button>
   );
 }

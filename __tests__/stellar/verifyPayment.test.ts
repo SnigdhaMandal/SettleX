@@ -141,6 +141,45 @@ describe("Horizon Transaction Verification (Issue #188)", () => {
       expect(result.flagged).toBe(true);
       expect(result.error).toMatch(/Payment destination does not match/);
     });
+
+    it("flags transaction if source wallet mismatches expected share owner", async () => {
+      global.fetch = jest.fn().mockImplementation((url: string) => {
+        if (url.includes("/operations")) {
+          return Promise.resolve({
+            ok: true,
+            json: async () => ({
+              _embedded: {
+                records: [
+                  {
+                    type: "payment",
+                    from: "GOTHERWALLET111111111111111111111111111111111111111111111",
+                    to: DEST_WALLET,
+                    amount: "25.0000000",
+                  },
+                ],
+              },
+            }),
+          } as Response);
+        }
+        return Promise.resolve({
+          ok: true,
+          status: 200,
+          json: async () => ({
+            successful: true,
+            ledger: 54321,
+            source_account: "GOTHERWALLET111111111111111111111111111111111111111111111",
+          }),
+        } as Response);
+      });
+
+      const result = await verifyTransactionOnHorizon(VALID_HASH, {
+        sourceWallet: "GEXPECTEDSOURCEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      });
+
+      expect(result.valid).toBe(false);
+      expect(result.flagged).toBe(true);
+      expect(result.error).toMatch(/Transaction source does not match/);
+    });
   });
 
   describe("API route /api/payment/verify", () => {

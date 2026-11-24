@@ -33,24 +33,24 @@
 
 ### What is genuinely strong (keep and build on)
 
-- **Real architecture, not a mock.** Next.js 14 App Router + TypeScript, a working Soroban contract in [contract/src/lib.rs](../contract/src/lib.rs), Horizon payment building in [lib/stellar/buildTransaction.ts](../lib/stellar/buildTransaction.ts), and a real deployed testnet contract.
+- **Real architecture, not a mock.** Next.js 14 App Router + TypeScript, a working settlement Soroban contract in [contract/contracts/settlement/src/lib.rs](../contract/contracts/settlement/src/lib.rs), Horizon payment building in [lib/stellar/buildTransaction.ts](../lib/stellar/buildTransaction.ts), and real deployed testnet contracts.
 - **Non-custodial signing.** The private key never leaves the wallet extension — the app only receives a signed XDR envelope. That is the correct trust model and a genuine selling point.
 - **Test discipline.** 45 JS tests + Rust contract tests, CI workflow, release checklist, runbook. Most "projects" don't have this.
 - **A clean, opinionated design system.** The lime `#B9FF66` / near-black `#0F0F14` palette in [tailwind.config.ts](../tailwind.config.ts) is distinctive and coherent.
 
 ### What makes it a *project*, not yet a *product* (the honest gaps)
 
-| # | Gap | Where it shows | Severity |
-|---|-----|----------------|----------|
-| G1 | **Everything runs on Testnet.** No real value ever moves. The whole app is a rehearsal. | [lib/utils/constants.ts](../lib/utils/constants.ts) defaults to `TESTNET` | 🔴 Blocker for "product" |
-| G2 | **The "settlement pool" is an accounting illusion.** Pool credits are internal bookkeeping, *not* custody of real tokens, and `record_payment` **does not verify** the Horizon `tx_hash` it stores. | [docs/ARCHITECTURE_AND_LIMITATIONS.md](./ARCHITECTURE_AND_LIMITATIONS.md) lines 27–28; [contract/src/lib.rs:154](../contract/src/lib.rs#L154) | 🔴 Trust-critical |
-| G3 | **WalletConnect and passkey onboarding still need product-specific configuration.** The maintained Stellar Wallets Kit now supplies the default wallet modules and connection modal, but WalletConnect still needs Reown metadata and passkeys remain a separate roadmap item. | `walletsKit.ts` | 🟡 Medium |
-| G4 | **Not actually installable / not a PWA.** No `manifest.webmanifest`, no service worker, only a single `icon.svg`. `metadataBase` points at `https://settlex.app` and references `/og-image.png` which **does not exist** in [public/](../public/). | [app/layout.tsx:38](../app/layout.tsx#L38), [public/](../public/) | 🟠 High |
-| G4b | **Broken referenced files.** The README links to `docs/QUICKSTART.md`, `docs/SUPABASE_SETUP.md`, `docs/AUTHENTICATION_SETUP.md`, `docs/MANUAL_TESTING_GUIDE.md` — none exist in [docs/](.). The OG image is also missing. Broken links read as "unfinished" to any serious evaluator. | README vs. actual `docs/` | 🟡 Medium |
-| G5 | **"Bill pay" is really "send a share to a friend's wallet."** There is no biller network, no fiat rail, no stablecoin. Calling it bill-pay overstates it. | Product framing | 🟠 High (honesty) |
-| G6 | **No stablecoin.** Splitting a $30 dinner in XLM means both people eat XLM's volatility between split and settle. A real product needs USDC. | `buildTransaction.ts` uses `Asset.native()` only | 🟠 High |
-| G7 | **Security surface unaudited for production.** No CSP header, unverified `tx_hash` trust, Supabase RLS not proven, no rate limiting, no error monitoring, no wallet-address ownership challenge. | [next.config.mjs](../next.config.mjs), Supabase | 🟠 High |
-| G8 | **Positioning is "hackathon submission," not "product."** The README has a "Submission Checklist Evidence" section and "Phase 8 Proof." Great for judges, wrong for customers. | [README.md](../README.md) | 🟡 Medium |
+| # | Gap | Where it shows | Severity | Status as of 2026-11-24 |
+|---|-----|----------------|----------|------------------------|
+| G1 | **Everything runs on Testnet.** No real value ever moves. The whole app is a rehearsal. | [lib/utils/constants.ts](../lib/utils/constants.ts) defaults to `TESTNET` | 🔴 Blocker for "product" | Open |
+| G2 | **The "settlement pool" is an accounting illusion.** Pool credits are internal bookkeeping, *not* custody of real tokens, and `record_payment` **does not verify** the Horizon `tx_hash` it stores. | [docs/ARCHITECTURE_AND_LIMITATIONS.md](./ARCHITECTURE_AND_LIMITATIONS.md) lines 27–28; [contract/src/lib.rs:154](../contract/src/lib.rs#L154) | 🔴 Trust-critical | Open |
+| G3 | **WalletConnect and passkey onboarding still need product-specific configuration.** The maintained Stellar Wallets Kit supplies the default wallet modules and connection modal, but WalletConnect still needs Reown metadata and passkeys remain a separate roadmap item. | `walletsKit.ts` | 🟡 Medium | Partially addressed |
+| G4 | **Not actually installable / not a PWA.** No `manifest.webmanifest`, no service worker, only a single `icon.svg`. `metadataBase` points at `https://settlex.app` and references `/og-image.png` which **does not exist** in [public/](../public/). | [app/layout.tsx:38](../app/layout.tsx#L38), [public/](../public/) | 🟠 High | Open |
+| G4b | **Broken referenced files.** The README links to `docs/QUICKSTART.md`, `docs/SUPABASE_SETUP.md`, `docs/AUTHENTICATION_SETUP.md`, `docs/MANUAL_TESTING_GUIDE.md` — none exist in [docs/](.). The OG image is also missing. Broken links read as "unfinished" to any serious evaluator. | README vs. actual `docs/` | 🟡 Medium | Open |
+| G5 | **"Bill pay" is really "send a share to a friend's wallet."** There is no biller network, no fiat rail, no stablecoin. Calling it bill-pay overstates it. | Product framing | 🟠 High (honesty) | Open |
+| G6 | **No stablecoin.** Splitting a $30 dinner in XLM means both people eat XLM's volatility between split and settle. A real product needs USDC. | `buildTransaction.ts` uses `Asset.native()` only | 🟠 High | Open |
+| G7 | **Security work remains before production:** the contract does not verify the recorded Horizon `tx_hash`, Supabase RLS still needs proof in CI, and production error monitoring is not configured. | [contract/src/lib.rs](../contract/src/lib.rs), [supabase-setup.sql](../supabase-setup.sql), [docs/ARCHITECTURE_AND_LIMITATIONS.md](./ARCHITECTURE_AND_LIMITATIONS.md) | 🟠 High | Partially addressed: nonce-based CSP, auth-route rate limits, and signed wallet challenges are implemented; see [§10](#10-security-hardening). |
+| G8 | **Positioning is "hackathon submission," not "product."** The README has a "Submission Checklist Evidence" section and "Phase 8 Proof." Great for judges, wrong for customers. | [README.md](../README.md) | 🟡 Medium | Open |
 
 **The single most important honesty point:** SettleX currently produces *two independent things* per settlement — (a) a real native-XLM payment on Horizon, and (b) a separate Soroban record that *claims* that payment happened but never checks it. A malicious client could record a payment with a fake/foreign `tx_hash`. For a demo that's fine. For a product where money is real, that gap has to close (see [§9](#9-the-settlement-integrity-problem)).
 
@@ -62,21 +62,18 @@ Ordered by **(impact on being a real product) ÷ (effort)**. Do the top block be
 
 ### Tier 0 — Do first (cheap, high credibility, no money-risk)
 1. Fix broken asset/doc references: create `/og-image.png`, remove or write the missing `docs/*.md` links (G4b).
-2. Replace the custom `walletsKit.ts` with the already-installed `@creit.tech/stellar-wallets-kit` → instantly unlocks WalletConnect + many wallets ([§7](#7-global-wallet-support--the-honest-stellar-reality)).
-3. Ship the PWA layer: manifest, icons, service worker, install prompt ([§6](#6-pwa-installable-mobile-app)).
-4. Rewrite positioning/README from "submission" to "product" ([§3](#3-product-positioning--honest-market-narrative), [§8](#8-honest-scope)).
-5. Add CSP + tighten headers ([§10](#10-security-hardening)).
+2. Ship the PWA layer: manifest, icons, service worker, install prompt ([§6](#6-pwa-installable-mobile-app)).
+3. Rewrite positioning/README from "submission" to "product" ([§3](#3-product-positioning--honest-market-narrative), [§8](#8-honest-scope)).
 
 ### Tier 1 — Core product truth (must precede real money)
-6. Redesign settlement so the contract records *verified* payments, and drop or honestly relabel the "pool" ([§9](#9-the-settlement-integrity-problem)).
-7. Add USDC (trustline + path payment) so people can split and settle in a stable unit ([§8](#8-stablecoins--usdc--how-conversion-actually-works)).
-8. Wallet-ownership challenge (sign-in-with-Stellar) so an address in the DB is proven, not just claimed ([§10](#10-security-hardening)).
-9. Harden Supabase RLS and prove it with tests ([§10](#10-security-hardening), [§12](#12-backend--infrastructure-productionization)).
+4. Redesign settlement so the contract records *verified* payments, and drop or honestly relabel the "pool" ([§9](#9-the-settlement-integrity-problem)).
+5. Add USDC (trustline + path payment) so people can split and settle in a stable unit ([§8](#8-stablecoins--usdc--how-conversion-actually-works)).
+6. Harden Supabase RLS and prove it with tests ([§10](#10-security-hardening), [§12](#12-backend--infrastructure-productionization)).
 
 ### Tier 2 — Go-to-market
-10. Mainnet migration with a staged rollout ([§11](#11-testnet--mainnet-migration)).
-11. Compliance posture for any fiat on/off-ramp ([§13](#13-legal-compliance--regulatory-reality)).
-12. Analytics, monetization, growth loops ([§14](#14-analytics-growth--monetization)).
+7. Mainnet migration with a staged rollout ([§11](#11-testnet--mainnet-migration)).
+8. Compliance posture for any fiat on/off-ramp ([§13](#13-legal-compliance--regulatory-reality)).
+9. Analytics, monetization, growth loops ([§14](#14-analytics-growth--monetization)).
 
 ---
 
@@ -158,7 +155,7 @@ Lift these out of Tailwind into a one-page `docs/BRAND.md` so designers/partners
 The design language is solid; the work is polish, consistency, and mobile correctness. Audit each screen at **360px (small phone), 768px (tablet), 1280px (desktop)**.
 
 ### Cross-cutting fixes
-- **The wallet modal is inline-styled DOM, not React.** [lib/stellar/walletsKit.ts:140-315](../lib/stellar/walletsKit.ts#L140) builds the connect modal with `document.createElement` and hardcoded hex colors. It ignores dark mode, your design tokens, focus-trapping, and keyboard/`Esc` a11y. Replacing the kit ([§7](#7-global-wallet-support--the-honest-stellar-reality)) gives you the maintained kit's modal, or rebuild it as a real React component using your existing [components/ui/Modal.tsx](../components/ui/Modal.tsx).
+- **Wallet modal accessibility still needs a product QA pass.** The maintained Stellar Wallets Kit now provides the connection modal; verify keyboard navigation, focus handling, Escape behavior, and visual integration against the app's design at desktop and mobile sizes.
 - **Tap targets:** ensure every button/row is ≥44×44px on mobile (Apple HIG / Google min). Payment rows and wallet list items are the usual offenders.
 - **Safe areas:** add `viewport-fit=cover` and use `env(safe-area-inset-*)` padding so the sticky header/footer and any bottom action bar clear the iPhone notch/home indicator (critical once it's an installed PWA).
 - **Long strings:** Stellar addresses (`G...`, 56 chars) and tx hashes (64 chars) must **never** cause horizontal scroll. Use the existing `formatAddress` truncation everywhere, and wrap any full value in a `break-all` monospace container with a copy button.
@@ -386,9 +383,9 @@ This is the deepest gap between "project" and "product," so it gets its own sect
 Per the code and your own [docs/ARCHITECTURE_AND_LIMITATIONS.md](./ARCHITECTURE_AND_LIMITATIONS.md#L27):
 
 1. `buildPaymentTransaction` builds a **native XLM payment** on Horizon; the user signs; it's submitted → a real `tx_hash` results.
-2. Separately, [contract/src/lib.rs `record_payment`](../contract/src/lib.rs#L154) is called with that `tx_hash`. It calls the pool contract's `withdraw` — but the docs state plainly: *"Pool balances are internal contract accounting credits, not native XLM/token custody transfers on-chain,"* and *"record_payment stores provided tx_hash metadata and relies on app flow integrity; it does not cryptographically verify Horizon payment details inside the contract."*
+2. Separately, [the settlement crate's `record_payment`](../contract/contracts/settlement/src/lib.rs) is called with that `tx_hash`. It makes no cross-contract call and moves no value: it *"stores provided tx_hash metadata and relies on app flow integrity; it does not cryptographically verify Horizon payment details inside the contract."* (Earlier docs claimed it also withdrew from a pool contract in the same transaction; the code never did, and the pool was removed in Issue #178.)
 
-**Translation:** the contract is a **notary that believes whatever the client tells it.** The `tx_hash` it stores could be fabricated, reused from an unrelated transfer, or point to a payment of the wrong amount to the wrong person. The `is_paid` duplicate-guard and `AlreadyPaid` error protect against *double-recording*, not against *lying about the payment*. The "pool" adds an appearance of custody that isn't real.
+**Translation:** the contract is a **notary that believes whatever the client tells it.** The `tx_hash` it stores could be fabricated, reused from an unrelated transfer, or point to a payment of the wrong amount to the wrong person. The `is_paid` duplicate-guard and `AlreadyPaid` error protect against *double-recording*, not against *lying about the payment*. Nothing in the repository custodies funds, and it must not be presented as doing so.
 
 For a demo, acceptable and even documented. For a product handling real USDC, **a settlement you can forge is not a settlement.**
 
@@ -401,9 +398,9 @@ Move the value transfer **into** the contract. Instead of "pay on Horizon, then 
 Keep the Horizon payment, but have an off-chain **verifier service** (trusted backend) fetch the `tx_hash` from Horizon, confirm `{from, to, asset, amount, memo}` match the claimed expense, and only then co-sign/authorize the contract record. Removes client trust but introduces a trusted server (weaker than A, but a real improvement and easier than rewriting settlement).
 
 **Option C — Drop the contract's custody pretense; position it honestly as a receipt log (cheapest).**
-If you're not ready for A or B, **remove the pool contract** and stop implying custody. Relabel `record_payment` as an **audit/receipt anchor**: "an immutable, timestamped, on-chain log of settlement claims, each linked to a Horizon tx you can independently verify." Update all copy to say exactly that. This is honest and shippable immediately — it just doesn't claim more than it does.
+If you're not ready for A or B, remove the pool contract (done in Issue #178) and stop implying custody. Relabel `record_payment` as an **audit/receipt anchor**: "an immutable, timestamped, on-chain log of settlement claims, each linked to a Horizon tx you can independently verify." Update all copy to say exactly that. This is honest and shippable immediately — it just doesn't claim more than it does.
 
-> **Recommendation:** Ship **C now** (honesty, this week) and build toward **A** for real USDC settlement (the product). Avoid leaving the current pool illusion in place while marketing "on-chain settlement" — that's precisely the "not honest" outcome you said you want to avoid.
+> **Recommendation:** Ship **C now** (honesty, this week) and build toward **A** for real USDC settlement (the product). Avoid reintroducing a pool illusion while marketing "on-chain settlement" — that's precisely the "not honest" outcome you said you want to avoid.
 
 ### 9.3 Get the contract audited
 Before mainnet with real value, a Soroban security review (e.g., a reputable Soroban auditor) of the final settlement contract is non-negotiable. Budget for it. Ship the audit report link publicly — it's also great trust marketing.
@@ -413,19 +410,10 @@ Before mainnet with real value, a Soroban security review (e.g., a reputable Sor
 ## 10. Security hardening
 
 ### 10.1 Web / headers
-[next.config.mjs](../next.config.mjs) sets good headers (HSTS, X-Frame-Options, nosniff, Referrer-Policy) but **has no Content-Security-Policy** — the highest-value missing header. Add a CSP (nonce-based ideally) allowing only your origins:
-```
-default-src 'self';
-connect-src 'self' https://*.stellar.org https://horizon.stellar.org https://*.supabase.co wss://*.supabase.co https://*.walletconnect.com;
-img-src 'self' data: https:;
-script-src 'self' 'unsafe-inline';   # tighten to nonces
-style-src 'self' 'unsafe-inline';
-frame-ancestors 'none';
-```
-Also add `object-src 'none'`, `base-uri 'self'`. Test against wallet extension injection and WalletConnect.
+[middleware.ts](../middleware.ts) now applies a nonce-based Content-Security-Policy to document requests, while [next.config.mjs](../next.config.mjs) covers static assets. The policy includes `object-src` and `base-uri` restrictions. Keep the policy aligned with wallet and chain integrations, and check the browser console for violations during release testing.
 
 ### 10.2 Prove wallet ownership (Sign-In With Stellar)
-Right now any wallet address can be typed/claimed. Before an address is trusted (added as a member who owes/receives, or bound to a user), require a **signed challenge** (SEP-10 style / "Sign in with Stellar"): server issues a nonce, wallet signs it, server verifies the signature matches the address. This prevents impersonation and is the foundation for authenticated Supabase access ([§10.3](#103-data-supabase-rls)).
+Wallet ownership challenges are implemented: the server issues a nonce-bound challenge, the wallet signs it, and verification checks the signature against the claimed address. The app requires this wallet confirmation before authenticating a session. This proves control of the signing key for that session; it does not by itself prove that every address entered as an expense participant has authenticated. Continue to bind protected data access to the verified identity through Supabase RLS ([§10.3](#103-data-supabase-rls)).
 
 ### 10.3 Data (Supabase RLS)
 The anon key is public by design — **RLS is your only wall.** [supabase-setup.sql](../supabase-setup.sql) exists but must be *proven*:
@@ -440,7 +428,7 @@ The anon key is public by design — **RLS is your only wall.** [supabase-setup.
 
 ### 10.5 Operational
 - **Error monitoring**: Sentry (client + any backend) — you currently strip `console.log` in prod ([next.config.mjs:45](../next.config.mjs#L45)) but capture nothing. You'll be blind to production failures in a money app.
-- **Rate limiting** on any backend/API routes (payment building, challenge issuance) to stop abuse.
+- Auth challenge, verification, and sign-out routes have application-level rate limits, backed by a shared Postgres store when configured. Keep those limits monitored and add edge/WAF limits for broader API abuse protection; application rate limits are defense in depth.
 - **Dependency & secret scanning** in CI (`npm audit`, Dependabot/Renovate, secret scanning, `gitleaks`).
 - **No secrets in `NEXT_PUBLIC_`**: everything public today is genuinely public-safe (RPC URLs, anon key, contract id) — keep it that way. Any real secret (server keys, anchor API keys, VAPID private key) must live server-side only.
 - **Incident runbook**: extend the existing [docs/RUNBOOK.md](./RUNBOOK.md) with "contract paused," "key compromised," "anchor down," "rollback" procedures.
@@ -475,11 +463,8 @@ This is the "no longer a rehearsal" milestone. Do it *after* [§9](#9-the-settle
 
 Today it's Next.js on Vercel + Supabase + client-side chain calls. That's a fine *starting* stack; productionize it:
 
-- **Introduce a thin backend** (Next.js Route Handlers or a small service) for the things that must not live in the client:
-  - SEP-10 challenge issuance/verification ([§10.2](#102-prove-wallet-ownership-sign-in-with-stellar)),
-  - the payment verifier if you choose [§9 Option B](#92-three-honest-ways-to-fix-it-pick-one),
+- **Continue using the existing auth Route Handlers** for signed challenge issuance/verification ([§10.2](#102-prove-wallet-ownership-sign-in-with-stellar)) and application-level rate limits. If you choose [§9 Option B](#92-three-honest-ways-to-fix-it-pick-one), add a payment verifier in a trusted backend:
   - push-notification sending, webhooks from anchors,
-  - rate limiting.
 - **Realtime**: Supabase Realtime is fine; your [hooks/useContractEvents.ts](../hooks/useContractEvents.ts) polls Soroban every 10s — consider server-side event indexing (a worker that ingests contract events into your DB) so clients read from one consistent source instead of each polling RPC.
 - **CI/CD**: extend the existing `.github/workflows/ci.yml` to run lint + JS tests + `cargo test` + RLS tests + Lighthouse PWA budget + `npm audit`, and block merge on failure (your architecture doc notes branch protection must be enabled — do it).
 - **Environments**: separate Testnet-staging and Mainnet-prod deployments with separate Supabase projects and env sets. Never share a database between them.
@@ -588,8 +573,6 @@ Grounded in this repository's actual files:
 - [ ] Schedule a Soroban audit before mainnet.
 
 **Security**
-- [ ] Add CSP + `object-src/base-uri` to [next.config.mjs](../next.config.mjs).
-- [ ] Implement Sign-In-With-Stellar challenge (needs a backend route).
 - [ ] Prove & test Supabase RLS ([supabase-setup.sql](../supabase-setup.sql)); add breach test to CI.
 - [ ] Add Sentry; add `npm audit`/Dependabot to CI.
 

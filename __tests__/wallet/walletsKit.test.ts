@@ -26,15 +26,19 @@ jest.mock("@creit.tech/stellar-wallets-kit/sdk", () => ({
 }));
 jest.mock("@creit.tech/stellar-wallets-kit/modules/freighter", () => ({
   FREIGHTER_ID: "freighter",
+  FreighterModule: jest.fn(),
 }));
 jest.mock("@creit.tech/stellar-wallets-kit/modules/rabet", () => ({
   RABET_ID: "rabet",
+  RabetModule: jest.fn(),
 }));
 jest.mock("@creit.tech/stellar-wallets-kit/modules/xbull", () => ({
   XBULL_ID: "xbull",
+  xBullModule: jest.fn(),
 }));
-jest.mock("@creit.tech/stellar-wallets-kit/modules/utils", () => ({
-  defaultModules: jest.fn(() => []),
+jest.mock("@creit.tech/stellar-wallets-kit/modules/lobstr", () => ({
+  LOBSTR_ID: "lobstr",
+  LobstrModule: jest.fn(),
 }));
 jest.mock("@creit.tech/stellar-wallets-kit/types", () => ({
   Networks: {
@@ -43,14 +47,37 @@ jest.mock("@creit.tech/stellar-wallets-kit/types", () => ({
   },
 }));
 
-import { getWalletsKit } from "@/lib/stellar/walletsKit";
+import {
+  getWalletsKit,
+  getTestedModules,
+  TESTED_WALLET_IDS,
+  LOBSTR_ID,
+  FREIGHTER_ID,
+  XBULL_ID,
+  RABET_ID,
+} from "@/lib/stellar/walletsKit";
 
 describe("walletsKit adapter", () => {
   beforeEach(() => {
+    localStorage.clear();
     jest.clearAllMocks();
     mockSelectedModule.productId = "freighter";
     delete (window as typeof window & { xBullSDK?: unknown }).xBullSDK;
     delete (window as typeof window & { rabet?: unknown }).rabet;
+  });
+
+  it("limits modules to tested wallets (Freighter, xBull, Lobstr, Rabet)", () => {
+    expect(TESTED_WALLET_IDS).toEqual(["freighter", "xbull", "lobstr", "rabet"]);
+    const modules = getTestedModules();
+    expect(modules).toHaveLength(4);
+  });
+
+  it("identifies network detection support per wallet", () => {
+    const kit = getWalletsKit();
+    expect(kit.supportsNetworkDetection(FREIGHTER_ID)).toBe(true);
+    expect(kit.supportsNetworkDetection(XBULL_ID)).toBe(true);
+    expect(kit.supportsNetworkDetection(RABET_ID)).toBe(true);
+    expect(kit.supportsNetworkDetection(LOBSTR_ID)).toBe(false);
   });
 
   it("reads xBull's injected provider instead of using the app default", async () => {
@@ -126,5 +153,46 @@ describe("walletsKit adapter", () => {
     await getWalletsKit().openModal({ onWalletSelected });
 
     expect(onWalletSelected).toHaveBeenCalledWith({ id: "lobstr" });
+  });
+
+  it("passes signer address to signTransaction", async () => {
+    mockSignTransaction.mockResolvedValue({ signedTxXdr: "SIGNED_XDR" });
+    const kit = getWalletsKit();
+
+    await kit.signTransaction("TX_XDR", {
+      address: "GSIGNERADDRESS",
+      networkPassphrase: "Test SDF Network ; September 2015",
+    });
+
+    expect(mockSignTransaction).toHaveBeenCalledWith("TX_XDR", {
+      address: "GSIGNERADDRESS",
+      networkPassphrase: "Test SDF Network ; September 2015",
+    });
+  });
+
+  it("falls back to stored public key if address is omitted in signTransaction", async () => {
+    localStorage.setItem("settlex:publicKey", "GSTOREDADDRESS");
+    mockSignTransaction.mockResolvedValue({ signedTxXdr: "SIGNED_XDR" });
+    const kit = getWalletsKit();
+
+    await kit.signTransaction("TX_XDR", {
+      address: "",
+      networkPassphrase: "Test SDF Network ; September 2015",
+    });
+
+    expect(mockSignTransaction).toHaveBeenCalledWith("TX_XDR", {
+      address: "GSTOREDADDRESS",
+      networkPassphrase: "Test SDF Network ; September 2015",
+    });
+  });
+
+  it("reads silent address for xBull when injected provider is available", async () => {
+    (window as typeof window & { xBullSDK?: unknown }).xBullSDK = {
+      getAddress: jest.fn().mockResolvedValue({ address: "GXBULLADDRESS" }),
+    };
+    const kit = getWalletsKit();
+    kit.setWallet("xbull");
+
+    await expect(kit.getAddressSilently()).resolves.toBe("GXBULLADDRESS");
   });
 });

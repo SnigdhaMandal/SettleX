@@ -106,6 +106,7 @@ export type Database = {
           created_at: string;
           updated_at: string;
           settled: boolean;
+          version: number;
           created_by_wallet: string;
           member_wallets: string[];
           accepted_wallets: string[];
@@ -120,6 +121,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           settled?: boolean;
+          version?: number;
           created_by_wallet: string;
           member_wallets?: string[];
           accepted_wallets?: string[];
@@ -134,6 +136,7 @@ export type Database = {
           created_at?: string;
           updated_at?: string;
           settled?: boolean;
+          version?: number;
           created_by_wallet?: string;
           member_wallets?: string[];
           accepted_wallets?: string[];
@@ -201,6 +204,103 @@ export type Database = {
         };
         Relationships: [];
       };
+      pending_payments: {
+        Row: {
+          expense_id: string;
+          member_id: string;
+          tx_hash: string;
+          payer_wallet: string;
+          destination_wallet: string;
+          amount: string;
+          trip_id: string | null;
+          status: "signed" | "submitted";
+          ledger: number | null;
+          valid_until: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          expense_id: string;
+          member_id: string;
+          tx_hash: string;
+          payer_wallet?: string;
+          destination_wallet: string;
+          amount: string;
+          trip_id?: string | null;
+          status?: "signed" | "submitted";
+          ledger?: number | null;
+          valid_until?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          expense_id?: string;
+          member_id?: string;
+          tx_hash?: string;
+          payer_wallet?: string;
+          destination_wallet?: string;
+          amount?: string;
+          trip_id?: string | null;
+          status?: "signed" | "submitted";
+          ledger?: number | null;
+          valid_until?: string | null;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "pending_payments_expense_id_fkey";
+            columns: ["expense_id"];
+            isOneToOne: false;
+            referencedRelation: "expenses";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
+      trip_settlements: {
+        Row: {
+          id: string;
+          trip_id: string;
+          from_member_id: string;
+          to_member_id: string;
+          from_wallet: string;
+          to_wallet: string;
+          amount: string;
+          tx_hash: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          trip_id: string;
+          from_member_id: string;
+          to_member_id: string;
+          from_wallet: string;
+          to_wallet: string;
+          amount: string;
+          tx_hash: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          trip_id?: string;
+          from_member_id?: string;
+          to_member_id?: string;
+          from_wallet?: string;
+          to_wallet?: string;
+          amount?: string;
+          tx_hash?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "trip_settlements_trip_id_fkey";
+            columns: ["trip_id"];
+            isOneToOne: false;
+            referencedRelation: "trips";
+            referencedColumns: ["id"];
+          }
+        ];
+      };
       trip_expenses: {
         Row: {
           trip_id: string;
@@ -242,6 +342,13 @@ export type Database = {
       [_ in never]: never;
     };
     Functions: {
+      create_trip_expense: {
+        Args: {
+          p_trip_id: string;
+          p_expense: Json;
+        };
+        Returns: Database["public"]["Tables"]["expenses"]["Row"][];
+      };
       add_expense_to_trip: {
         Args: {
           p_trip_id: string;
@@ -301,6 +408,16 @@ export type Database = {
           p_tx_hash: string;
         };
         Returns: Database["public"]["Tables"]["expenses"]["Row"][];
+      };
+      record_trip_settlement: {
+        Args: {
+          p_trip_id: string;
+          p_from_member_id: string;
+          p_to_member_id: string;
+          p_amount: string;
+          p_tx_hash: string;
+        };
+        Returns: Database["public"]["Tables"]["trip_settlements"]["Row"][];
       };
       resolve_user_profile: {
         Args: {

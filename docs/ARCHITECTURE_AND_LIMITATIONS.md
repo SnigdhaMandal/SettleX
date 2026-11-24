@@ -6,12 +6,13 @@ SettleX uses:
 
 - Next.js + TypeScript frontend
 - Next.js route handlers (`/api/auth/*`) for SEP-10 style wallet authentication
-- Supabase for app data and realtime sync
+- Supabase for app data via authenticated Next.js REST proxy; visible-page
+  expense/trip sync uses polling
 - Stellar payment operations for value transfer
-- Soroban settlement contract for immutable payment recording
-- Separate pool contract for inter-contract withdraw flow. `withdraw`
-  requires authorization from both the configured settlement contract and
-  the member, so pool credits can only be spent through `record_payment`.
+- Soroban settlement contract for immutable payment recording. It is the only
+  contract: `record_payment` is a pure ledger write that makes no
+  cross-contract call and moves no value. The former pool contract was never
+  invoked by `record_payment` and was removed in Issue #178.
 
 ## Key Assumptions
 
@@ -39,16 +40,48 @@ SettleX uses:
 - On success the server mints a Supabase JWT carrying `wallet_address`. Every
   RLS policy reads it through `public.settlex_wallet()`; requests without a
   valid token match no rows.
-- Sessions are cached in `localStorage` and last 1 hour by default
-  (`AUTH_SESSION_TTL_SECONDS`, capped at 12 hours). Renewing a session requires
-  wallet confirmation (SEP-10 challenge signing); the UI displays a visible
-  prompt before expiry so users can re-sign and rebind realtime connections
-  without losing incoming live updates.
+- The JWT is stored only in a `HttpOnly`, `SameSite=Lax` cookie and is never
+  returned to client JavaScript or stored in `localStorage`. Supabase REST calls
+  pass through `/api/supabase/*`, which validates the cookie and forwards the
+  JWT to PostgREST. Session metadata (wallet and expiry) is held in memory for
+  UI state; the cookie lasts 1 hour by default
+  (`AUTH_SESSION_TTL_SECONDS`, capped at 12 hours). Renewing requires wallet
+  confirmation (SEP-10 challenge signing), with a visible prompt before expiry.
+- **No Silent Re-signing (SX-038):** SettleX explicitly rejects silent session re-signing.
+  Automatic or silent cryptographic signing without active user intent is considered an anti-pattern
+  in non-custodial Web3 security. When an active session token nears expiry, SettleX displays an in-app
+  expiration warning banner (`SessionExpiryBanner`) and requires explicit user interaction and wallet
+  confirmation (re-signing a SEP-0010 challenge via Freighter) to issue a new session token.
+- Expense and trip changes are polled every five seconds while the page is
+  visible. Supabase Realtime WebSockets require a JWT in browser JavaScript, so
+  they are intentionally not used with the HttpOnly-cookie model. Polling is
+  less immediate and generates periodic requests, in exchange for preventing
+  JavaScript from extracting the bearer token. HttpOnly does not stop an active
+  XSS from making authenticated requests through the page.
 - Every token carries a `jti`. Signing out writes that id to
   `public.revoked_tokens`, and `settlex_wallet()` — the one function every RLS
   policy resolves identity through — returns NULL for a revoked token, so it
   matches no row on any table. "Sign out everywhere" writes a wallet-wide
   tombstone that denies every token issued at or before that moment.
+
+## Trip Settlement Model (Issue #203)
+
+- Direct share payments mark one share paid through `mark_share_paid`.
+- Settle-up transfers pay a **net** amount, which does not line up with whole
+  shares. Each one is recorded as its own `trip_settlements` row (from, to,
+  amount, tx_hash) through the `record_trip_settlement` RPC. Only the sending
+  member can record it, and a transaction hash can back either one settlement
+  or one share payment, never both.
+- A member's trip balance is `owed - paid shares - settlements`
+  (`lib/settlement/netBalance.ts`). Paying every suggested transfer brings
+  every balance to zero, so the trip shows "All settled up".
+- Shares are never marked paid by a settlement. An unpaid share the netting
+  covers shows "Settled via net transfer" (or "Offset by netting" when debts
+  cancelled exactly) and offers no Pay button.
+- Each settlement also gets one on-chain receipt for the exact net amount,
+  under the contract `expense_id` `stl-<tx hash prefix>`.
+- `trips.settled` is unchanged: the database still only allows settling a
+  trip once every linked expense's shares are marked paid.
 
 ## Known Limitations
 
@@ -94,7 +127,12 @@ SettleX uses:
   member to rewrite every column in the row. Schema version checks and RLS/
   trigger breach tests are therefore required before production use.
 - Some screenshots in README are desktop captures; mobile screenshots should be added for evaluator clarity.
-- Pool balances are internal contract accounting credits, not native XLM/token custody transfers on-chain.
+- **No Pool Contract or Pool Withdraw (SX-018):** Legacy architectural drafts envisioned
+  an inter-contract withdrawal from a pool contract when `record_payment` was invoked. In reality,
+  `record_payment` never called a pool contract, and the separate pool crate was removed in
+  Issue #178. SettleX does not custody tokens or withdraw from a liquidity pool; payments are
+  settled directly peer-to-peer on Horizon, and `record_payment` acts solely as an on-chain receipt log.
+- No contract custodies or transfers XLM/tokens. The value transfer is the Horizon payment alone; the contract only records its hash.
 - `record_payment` stores the provided `payer`, `amount` and `tx_hash` without
   verifying any of them against Horizon. With no attestor configured the record
   is **self-attested** — it proves a member wrote a string, nothing more — and
@@ -111,6 +149,13 @@ SettleX uses:
   it, a bogus or mistaken record permanently blocks the legitimate one for that
   `(expense_id, member)` pair. It clears the flag only; the original entry stays
   in the trip's payment history so the audit trail is not rewritten.
+- `get_payments` and `is_paid` are pure reads. Their Soroban RPC simulations do
+  not commit storage writes, so they do not extend TTLs. A keeper or participant
+  must submit the permissionless `extend_trip(trip_id, payment_offset,
+  expense_offset, limit)` function as a real transaction, repeating with its
+  returned cursors until both are `None`. If data has already archived, the
+  transaction must include the relevant archived footprint so Soroban can
+  restore it before the TTL bump.
 
 ## Operational Constraints
 
@@ -118,12 +163,20 @@ SettleX uses:
 - Incorrect wallet/account setup can block end-to-end payment tests.
 - Supabase configuration errors can affect sync behavior even if chain operations work.
 
+## Dependency Security and Accepted Risks (SX-081)
+
+- **Next.js 14.2.35 Upgrade**: Next.js is upgraded from `14.2.5` to `^14.2.35` (aligned with `eslint-config-next: ^14.2.35`). This directly patches the critical Next.js middleware authorization-bypass vulnerability (`x-middleware-subrequest`, GHSA-f82v-jwr5-mffw, fixed in 14.2.25) crucial for `middleware.ts` CSP nonce generation, as well as multiple cache-poisoning and DoS advisories. A future migration to Next.js 15+ is planned.
+- **Transitive Security Overrides**: Sub-dependency patches were applied via `package.json` overrides for `postcss` (`^8.5.33`), `nanoid` (`^3.3.20`), `browserslist` (`^4.29.6`), `follow-redirects` (`^1.16.3`), and `source-map-js` (`^1.2.3`).
+- **Accepted Risk — `toml` (via `@stellar/stellar-sdk`)**: Upstream `@stellar/stellar-sdk` depends on `toml` for parsing Stellar.toml federation files. SettleX does not parse untrusted user-supplied TOML documents, making this low operational risk until `@stellar/stellar-sdk` migrates upstream.
+- **Accepted Risk — `zod`, `uuid`, `elliptic`, `stream-json` (via `@creit.tech/stellar-wallets-kit`)**: Transitive dependencies of `@creit.tech/stellar-wallets-kit` and its wallet adapters (`@reown/appkit`, `@hot-wallet/sdk`). Upstream breaking releases are incompatible with current multi-wallet integrations. None of the vulnerable vector paths are exposed to external untrusted web inputs.
+- **Dependabot Automation (SX-081)**: Automated dependency tracking is configured via `.github/dependabot.yml` with daily package updates and security alerts.
+
 ## Recommended Future Improvements
 
 - Add automated e2e tests (Playwright) with mobile viewport assertions.
 - Add a script to validate README proof links are live.
 - Add an automated checklist CI job that verifies required docs/sections exist.
-- Introduce token/native-asset backed pool settlement model (transfer in/out) for stronger economic guarantees.
+- Move value transfer into the contract (for example a Stellar Asset Contract `transfer` inside `record_payment`) if economic guarantees are needed; until then the contract is a receipt log only.
 - Build and deploy the off-chain verifier service that checks Horizon before
   co-signing, then point `set_attestor` at it. The contract-side hook already
   exists; only the service is missing.

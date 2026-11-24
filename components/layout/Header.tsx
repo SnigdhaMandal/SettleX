@@ -10,9 +10,9 @@ import { cn, formatAddress } from "@/lib/utils";
 import { SettleXLogo } from "@/components/ui/Logo";
 
 const navLinks = [
-  { label: "Features", href: "#features" },
-  { label: "How It Works", href: "#how-it-works" },
-  { label: "Pricing", href: "#pricing" },
+  { label: "Features", href: "/#features" },
+  { label: "How It Works", href: "/#how-it-works" },
+  { label: "Pricing", href: "/#pricing" },
 ];
 
 export default function Header() {
