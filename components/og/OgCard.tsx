@@ -68,7 +68,7 @@ export function OgCard() {
       <div style={{ display: "flex", alignItems: "center", gap: "16px" }}>
         <div style={{ display: "flex", width: "48px", height: "6px", backgroundColor: "#B9FF66", borderRadius: "3px" }} />
         <div style={{ display: "flex", fontSize: "30px", color: "#B8B8C0" }}>
-          USDC or XLM · non-custodial · verifiable receipts
+          Instant XLM · non-custodial · verifiable receipts
         </div>
       </div>
     </div>
