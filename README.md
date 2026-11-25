@@ -190,7 +190,7 @@ Every SettleX payment carries a 28-byte `MEMO_TEXT` that identifies exactly what
 | `SX1S:<23 base32 chars>` | one member's share of one expense | `sha256("settlex:share:v1:<expenseId>:<memberId>")` |
 | `SX1N:<23 base32 chars>` | one netted trip settlement | `sha256("settlex:settle:v1:<tripId>:<FROM_WALLET>:<TO_WALLET>")` |
 
-The memo is a one-way digest, so the public ledger shows no expense titles or member names. Anyone who can see the expense can recompute it. Given a transaction hash, `lookupPaymentByTxHash()` reads the memo from Horizon and returns the share or settlement it pays. For older payments made before share identifiers, it falls back to the share whose recorded `txHash` matches. `buildPaymentTransaction()` rejects any memo that is not in this format.
+The memo is a one-way digest, so the public ledger shows no expense titles or member names. The memo identifies the payment but is not the application expense ID. Anyone who can see the expense can recompute it. Given a transaction hash, `lookupPaymentByTxHash()` reads the memo from Horizon and returns the share or settlement it pays. For older payments made before share identifiers, it falls back to the share whose recorded `txHash` matches. `buildPaymentTransaction()` rejects any memo that is not in this format.
 
 ### QR payments (SEP-0007)
 
@@ -277,6 +277,8 @@ The project roadmap and known trust boundaries are documented in [docs/PRODUCT_C
 | get_payments(trip_id, offset, limit) | Read | None | Reads a bounded page of trip history |
 | is_paid(expense_id, member) | Read | None | Checks the paid marker |
 | extend_trip(trip_id, payment_offset, expense_offset, limit) | Write | Permissionless | Renews storage TTL for bounded history pages |
+| get_version() | Read | None | Returns the current schema version |
+| get_admin() | Read | None | Returns the contract admin address |
 
 ### Contract Error Codes
 
@@ -303,13 +305,13 @@ The contract defines errors 1-14; meanings and validation cases are listed below
 
 In a Horizon-only setup there is no shared source of truth for payment status — any user could mark a share as paid without actually transferring XLM. The Soroban contract solves this:
 
-- `record_payment` stores the real Stellar `tx_hash` as proof of transfer.
+- `record_payment` stores a submitted Stellar `tx_hash` as a receipt; the contract does not verify it against Horizon.
 - `is_paid` acts as a duplicate guard — re-settling an already-paid share is rejected on-chain with `AlreadyPaid (#2)`.
-- All records are permanently on the Stellar ledger and cannot be modified or deleted by anyone, including the app operator.
+- Receipt history is append-only; an admin can clear a paid marker, which preserves the original entry but marks it voided. Ledger retention follows Soroban storage TTL rules.
 
 ### Real-Time Events
 
-The contract emits a `pmt_rec` event for every confirmed payment. `hooks/useContractEvents.ts` polls the Soroban RPC every 10 seconds and on browser tab focus. The hook exposes fetched events for display; it does not write to Supabase or synchronize application state.
+The contract emits a `pmt_rec` event when a payment record is written. `hooks/useContractEvents.ts` polls the Soroban RPC every 10 seconds and on browser tab focus, then exposes fetched events for display. It does not synchronize application state or confirm the underlying Stellar payment.
 
 ---
 
@@ -351,7 +353,7 @@ Supabase is required for authentication and application data. Run the SQL setup 
 cp .env.local.example .env.local
 ```
 
-Fill in your Supabase credentials. The Stellar network and RPC URL defaults target Testnet. Set the empty NEXT_PUBLIC_CONTRACT_ID to a deployed settlement contract ID, and configure the Supabase and server auth values below. See [Environment Variables](#environment-variables) for the full reference.
+The Stellar network and RPC URL defaults target Testnet. `NEXT_PUBLIC_CONTRACT_ID` is intentionally empty in the example and must be set to a deployed settlement contract. Configure the Supabase values and server-only auth secrets below. See [Environment Variables](#environment-variables) for the full reference.
 
 ### 5. Start the development server
 
@@ -429,7 +431,7 @@ npm run test:coverage
 | `__tests__/settlement/netBalance.test.ts` | Net-balance algorithm: simple debt, netting, three-person chains, wallet address passthrough |
 | `__tests__/utils/formatters.test.ts`      | `formatAddress`, `formatXLM`, `stroopsToXlm` conversions                                     |
 
-**48 test suites and 379 tests** (repository counts). The checked-in public/test_pass.png is historical and does not represent the current count.
+**48 test suites and 379 tests** (repository counts).
 
 ### Rust contract tests
 
