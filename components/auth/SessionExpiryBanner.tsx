@@ -4,10 +4,8 @@ import { AlertCircle, Clock, RefreshCw } from "lucide-react";
 import { useAuth } from "@/context/AuthContext";
 
 /**
- * Banner displayed when an active session is nearing expiration or has expired.
- *
- * Prompts the user to re-authenticate with a wallet signature so that background
- * reads, writes, and realtime change feeds continue without interruption.
+ * Banner shown when the active session is expiring soon or has expired,
+ * prompting a wallet re-sign so reads, writes, and live updates keep running.
  */
 export function SessionExpiryBanner() {
   const {
@@ -19,19 +17,13 @@ export function SessionExpiryBanner() {
     signToContinue,
   } = useAuth();
 
-  if (!isAuthenticated || !isSessionExpiring) {
-    return null;
-  }
+  if (!isAuthenticated || !isSessionExpiring) return null;
 
-  const minutesRemaining =
-    sessionSecondsRemaining !== null
-      ? Math.max(1, Math.ceil(sessionSecondsRemaining / 60))
-      : 5;
+  const minutesRemaining = sessionSecondsRemaining !== null
+    ? Math.max(1, Math.ceil(sessionSecondsRemaining / 60))
+    : 5;
 
-  const title = isSessionExpired
-    ? "Session expired"
-    : "Session expiring soon";
-
+  const title = isSessionExpired ? "Session expired" : "Session expiring soon";
   const detail = isSessionExpired
     ? "Your session has expired. Sign to continue receiving realtime updates and making changes."
     : `Your session will expire in ~${minutesRemaining} ${minutesRemaining === 1 ? "minute" : "minutes"}. Sign to continue without losing live updates.`;
@@ -49,23 +41,13 @@ export function SessionExpiryBanner() {
       <div className="mx-auto flex max-w-7xl flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3">
           {isSessionExpired ? (
-            <AlertCircle
-              className="mt-0.5 h-5 w-5 shrink-0 text-[#DC2626]"
-              aria-hidden="true"
-            />
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-[#DC2626]" aria-hidden="true" />
           ) : (
-            <Clock
-              className="mt-0.5 h-5 w-5 shrink-0 text-[#D97706]"
-              aria-hidden="true"
-            />
+            <Clock className="mt-0.5 h-5 w-5 shrink-0 text-[#D97706]" aria-hidden="true" />
           )}
           <div>
             <p className="text-sm font-bold">{title}</p>
-            <p
-              className={`mt-0.5 text-xs leading-5 ${
-                isSessionExpired ? "text-[#991B1B]" : "text-[#B45309]"
-              }`}
-            >
+            <p className={`mt-0.5 text-xs leading-5 ${isSessionExpired ? "text-[#991B1B]" : "text-[#B45309]"}`}>
               {detail}
             </p>
           </div>
@@ -80,10 +62,7 @@ export function SessionExpiryBanner() {
               : "border-[#F59E0B]/30 bg-white text-[#B45309] hover:bg-[#FEF3C7] focus-visible:ring-[#F59E0B]"
           }`}
         >
-          <RefreshCw
-            className={`h-4 w-4 ${isSigningToContinue ? "animate-spin" : ""}`}
-            aria-hidden="true"
-          />
+          <RefreshCw className={`h-4 w-4 ${isSigningToContinue ? "animate-spin" : ""}`} aria-hidden="true" />
           {isSigningToContinue ? "Signing..." : "Sign to continue"}
         </button>
       </div>

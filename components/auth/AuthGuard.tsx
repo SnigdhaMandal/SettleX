@@ -12,14 +12,9 @@ interface AuthGuardProps {
 }
 
 /**
- * Protects routes by requiring authentication.
- * Redirects to /auth if user is not authenticated.
- *
- * `isAuthenticated` is derived from the verified session token, not from cached
- * localStorage state, so forging `settlex:user` / `settlex:publicKey` does not
- * get past this guard. It is defence in depth either way: RLS rejects every
- * request that lacks a server-signed `wallet_address` claim, so bypassing the
- * guard in the client would still yield an app with no data.
+ * Route guard that redirects unauthenticated users to /auth.
+ * Checks the verified session token rather than cached localStorage state
+ * (RLS also enforces server-signed wallet_address claims as defence in depth).
  */
 export function AuthGuard({ children }: AuthGuardProps) {
   const { isAuthenticated, isLoading, user, sessionError, refreshSession } = useAuth();
@@ -43,8 +38,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
     );
   }
 
-  // The wallet never proved key ownership, so every database call would be
-  // rejected. Ask for a signature rather than showing a half-working app.
+  // Without a verified signature every DB call fails, so prompt for one instead of showing a half-working app.
   if (sessionError) {
     const retry = async () => {
       setIsRetrying(true);
@@ -61,9 +55,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
           <div className="w-12 h-12 rounded-2xl bg-[#FF6B6B]/10 flex items-center justify-center mx-auto mb-5">
             <ShieldAlert size={24} className="text-[#FF6B6B]" />
           </div>
-          <h1 className="text-xl font-black text-[#0F0F14] mb-2">
-            Verify your wallet
-          </h1>
+          <h1 className="text-xl font-black text-[#0F0F14] mb-2">Verify your wallet</h1>
           <p className="text-sm text-[#666] leading-relaxed mb-6">
             SettleX needs a signature from your wallet to prove you own this
             address. Nothing is submitted to the network and no fee is charged.
@@ -83,9 +75,7 @@ export function AuthGuard({ children }: AuthGuardProps) {
     );
   }
 
-  if (!isAuthenticated || !user) {
-    return null; // Will redirect in useEffect
-  }
+  if (!isAuthenticated || !user) return null; // redirect happens in useEffect
 
   return <>{children}</>;
 }
