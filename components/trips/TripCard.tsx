@@ -52,7 +52,6 @@ export function TripCard({
     >
       <Link href={`/trips/${trip.id}`} className="block p-4">
         <div className="flex items-start justify-between gap-3">
-          {/* Icon + info */}
           <div className="flex items-start gap-3 min-w-0">
             <div className="w-10 h-10 rounded-xl bg-[#0F0F14] flex items-center justify-center shrink-0">
               <span className="text-[#B9FF66] text-base">✈</span>
@@ -92,7 +91,6 @@ export function TripCard({
         </div>
       </Link>
 
-      {/* Footer */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 border-t border-[#F5F5F5]">
         <span className="text-[10px] text-[#BBB]">{createdAt}</span>
         {isOwner && (
