@@ -16,6 +16,7 @@ import {
   XBULL_ID,
 } from "@creit.tech/stellar-wallets-kit/modules/xbull";
 import { Networks } from "@creit.tech/stellar-wallets-kit/types";
+import { getE2EWalletAdapter } from "@/lib/stellar/e2eWalletAdapter";
 import {
   NETWORK_PASSPHRASE,
   LS_PUBLIC_KEY,
@@ -44,11 +45,25 @@ export function getTestedModules() {
   ];
 }
 
-interface WalletModalOptions {
+export interface WalletModalOptions {
   onWalletSelected: (wallet: { id: WalletId }) => Promise<void> | void;
   onClosed?: () => void;
   modalTitle?: string;
   notAvailableText?: string;
+}
+
+export interface WalletsKitAdapter {
+  setWallet(id: WalletId): void;
+  getSelectedWalletId(): WalletId;
+  supportsNetworkDetection(walletId?: WalletId): boolean;
+  openModal(opts: WalletModalOptions): Promise<void>;
+  getAddress(): Promise<{ address: string }>;
+  getAddressSilently(): Promise<string | null>;
+  signTransaction(
+    xdr: string,
+    options?: { address?: string; networkPassphrase?: string },
+  ): Promise<{ signedTxXdr: string; signerAddress?: string }>;
+  getNetworkFromWallet(): Promise<StellarNetwork>;
 }
 
 let initialized = false;
@@ -116,7 +131,7 @@ function initializeKit(): void {
  * network: an unavailable read must remain "unverified" so callers fail
  * closed instead of presenting a false match.
  */
-const walletsKit = {
+const walletsKit: WalletsKitAdapter = {
   setWallet(id: WalletId): void {
     StellarWalletsKit.setWallet(id);
     selectedWalletId = id;
@@ -234,9 +249,16 @@ const walletsKit = {
   },
 };
 
-export function getWalletsKit(): typeof walletsKit {
+export function getWalletsKit(): WalletsKitAdapter {
   if (typeof window === "undefined") {
     throw new Error("StellarWalletsKit requires a browser environment.");
+  }
+
+  // This adapter is selected only by the dedicated E2E build flag. It signs
+  // real Stellar XDR with a test-generated key; production builds use the
+  // actual wallet kit below.
+  if (process.env.NEXT_PUBLIC_E2E_TEST_WALLET === "true") {
+    return getE2EWalletAdapter();
   }
 
   initializeKit();

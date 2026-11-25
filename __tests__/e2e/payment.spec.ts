@@ -1,120 +1,80 @@
-import { test, expect } from '@playwright/test';
+import { Keypair } from "@stellar/stellar-sdk";
+import { expect, test } from "@playwright/test";
 
-// Playwright smoke test against Testnet for the payment path
-test.describe('End-to-End Payment Flow on Testnet', () => {
-  
-  test('connect -> sign challenge -> create expense -> pay a share', async ({ page }) => {
-    const mockWallet = 'GBTESTPUBLICKEY...';
-    let isAuthenticated = false;
+test("connects, signs in, creates an expense, and pays a share", async ({ page }) => {
+  const wallet = Keypair.random();
+  const friend = Keypair.random();
 
-    // 1. Mock Freighter / WalletsKit in the browser context before navigating
-    await page.addInitScript(() => {
-      window.localStorage.setItem('wallet_network', 'TESTNET');
-      // Mock Freighter API if present
-      (window as any).freighter = {
-        isConnected: async () => true,
-        getPublicKey: async () => 'GBTESTPUBLICKEY...',
-        signTransaction: async () => 'MOCK_SIGNED_TX_XDR',
-      };
-    });
+  // Install every route before navigation so auth and Horizon requests cannot
+  // race ahead of their handlers. The server-issued auth challenge and the
+  // payment XDR are both signed by a freshly generated real Stellar keypair.
+  await page.addInitScript((secret) => {
+    window.__SETTLEX_E2E_WALLET_SECRET = secret;
+  }, wallet.secret());
 
-    await page.route('**/api/auth/session', async (route) => {
+  await page.route(/https:\/\/horizon-testnet\.stellar\.org\//, async (route) => {
+    const request = route.request();
+    const url = new URL(request.url());
+
+    if (url.pathname === "/fee_stats") {
       await route.fulfill({
         status: 200,
-        json: {
-          session: isAuthenticated
-            ? { walletAddress: mockWallet, expiresAt: Date.now() + 3600_000 }
-            : null,
-        },
+        contentType: "application/json",
+        body: JSON.stringify({ fee_charged: { p70: "100" }, min_accepted_fee: "100" }),
       });
-    });
-    await page.route('**/api/auth/challenge', async (route) => {
+      return;
+    }
+
+    if (url.pathname === `/accounts/${wallet.publicKey()}`) {
       await route.fulfill({
         status: 200,
-        json: {
-          transactionXdr: 'MOCK_CHALLENGE_XDR',
-          networkPassphrase: 'Test SDF Network ; September 2015',
-          challengeToken: 'MOCK_CHALLENGE',
-        },
+        contentType: "application/json",
+        body: JSON.stringify({
+          sequence: "100",
+          balances: [{ asset_type: "native", balance: "1000.0000000" }],
+        }),
       });
-    });
-    await page.route('**/api/auth/verify', async (route) => {
-      isAuthenticated = true;
+      return;
+    }
+
+    if (url.pathname === "/transactions" && request.method() === "POST") {
       await route.fulfill({
         status: 200,
-        headers: {
-          'Set-Cookie': 'settlex_session=MOCK_SESSION; Path=/; HttpOnly; SameSite=Lax',
-        },
-        json: { walletAddress: mockWallet, expiresAt: new Date(Date.now() + 3600_000).toISOString() },
+        contentType: "application/json",
+        body: JSON.stringify({ hash: "a".repeat(64), ledger: 123, successful: true }),
       });
-    });
-
-    // 2. Navigate to the app
-    await page.goto('/');
-
-    // 3. Connect Wallet
-    const connectButton = page.getByRole('button', { name: /Connect Wallet|Connect/i });
-    if (await connectButton.isVisible()) {
-      await connectButton.click();
+      return;
     }
 
-    // If there is a sign message button
-    const signButton = page.getByRole('button', { name: /Sign Challenge|Sign/i });
-    if (await signButton.isVisible()) {
-      await signButton.click();
-    }
-
-    // 4. Create an Expense
-    // We assume there's a button to create an expense
-    await page.goto('/expenses/new');
-    
-    await page.getByLabel(/Title/i).fill('Testnet Smoke Test Expense');
-    await page.getByLabel(/Total Amount/i).fill('100');
-    
-    // Select a mock friend
-    // Assuming UI handles adding friends via some input
-    const addFriendInput = page.getByPlaceholder(/Wallet Address/i);
-    if (await addFriendInput.isVisible()) {
-      await addFriendInput.fill('GDFRIENDPUBLICKEY...');
-      await page.getByRole('button', { name: /Add Member/i }).click();
-    }
-
-    // Submit expense
-    // Intercept Supabase insert or assume test environment handles it
-    await page.route('**/api/supabase/rest/v1/expenses*', async (route) => {
-      if (route.request().method() === 'POST') {
-        await route.fulfill({
-          status: 201,
-          json: { id: 'mock-expense-uuid', title: 'Testnet Smoke Test Expense' }
-        });
-      } else {
-        await route.continue();
-      }
-    });
-
-    const createButton = page.getByRole('button', { name: /Create Expense/i });
-    if (await createButton.isVisible()) {
-      await createButton.click();
-    }
-
-    // 5. Pay a Share
-    await page.goto('/expenses/mock-expense-uuid');
-    
-    // Mock the contract submission and network response
-    await page.route('**/api/supabase/rest/v1/rpc/mark_share_paid*', async (route) => {
-      await route.fulfill({
-        status: 200,
-        json: []
-      });
-    });
-
-    const payButton = page.getByRole('button', { name: /Pay Share|Settle/i }).first();
-    if (await payButton.isVisible()) {
-      await payButton.click();
-    }
-
-    // 6. Verify the row updated
-    // Typically the UI will show 'Paid' or 'Settled'
-    await expect(page.locator('text=Paid').first()).toBeVisible({ timeout: 10000 }).catch(() => {});
+    await route.fulfill({ status: 404, contentType: "application/json", body: "{}" });
   });
+
+  await page.goto("/auth");
+  await page.getByRole("button", { name: "Connect Freighter Wallet" }).click();
+  await expect(page.getByLabel("Your Name")).toBeVisible();
+  await page.getByLabel("Your Name").fill("E2E Wallet");
+  await page.getByRole("button", { name: "Create Account" }).click();
+  await page.waitForURL("**/dashboard");
+
+  await page.goto("/expenses");
+  await page.getByRole("button", { name: "New Expense" }).click();
+  await page.getByLabel("Expense title").fill("Playwright payment expense");
+  await page.getByLabel("Total amount").fill("10");
+
+  const names = page.getByPlaceholder("Name *");
+  const addresses = page.locator('input[placeholder^="Stellar address"]');
+  await names.nth(0).fill("E2E Wallet");
+  await names.nth(1).fill("E2E Friend");
+  await addresses.nth(1).fill(friend.publicKey());
+  await page.locator("select").selectOption({ label: "E2E Friend" });
+  await page.getByRole("button", { name: "Create Expense" }).click();
+
+  const expense = page.getByText("Playwright payment expense", { exact: true });
+  await expect(expense).toBeVisible();
+  await expense.click();
+
+  const payButton = page.getByRole("button", { name: /Pay 5\.00 XLM/ });
+  await expect(payButton).toBeEnabled();
+  await payButton.click();
+  await expect(page.getByText("Paid", { exact: false }).first()).toBeVisible({ timeout: 15_000 });
 });
