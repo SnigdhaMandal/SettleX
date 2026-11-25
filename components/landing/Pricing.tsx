@@ -56,7 +56,6 @@ export default function Pricing() {
       <div className="absolute inset-0 bg-grid opacity-30 pointer-events-none" />
 
       <div className="container-max relative">
-        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -83,7 +82,6 @@ export default function Pricing() {
           </p>
         </motion.div>
 
-        {/* Plans */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 max-w-4xl mx-auto">
           {plans.map((plan, i) => (
             <motion.div
@@ -98,7 +96,6 @@ export default function Pricing() {
                   : "bg-[#F6F6F6] border-[#E5E5E5] hover:border-[#B9FF66]/40 hover:shadow-[0_12px_60px_-12px_rgba(0,0,0,0.1)]"
               }`}
             >
-              {/* Dark card glow */}
               {plan.accent && (
                 <div
                   className="absolute inset-0 rounded-3xl pointer-events-none"
@@ -109,24 +106,19 @@ export default function Pricing() {
                 />
               )}
 
-              {/* Lime top bar for accent card */}
               {plan.accent && (
                 <div
                   className="absolute top-0 left-1/2 -translate-x-1/2 h-px w-2/3"
-                  style={{
-                    background: "linear-gradient(90deg, transparent, #B9FF66, transparent)",
-                  }}
+                  style={{ background: "linear-gradient(90deg, transparent, #B9FF66, transparent)" }}
                 />
               )}
 
               <div className="relative">
-                {/* Badge */}
                 <div className={`inline-flex items-center gap-1.5 text-[10px] font-bold uppercase tracking-widest mb-4 ${plan.accent ? "text-[#B9FF66]" : "text-[#AAA]"}`}>
                   <div className={`w-1.5 h-1.5 rounded-full ${plan.accent ? "bg-[#B9FF66] animate-pulse" : "bg-[#CCC]"}`} />
                   {plan.badge}
                 </div>
 
-                {/* Name + price */}
                 <div className="flex items-baseline gap-2 mb-1">
                   <span className={`text-4xl font-black ${plan.accent ? "text-white" : "text-[#0F0F14]"}`}>
                     {plan.name}
@@ -145,7 +137,6 @@ export default function Pricing() {
                   {plan.description}
                 </p>
 
-                {/* CTA */}
                 {plan.accent ? (
                   <div className="w-full py-3 rounded-2xl bg-white/5 border border-white/10 text-[#555] text-sm font-semibold text-center mb-6">
                     Coming Soon
@@ -159,10 +150,8 @@ export default function Pricing() {
                   </Button>
                 )}
 
-                {/* Divider */}
                 <div className={`h-px mb-6 ${plan.accent ? "bg-white/5" : "bg-[#E5E5E5]"}`} />
 
-                {/* Features */}
                 <ul className="space-y-3">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex items-start gap-2.5">
@@ -181,7 +170,6 @@ export default function Pricing() {
           ))}
         </div>
 
-        {/* Fee note */}
         <motion.p
           initial={{ opacity: 0 }}
           whileInView={{ opacity: 1 }}

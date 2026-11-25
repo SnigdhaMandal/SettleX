@@ -4,8 +4,7 @@ import React from "react";
 import { motion } from "framer-motion";
 import { Zap, ShieldCheck, Coins, Code2 } from "lucide-react";
 
-// Verifiable capability facts — not invented usage metrics. Each is either a
-// property of the Stellar network or independently checkable in this repo.
+// Real Stellar network / repo facts rather than made-up usage numbers
 const stats = [
   {
     icon: Zap,
@@ -44,7 +43,6 @@ const stats = [
 export default function StatsSection() {
   return (
     <section className="relative bg-[#F6F6F6] overflow-hidden">
-      {/* Divider lime strip */}
       <div className="h-px w-full" style={{ background: "linear-gradient(90deg, transparent, #B9FF66, transparent)" }} />
 
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20">
@@ -66,27 +64,20 @@ export default function StatsSection() {
                 transition={{ duration: 0.5, delay: i * 0.08 }}
                 className="group relative bg-white rounded-3xl border border-[#E5E5E5] p-6 hover:border-[#B9FF66]/40 hover:shadow-[0_8px_40px_-8px_rgba(0,0,0,0.1)] transition-all duration-300 cursor-default"
               >
-                {/* Icon */}
                 <div className="w-10 h-10 rounded-xl bg-[#B9FF66]/10 flex items-center justify-center mb-4 group-hover:bg-[#B9FF66]/20 transition-all">
                   <Icon size={18} className="text-[#2D6600]" />
                 </div>
 
-                {/* Value */}
                 <div className="flex items-baseline gap-1 mb-1">
                   <span className="text-3xl lg:text-4xl font-black text-[#0F0F14] leading-none">
                     {stat.value}
                   </span>
                   {stat.unit && (
-                    <span className="text-sm font-bold text-[#B9FF66]">
-                      {stat.unit}
-                    </span>
+                    <span className="text-sm font-bold text-[#B9FF66]">{stat.unit}</span>
                   )}
                 </div>
 
-                {/* Label */}
-                <p className="text-sm font-semibold text-[#0F0F14] mb-0.5">
-                  {stat.label}
-                </p>
+                <p className="text-sm font-semibold text-[#0F0F14] mb-0.5">{stat.label}</p>
                 <p className="text-xs text-[#AAA]">{stat.sub}</p>
               </motion.div>
             );

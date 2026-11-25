@@ -18,9 +18,9 @@ export interface ReceiptModalProps {
   onClose: () => void;
   txHash: string;
   memo?: string;
-  /** The identifying memo this share's payment should carry (lib/stellar/memo). */
+  /** Identifying memo expected for this share (lib/stellar/memo). */
   expectedMemo?: string;
-  /** XLM amount string, e.g. "300.0000000" */
+  /** XLM amount string, e.g. "300.0000000". */
   amount: string;
   recipientName: string;
   shareOwner?: string;
@@ -31,7 +31,7 @@ export interface ReceiptModalProps {
   manual?: boolean;
 }
 
-/** Says what an on-chain memo pays, relative to the share being viewed. */
+// Figures out what an on-chain memo pays for relative to this share
 function describeMemoTarget(onChainMemo: string | undefined, expectedMemo: string): string {
   if (onChainMemo && onChainMemo === expectedMemo) return "This share ✓";
   const parsed = parsePaymentMemo(onChainMemo);
@@ -79,13 +79,11 @@ export function ReceiptModal({
   });
 
   useEffect(() => {
-    if (!open || !txHash) {
-      return;
-    }
+    if (!open || !txHash) return;
 
     let isCancelled = false;
 
-    // Fast path: invalid transaction hash cannot exist on Horizon
+    // Invalid hashes can't exist on Horizon, skip the network call
     if (!/^[0-9a-fA-F]{64}$/.test(txHash)) {
       setLoading(false);
       setTxDetails({
@@ -203,9 +201,7 @@ export function ReceiptModal({
           });
         }
       } finally {
-        if (!isCancelled) {
-          setLoading(false);
-        }
+        if (!isCancelled) setLoading(false);
       }
     }
 
@@ -251,7 +247,6 @@ export function ReceiptModal({
       title="Payment Receipt"
       size="sm"
     >
-      {/* ── Status badge ── */}
       {loading ? (
         <div className="flex flex-col items-center gap-2 mb-6">
           <div className="w-14 h-14 rounded-full bg-[#F5F5F5] flex items-center justify-center">
@@ -294,7 +289,6 @@ export function ReceiptModal({
         </div>
       )}
 
-      {/* ── Summary rows ── */}
       <dl className="space-y-2 mb-5">
         <ReceiptRow label="Recipient" value={recipientName} />
         {displaySource && (
@@ -398,7 +392,6 @@ export function ReceiptModal({
         )}
       </dl>
 
-      {/* ── TX hash ── */}
       <div className="p-3 bg-[#F6F6F6] rounded-xl mb-5">
         <p className="text-[10px] font-semibold text-[#AAA] uppercase tracking-wide mb-1.5">
           Transaction Hash
@@ -406,7 +399,6 @@ export function ReceiptModal({
         <TransactionHash hash={txHash} />
       </div>
 
-      {/* ── Stellar Expert link ── */}
       <a
         href={explorerUrl}
         target="_blank"
@@ -424,8 +416,6 @@ export function ReceiptModal({
     </Modal>
   );
 }
-
-// ─── Helper ───────────────────────────────────────────────────────────────────
 
 function ReceiptRow({
   label,
