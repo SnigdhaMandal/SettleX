@@ -17,11 +17,11 @@ interface PaymentStatusProps {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  building:   "Building transaction…",
-  signing:    "Waiting for wallet signature…",
+  building: "Building transaction…",
+  signing: "Waiting for wallet signature…",
   submitting: "Submitting to Stellar network…",
-  recording:  "Recording payment on-chain…",
-  verifying:  "Checking the earlier payment on Stellar…",
+  recording: "Recording payment on-chain…",
+  verifying: "Checking the earlier payment on Stellar…",
 };
 
 const RECORDING_STEP_LABELS: Record<string, string> = {
@@ -60,12 +60,11 @@ export function PaymentStatus({
           transition={{ duration: 0.2 }}
           className={cn("rounded-xl border p-4", className, {
             "bg-[#F8FFF0] border-[#B9FF66]/40": state.status === "success",
-            "bg-amber-50 border-amber-200":     isPendingState,
-            "bg-red-50 border-red-200":         state.status === "error",
-            "bg-[#F8F8F8] border-[#E5E5E5]":    isLoadingState,
+            "bg-amber-50 border-amber-200": isPendingState,
+            "bg-red-50 border-red-200": state.status === "error",
+            "bg-[#F8F8F8] border-[#E5E5E5]": isLoadingState,
           })}
         >
-          {/* Loading states: building / signing / submitting / recording */}
           {isLoadingState && (
             <div className="flex items-center gap-3">
               {state.status === "recording" ? (

@@ -65,10 +65,8 @@ const itemVariants = {
   },
 };
 
-/* ── Mock Terminal ── */
 const MockTerminal = () => (
   <div className="bg-[#0F0F14] rounded-2xl overflow-hidden border border-white/5 shadow-[0_8px_40px_-8px_rgba(0,0,0,0.4)]">
-    {/* Terminal header */}
     <div className="flex items-center gap-1.5 px-4 py-3 border-b border-white/5">
       <div className="w-3 h-3 rounded-full bg-[#FF5F57]" />
       <div className="w-3 h-3 rounded-full bg-[#FEBC2E]" />
@@ -76,7 +74,6 @@ const MockTerminal = () => (
       <span className="ml-3 text-[#555] text-xs font-mono">settlex · transaction</span>
     </div>
 
-    {/* Content */}
     <div className="p-5 font-mono text-xs space-y-2">
       <div className="text-[#555]"># Build payment TX</div>
       <div className="text-[#888]">
@@ -112,12 +109,10 @@ export default function HowItWorks() {
       id="how-it-works"
       className="section-padding bg-white relative overflow-hidden border-y border-[#EEEEEE]"
     >
-      {/* Faint grid */}
       <div className="absolute inset-0 bg-grid opacity-40 pointer-events-none" />
 
       <div className="container-max relative">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-20 items-center">
-          {/* ── LEFT: Steps ── */}
           <div>
             <motion.div
               initial={{ opacity: 0, y: 20 }}
@@ -135,9 +130,7 @@ export default function HowItWorks() {
                 <br />
                 <span
                   className="bg-clip-text text-transparent"
-                  style={{
-                    backgroundImage: "linear-gradient(135deg, #B9FF66, #7DD835)",
-                  }}
+                  style={{ backgroundImage: "linear-gradient(135deg, #B9FF66, #7DD835)" }}
                 >
                   works
                 </span>
@@ -163,12 +156,11 @@ export default function HowItWorks() {
                     variants={itemVariants}
                     className="relative flex gap-5 group"
                   >
-                    {/* Vertical connector */}
+                    {/* Line connecting each step to the next */}
                     {i < steps.length - 1 && (
                       <div className="absolute left-[23px] top-12 bottom-0 w-px bg-gradient-to-b from-[#B9FF66]/40 to-transparent" />
                     )}
 
-                    {/* Icon circle */}
                     <div className="shrink-0 relative">
                       <div className="w-12 h-12 rounded-2xl bg-[#F6F6F6] border border-[#E5E5E5] flex items-center justify-center group-hover:bg-[#B9FF66] group-hover:border-[#B9FF66] transition-all duration-300">
                         <Icon
@@ -178,7 +170,6 @@ export default function HowItWorks() {
                       </div>
                     </div>
 
-                    {/* Content */}
                     <div className="pb-8">
                       <div className="flex items-center gap-2 mb-1">
                         <span className="text-[10px] font-black text-[#CCC] tracking-widest">
@@ -202,7 +193,6 @@ export default function HowItWorks() {
             </motion.div>
           </div>
 
-          {/* ── RIGHT: Visual ── */}
           <motion.div
             initial={{ opacity: 0, x: 40 }}
             whileInView={{ opacity: 1, x: 0 }}
@@ -212,7 +202,6 @@ export default function HowItWorks() {
           >
             <MockTerminal />
 
-            {/* Architecture diagram */}
             <div className="bg-[#F6F6F6] rounded-2xl border border-[#E5E5E5] p-5">
               <p className="text-xs font-semibold uppercase tracking-widest text-[#AAA] mb-4">
                 Data Flow
@@ -238,7 +227,6 @@ export default function HowItWorks() {
               </div>
             </div>
 
-            {/* Network stats */}
             <div className="grid grid-cols-2 gap-3">
               {[
                 { label: "Avg TX Fee", value: "0.00001 XLM", sub: "~$0.000002" },
