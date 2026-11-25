@@ -20,13 +20,9 @@ interface TripFormProps {
 
 const MAX_MEMBERS = 50;
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
 function createMember(name = ""): Member {
   return { id: crypto.randomUUID(), name, walletAddress: "" };
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export function TripForm({ onSubmit, onCancel, initialData, currentUserPublicKey, currentUserName }: TripFormProps) {
   const [name, setName] = useState(initialData?.name ?? "");
@@ -35,7 +31,6 @@ export function TripForm({ onSubmit, onCancel, initialData, currentUserPublicKey
     if (initialData?.members && initialData.members.length >= 2) {
       return initialData.members;
     }
-    // Pre-fill first member with current user info if available
     return [
       {
         id: crypto.randomUUID(),
@@ -47,12 +42,9 @@ export function TripForm({ onSubmit, onCancel, initialData, currentUserPublicKey
   });
   const [errors, setErrors] = useState<Record<string, string>>({});
 
-  // ── User profile resolution ─────────────────────────────────────────────────
   const authContext = useContext(AuthContext);
   const resolveUserProfile = authContext?.resolveUserProfile;
   const [resolvedProfiles, setResolvedProfiles] = useState<Record<string, string>>({});
-
-  // ── Member mutations ───────────────────────────────────────────────────────
 
   const updateMember = (id: string, field: keyof Member, value: string) => {
     setMembers((prev) =>
@@ -94,9 +86,7 @@ export function TripForm({ onSubmit, onCancel, initialData, currentUserPublicKey
     setMembers((prev) => prev.filter((m) => m.id !== id));
   };
 
-  // ── Validation ────────────────────────────────────────────────────────────
-
-  const validate = (): boolean => {
+  const validate = () => {
     const errs: Record<string, string> = {};
     const trimmedName = name.trim();
     if (!trimmedName) {

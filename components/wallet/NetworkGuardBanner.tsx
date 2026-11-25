@@ -14,11 +14,7 @@ export function NetworkGuardBanner() {
     confirmNetwork,
   } = useWallet();
 
-  if (
-    !isConnected ||
-    networkStatus === "idle" ||
-    networkStatus === "matched"
-  ) {
+  if (!isConnected || networkStatus === "idle" || networkStatus === "matched") {
     return null;
   }
 
