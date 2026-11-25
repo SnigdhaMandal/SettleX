@@ -430,6 +430,8 @@ NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
 # App
 NEXT_PUBLIC_APP_NAME=SettleX
 NEXT_PUBLIC_APP_VERSION=1.0.0
+# Playwright base URL (defaults to http://127.0.0.1:3000)
+NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
 
 # ─── Server-only — never prefix these with NEXT_PUBLIC_ ─────────────────────
 # Supabase Dashboard → Settings → API → JWT Secret.
@@ -476,6 +478,35 @@ For coverage report:
 ```bash
 npm run test:coverage
 ```
+
+### Browser end-to-end test
+
+The Playwright payment flow uses a local Supabase stack and signs real Stellar
+challenge/payment XDR with a fresh test keypair. Start Supabase with the CLI,
+apply the migrations, and copy `API_URL`, `ANON_KEY`, and `JWT_SECRET` from
+`supabase status -o env` into `.env.local` as `NEXT_PUBLIC_SUPABASE_URL`,
+`NEXT_PUBLIC_SUPABASE_ANON_KEY`, and `SUPABASE_JWT_SECRET`. Set a distinct
+`AUTH_CHALLENGE_SECRET` and the following E2E-only build settings:
+
+```env
+NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
+NEXT_PUBLIC_E2E_TEST_WALLET=true
+NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org
+NEXT_PUBLIC_CONTRACT_ID=
+```
+
+Build with those values, then run:
+
+```bash
+npm run build
+npm run test:e2e
+```
+
+The Playwright config starts `next start` and uses `NEXT_PUBLIC_APP_URL` as its
+`baseURL`; it defaults to `http://127.0.0.1:3000`. The E2E wallet adapter is
+only selected when the explicit test build flag is set. Never use that flag in
+a production build. CI starts Supabase, installs the already-declared
+Playwright Chromium browser, builds the app, and runs this command.
 
 | Test file                                 | Coverage                                                                                     |
 | ----------------------------------------- | -------------------------------------------------------------------------------------------- |

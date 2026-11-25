@@ -18,7 +18,7 @@ jobs:
   quality:
     name: Lint, Test, Build
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     env:
       # Public placeholders for CI only. Real values are injected in deployment environments.
       NEXT_PUBLIC_SUPABASE_URL: https://example.supabase.co
@@ -36,6 +36,33 @@ jobs:
 
       - name: Install dependencies
         run: npm ci
+
+      - name: Set up local Supabase
+        uses: supabase/setup-cli@v1
+        with:
+          version: latest
+
+      - name: Start Supabase and configure the E2E environment
+        shell: bash
+        run: |
+          supabase start
+          supabase db reset
+          source <(supabase status -o env)
+          {
+            echo "NEXT_PUBLIC_SUPABASE_URL=$API_URL"
+            echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$ANON_KEY"
+            echo "SUPABASE_JWT_SECRET=$JWT_SECRET"
+            echo "AUTH_CHALLENGE_SECRET=settlex-e2e-challenge-secret-distinct-from-jwt"
+            echo "NEXT_PUBLIC_SITE_URL=http://127.0.0.1:3000"
+            echo "NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000"
+            echo "NEXT_PUBLIC_E2E_TEST_WALLET=true"
+            echo "NEXT_PUBLIC_STELLAR_NETWORK=TESTNET"
+            echo "NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org"
+            echo "NEXT_PUBLIC_CONTRACT_ID="
+          } >> "$GITHUB_ENV"
+
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
 
       - name: Type check
         run: npx tsc --noEmit
@@ -106,6 +133,9 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Playwright end-to-end payment flow
+        run: npm run test:e2e
 
   rust-contract:
     name: Rust Contract Tests

@@ -13,6 +13,7 @@
     "lint": "next lint",
     "typecheck": "tsc --noEmit",
     "test": "jest",
+    "test:e2e": "playwright test",
     "test:coverage": "jest --coverage",
     "db:reset": "supabase db reset",
     "db:test": "supabase test db",
