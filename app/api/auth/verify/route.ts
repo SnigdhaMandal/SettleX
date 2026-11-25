@@ -1,15 +1,7 @@
 /**
  * POST /api/auth/verify
- *
- * Verifies a signed challenge and, only on success, mints a Supabase access
- * token whose `wallet_address` claim carries the proven Stellar address. Every
- * RLS policy authorizes on that claim, so this route is the single place where
- * a claimed wallet becomes an authenticated one.
- *
- * Because it is the gate on every authenticated action, every outcome is logged
- * with a correlation id: a rejected signature (`auth.verify_rejected`) is the
- * line that tells you signing is broken, and it is not an exception, so nothing
- * else would have recorded it.
+ * Verifies a signed challenge and mints a Supabase access token carrying the
+ * `wallet_address` claim used by RLS policies.
  */
 import { isValidWalletAddress, verifyChallengeShared } from "@/lib/auth/challenge";
 import { issueAccessToken } from "@/lib/auth/jwt";
@@ -49,11 +41,7 @@ export async function POST(request: Request) {
     body = await request.json();
   } catch {
     logger.finish("auth.verify_completed", 400, { reason: "malformed_json" });
-    return jsonWithCorrelation(
-      logger,
-      { error: "A JSON body is required." },
-      { status: 400, headers: NO_STORE },
-    );
+    return jsonWithCorrelation(logger, { error: "A JSON body is required." }, { status: 400, headers: NO_STORE });
   }
 
   const { walletAddress, signedTransactionXdr, challengeToken } = (body ?? {}) as {
@@ -98,9 +86,7 @@ export async function POST(request: Request) {
     });
 
     if (!result.ok) {
-      // Not an exception, so nothing used to record it — yet "signing is
-      // failing for everyone" looks exactly like a spike of these. The reason
-      // is our own enum, safe to log verbatim.
+      // result.reason is our own enum, safe to log and helps spot widespread signing failures
       logger.warn("auth.verify_rejected", { walletAddress, reason: result.reason });
       countMetric("auth.verify_rejected", { reason: result.reason });
       logger.finish("auth.verify_completed", 401, { reason: result.reason });
@@ -115,6 +101,7 @@ export async function POST(request: Request) {
 
     countMetric("auth.session_issued");
     logger.finish("auth.verify_completed", 200, { walletAddress: result.walletAddress });
+
     const response = jsonWithCorrelation(
       logger,
       { expiresAt, walletAddress: result.walletAddress },
@@ -124,9 +111,7 @@ export async function POST(request: Request) {
     return response;
   } catch (err) {
     if (err instanceof SharedStoreUnavailable) {
-      // Fail closed: without the shared nonce store the single-use guard is
-      // unenforceable, and minting a token anyway would reopen the replay hole.
-      // Nobody can sign in while this persists, so it is an error, not a warning.
+      // fail closed — without the shared nonce store we can't block replay attacks
       logger.error("auth.shared_store_unavailable", err, { walletAddress });
       logger.finish("auth.verify_completed", 503, { reason: "shared_store_unavailable" });
       return jsonWithCorrelation(

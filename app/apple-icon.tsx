@@ -1,6 +1,6 @@
 import { ImageResponse } from "next/og";
 
-// iOS home-screen icon. iOS ignores SVG apple-touch-icons, so we render a PNG.
+// iOS ignores SVG apple-touch-icons, so render a PNG
 export const size = { width: 180, height: 180 };
 export const contentType = "image/png";
 

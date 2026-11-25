@@ -1,12 +1,9 @@
 import { ImageResponse } from "next/og";
 
-// Generates the PNG icons the web manifest points at, e.g.
-//   /pwa-icon?size=192        → "any" purpose
-//   /pwa-icon?size=512&mask=1 → "maskable" (extra padding so nothing is clipped)
-// Rendering on-demand keeps real PNGs out of the repo while staying Lighthouse-clean.
+// On-demand PNG icons for the web manifest (?size=192, ?size=512&mask=1)
 export const contentType = "image/png";
 
-const clampSize = (raw: string | null): number => {
+const clampSize = (raw: string | null) => {
   const n = Number(raw);
   if (!Number.isFinite(n)) return 512;
   return Math.min(1024, Math.max(48, Math.round(n)));
@@ -17,8 +14,7 @@ export function GET(request: Request) {
   const size = clampSize(searchParams.get("size"));
   const maskable = searchParams.get("mask") === "1";
 
-  // Maskable icons must keep content inside the inner ~80% safe zone.
-  const boltScale = maskable ? 0.52 : 0.64;
+  const boltScale = maskable ? 0.52 : 0.64; // maskable needs content inside the ~80% safe zone
   const boltPx = Math.round(size * boltScale);
 
   return new ImageResponse(
