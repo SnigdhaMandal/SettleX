@@ -16,7 +16,6 @@ import { Button } from "@/components/ui/Button";
 import { Badge } from "@/components/ui/Badge";
 import { useAuth } from "@/context/AuthContext";
 
-/* ── animation variants ── */
 const fadeUp = {
   hidden: { opacity: 0, y: 40 },
   visible: (i = 0) => ({
@@ -31,20 +30,19 @@ const stagger = {
   visible: { transition: { staggerChildren: 0.08 } },
 };
 
-/* ── Mock UI Card ── */
 const MockSplitCard = () => (
   <div className="bg-white rounded-3xl border border-[#E5E5E5] shadow-[0_8px_60px_-12px_rgba(0,0,0,0.18)] overflow-hidden w-full max-w-sm">
-    {/* Card Header */}
     <div className="p-5 border-b border-[#F0F0F0]">
       <div className="flex items-center justify-between mb-1">
         <p className="text-xs font-medium text-[#888]">Group Dinner · tonight</p>
-        <span className="bg-[#B9FF66]/20 text-[#2D6600] text-xs font-semibold px-2 py-0.5 rounded-full">Active</span>
+        <span className="bg-[#B9FF66]/20 text-[#2D6600] text-xs font-semibold px-2 py-0.5 rounded-full">
+          Active
+        </span>
       </div>
       <p className="text-2xl font-black tracking-tight">1,200 XLM</p>
       <p className="text-xs text-[#aaa] mt-0.5">Split 4 ways · Equal</p>
     </div>
 
-    {/* Members */}
     <div className="p-4 space-y-2.5">
       {[
         { name: "Rahul", amount: "300", status: "paid", color: "#B9FF66" },
@@ -77,7 +75,6 @@ const MockSplitCard = () => (
       ))}
     </div>
 
-    {/* CTA in card */}
     <div className="px-4 pb-4">
       <div className="w-full py-2.5 bg-[#0F0F14] text-white text-sm font-semibold rounded-xl flex items-center justify-center gap-2">
         <Zap size={14} className="fill-[#B9FF66] text-[#B9FF66]" />
@@ -87,7 +84,6 @@ const MockSplitCard = () => (
   </div>
 );
 
-/* ── Floating stat chips ── */
 const FloatingChip = ({
   icon: Icon,
   label,
@@ -114,7 +110,6 @@ const FloatingChip = ({
   </motion.div>
 );
 
-/* ── Trust logos ── */
 const trustLogos = [
   { name: "Stellar", abbr: "STL" },
   { name: "Freighter", abbr: "FRT" },
@@ -128,7 +123,7 @@ export default function Hero() {
 
   return (
     <section className="relative min-h-screen overflow-hidden bg-[#F6F6F6]">
-      {/* Background radial + grid */}
+      {/* background grid & ambient glows */}
       <div className="absolute inset-0 bg-hero-grid bg-[length:40px_40px] opacity-100" />
       <div
         className="absolute inset-0"
@@ -137,21 +132,17 @@ export default function Hero() {
             "radial-gradient(ellipse 80% 55% at 50% -5%, rgba(185,255,102,0.18), transparent 70%)",
         }}
       />
-
-      {/* Blobs */}
       <div className="pointer-events-none absolute -top-40 -left-40 w-[600px] h-[600px] bg-[#B9FF66]/10 rounded-full blur-[120px]" />
       <div className="pointer-events-none absolute -bottom-20 -right-40 w-[500px] h-[500px] bg-[#B9FF66]/08 rounded-full blur-[100px]" />
 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pt-36 pb-20 lg:pt-44 lg:pb-28">
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-16 lg:gap-8 items-center">
-          {/* ── LEFT: Copy ── */}
           <motion.div
             variants={stagger}
             initial="hidden"
             animate="visible"
             className="max-w-2xl"
           >
-            {/* Badge pill */}
             <motion.div variants={fadeUp} custom={0}>
               <div className="inline-flex items-center gap-2 px-4 py-1.5 bg-[#B9FF66]/15 border border-[#B9FF66]/30 rounded-full text-xs font-semibold text-[#2D6600] mb-6">
                 <span className="w-1.5 h-1.5 rounded-full bg-[#2D6600] animate-pulse" />
@@ -159,7 +150,6 @@ export default function Hero() {
               </div>
             </motion.div>
 
-            {/* Headline */}
             <motion.h1
               variants={fadeUp}
               custom={1}
@@ -169,16 +159,12 @@ export default function Hero() {
               <br />
               <span
                 className="bg-clip-text text-transparent"
-                style={{
-                  backgroundImage:
-                    "linear-gradient(135deg, #B9FF66 0%, #7DD835 100%)",
-                }}
+                style={{ backgroundImage: "linear-gradient(135deg, #B9FF66 0%, #7DD835 100%)" }}
               >
                 Pay On-Chain.
               </span>
             </motion.h1>
 
-            {/* Sub */}
             <motion.p
               variants={fadeUp}
               custom={2}
@@ -186,13 +172,10 @@ export default function Hero() {
             >
               SettleX is the easiest way to split group expenses and pay each
               other directly over the{" "}
-              <span className="font-semibold text-[#0F0F14]">
-                Stellar Network
-              </span>{" "}
+              <span className="font-semibold text-[#0F0F14]">Stellar Network</span>{" "}
               — transparent, instant, and trustless.
             </motion.p>
 
-            {/* CTA row */}
             <motion.div
               variants={fadeUp}
               custom={3}
@@ -209,7 +192,6 @@ export default function Hero() {
               </Button>
             </motion.div>
 
-            {/* Capability highlights */}
             <motion.div
               variants={fadeUp}
               custom={4}
@@ -231,21 +213,17 @@ export default function Hero() {
             </motion.div>
           </motion.div>
 
-          {/* ── RIGHT: Visual ── */}
           <motion.div
             initial={{ opacity: 0, x: 60, scale: 0.95 }}
             animate={{ opacity: 1, x: 0, scale: 1 }}
             transition={{ duration: 0.8, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
             className="relative flex justify-center lg:justify-end"
           >
-            {/* Glow behind card */}
             <div className="absolute inset-0 bg-[#B9FF66]/20 rounded-full blur-[80px] scale-75" />
 
             <div className="relative">
-              {/* Main mock card */}
               <MockSplitCard />
 
-              {/* Floating chips */}
               <FloatingChip
                 icon={Zap}
                 label="Finality Speed"
@@ -259,7 +237,7 @@ export default function Hero() {
                 className="hidden lg:flex absolute -bottom-4 -right-10 w-40"
               />
 
-              {/* TX hash strip */}
+              {/* sample tx confirmation pill */}
               <motion.div
                 animate={{ y: [0, -4, 0] }}
                 transition={{ duration: 4, repeat: Infinity, ease: "easeInOut", delay: 1 }}
@@ -277,7 +255,6 @@ export default function Hero() {
           </motion.div>
         </div>
 
-        {/* ── Trust strip ── */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}

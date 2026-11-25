@@ -42,10 +42,9 @@ const highlights = [
   },
 ];
 
-/* ── Mock Explorer Card ── */
+// static preview of an on-chain tx record
 const MockExplorer = () => (
   <div className="bg-[#1A1A22] rounded-2xl border border-white/5 overflow-hidden">
-    {/* Header */}
     <div className="flex items-center justify-between px-5 py-3 border-b border-white/5">
       <div className="flex items-center gap-2">
         <div className="w-2 h-2 rounded-full bg-[#B9FF66] animate-pulse" />
@@ -55,15 +54,11 @@ const MockExplorer = () => (
     </div>
 
     <div className="p-5 space-y-4">
-      {/* TX Title */}
       <div>
         <p className="text-[10px] uppercase tracking-widest text-[#555] mb-1">Transaction</p>
-        <p className="text-sm font-mono text-[#B9FF66] break-all">
-          4f3a892c...8e2f1d20
-        </p>
+        <p className="text-sm font-mono text-[#B9FF66] break-all">4f3a892c...8e2f1d20</p>
       </div>
 
-      {/* Fields */}
       {[
         { label: "Status", value: "✓ Success", color: "#B9FF66" },
         { label: "Ledger", value: "47,291,034" },
@@ -73,10 +68,7 @@ const MockExplorer = () => (
       ].map(({ label, value, color }) => (
         <div key={label} className="flex items-center justify-between text-xs border-t border-white/5 pt-3">
           <span className="text-[#555] font-medium">{label}</span>
-          <span
-            className="font-mono font-semibold"
-            style={{ color: color || "#aaa" }}
-          >
+          <span className="font-mono font-semibold" style={{ color: color || "#aaa" }}>
             {value}
           </span>
         </div>
@@ -88,23 +80,19 @@ const MockExplorer = () => (
 export default function DarkSection() {
   return (
     <section className="relative bg-[#0F0F14] overflow-hidden">
-      {/* Grid overlay */}
       <div className="absolute inset-0 bg-grid-dark opacity-60 pointer-events-none" />
 
-      {/* Lime radial glow top */}
+      {/* subtle top and bottom glows */}
       <div
         className="pointer-events-none absolute -top-40 left-1/2 -translate-x-1/2 w-[800px] h-[400px] rounded-full blur-[120px]"
         style={{ background: "rgba(185,255,102,0.06)" }}
       />
-
-      {/* Lime radial glow bottom */}
       <div
         className="pointer-events-none absolute -bottom-40 right-0 w-[500px] h-[500px] rounded-full blur-[100px]"
         style={{ background: "rgba(185,255,102,0.04)" }}
       />
 
       <div className="relative max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-24 lg:py-32">
-        {/* Section label */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -119,7 +107,6 @@ export default function DarkSection() {
         </motion.div>
 
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
-          {/* ── LEFT: Copy + highlights ── */}
           <div className="lg:col-span-7">
             <motion.h2
               initial={{ opacity: 0, y: 30 }}
@@ -132,9 +119,7 @@ export default function DarkSection() {
               <br />
               <span
                 className="bg-clip-text text-transparent"
-                style={{
-                  backgroundImage: "linear-gradient(135deg, #B9FF66 0%, #9AE040 100%)",
-                }}
+                style={{ backgroundImage: "linear-gradient(135deg, #B9FF66 0%, #9AE040 100%)" }}
               >
                 It&apos;s the foundation.
               </span>
@@ -152,7 +137,6 @@ export default function DarkSection() {
               math and cryptography.
             </motion.p>
 
-            {/* Highlights grid */}
             <motion.div
               initial={{ opacity: 0 }}
               whileInView={{ opacity: 1 }}
@@ -177,15 +161,12 @@ export default function DarkSection() {
                       </div>
                       <h3 className="text-sm font-bold text-white">{h.title}</h3>
                     </div>
-                    <p className="text-xs text-[#666] leading-relaxed pl-11">
-                      {h.description}
-                    </p>
+                    <p className="text-xs text-[#666] leading-relaxed pl-11">{h.description}</p>
                   </motion.div>
                 );
               })}
             </motion.div>
 
-            {/* CTA */}
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               whileInView={{ opacity: 1, y: 0 }}
@@ -212,7 +193,6 @@ export default function DarkSection() {
             </motion.div>
           </div>
 
-          {/* ── RIGHT: Mock explorer ── */}
           <motion.div
             initial={{ opacity: 0, x: 40 }}
             whileInView={{ opacity: 1, x: 0 }}
@@ -222,13 +202,10 @@ export default function DarkSection() {
           >
             <MockExplorer />
 
-            {/* Verification strip */}
             <div className="flex items-center gap-3 bg-[#B9FF66]/8 border border-[#B9FF66]/15 rounded-2xl px-4 py-3">
               <CheckCircle2 size={18} className="text-[#B9FF66] shrink-0" />
               <div>
-                <p className="text-xs font-semibold text-white">
-                  Publicly verifiable
-                </p>
+                <p className="text-xs font-semibold text-white">Publicly verifiable</p>
                 <p className="text-[11px] text-[#666]">
                   Anyone with the TX hash can verify this payment independently
                 </p>
