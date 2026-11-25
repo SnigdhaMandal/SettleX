@@ -49,8 +49,6 @@ export function isSettlementAlreadyRecorded(err: unknown): boolean {
   return /settlement already recorded/i.test(message);
 }
 
-// ─── Database ────────────────────────────────────────────────────────────────
-
 /** All settlements of a trip, oldest first. Never throws; [] on failure. */
 export async function fetchTripSettlements(
   walletAddress: string,
@@ -107,7 +105,7 @@ export async function recordTripSettlement(
   return rowToSettlement(data[0]);
 }
 
-// ─── Pending settlements (localStorage) ──────────────────────────────────────
+// Pending settlements cached in localStorage
 
 export const LS_PENDING_SETTLEMENTS = "settlex:pendingSettlements";
 
@@ -120,7 +118,7 @@ export interface PendingSettlement extends RecordTripSettlementParams {
   createdAt: string;
 }
 
-function storageKey(walletAddress: string): string {
+function storageKey(walletAddress: string) {
   return `${LS_PENDING_SETTLEMENTS}:${walletAddress}`;
 }
 
@@ -150,7 +148,7 @@ function readStore(walletAddress: string): Record<string, PendingSettlement> {
   }
 }
 
-function writeStore(walletAddress: string, store: Record<string, PendingSettlement>): void {
+function writeStore(walletAddress: string, store: Record<string, PendingSettlement>) {
   if (typeof window === "undefined" || !walletAddress) return;
   try {
     if (Object.keys(store).length === 0) {
@@ -159,7 +157,7 @@ function writeStore(walletAddress: string, store: Record<string, PendingSettleme
       window.localStorage.setItem(storageKey(walletAddress), JSON.stringify(store));
     }
   } catch {
-    // Private mode / quota: nothing else to fall back to.
+    // ignore storage errors (private mode, quota)
   }
 }
 

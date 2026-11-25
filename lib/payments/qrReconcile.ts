@@ -1,16 +1,9 @@
 /**
- * Reconciles a share paid by scanning its QR code (Issue #204).
- *
- * A QR payment is made in another wallet app, so no transaction hash comes
- * back to SettleX on its own. The share owner pastes the hash, and it is
- * accepted only if Horizon shows a successful transaction that:
- *   - carries this share's identifying memo, which binds it to exactly this
- *     (expense, member) and stops an unrelated transfer being reused,
- *   - contains one native XLM payment operation from the debtor to the
- *     creditor for exactly the share amount, compared in stroops.
- *
- * The Horizon instance is network-specific, so a hash from another network
- * is simply not found.
+ * Reconciles a share paid via QR code in an external wallet app.
+ * Because external wallets don't return a tx hash to SettleX, the user pastes
+ * it in and we verify on Horizon that it succeeded, carries this share's memo
+ * (to prevent reusing unrelated transfers), and moves the exact stroop amount
+ * from debtor to creditor on the active network.
  */
 
 import { verifyTransactionOnHorizon } from "@/lib/stellar/verifyPayment";
@@ -18,13 +11,13 @@ import { xlmToStroops } from "@/lib/split/calculator";
 
 export interface QrShareExpectation {
   txHash: string;
-  /** The share owner, who sent the XLM. */
+  /** Share owner who sent the XLM. */
   debtorWallet: string;
-  /** The member who paid the bill, who received it. */
+  /** Member who paid the bill and received the XLM. */
   creditorWallet: string;
   /** Share amount in XLM. */
   amount: string;
-  /** shareMemo(expenseId, memberId) */
+  /** `shareMemo(expenseId, memberId)` */
   memo: string;
 }
 
@@ -71,17 +64,21 @@ export async function verifyQrSharePayment(
     return { ok: false, reason: "This share's amount is invalid." };
   }
 
+  // Compare in stroops so formatting differences like "1.5" vs "1.5000000" still match
   const matching = (tx.operations ?? []).some((op) => {
     if (op.type !== "payment" || op.assetType !== "native") return false;
     if (!same(op.to, expected.creditorWallet)) return false;
+
     const from = op.from ?? tx.sourceAccount;
     if (!same(from, expected.debtorWallet)) return false;
+
     try {
       return op.amount !== undefined && xlmToStroops(op.amount) === expectedStroops;
     } catch {
       return false;
     }
   });
+
   if (!matching) {
     return {
       ok: false,

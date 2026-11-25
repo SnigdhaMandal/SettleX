@@ -1,22 +1,14 @@
 /**
- * Who may pay which share (Issue #208).
+ * Ownership rules for paying a share.
  *
- * A share is paid by its debtor, the member whose wallet is on the share, to
- * the expense's creditor, the member who paid the bill. Only the debtor's own
- * connected wallet may pay it:
- *
- *  - the payment is recorded against the share as the debtor's (`markSharePaid`
- *    and the contract's `record_payment` both key the record by the sender),
- *    so a third party paying would record the wrong person;
- *  - the on-chain duplicate guard (`is_paid`) is keyed by the debtor's wallet,
- *    so it only works when sender and share owner are the same account.
- *
- * The UI (whether a Pay button or QR code is shown) and `payShare` both use
- * this one rule, so the button can never offer what the action would refuse.
+ * Only the debtor's own connected wallet can pay their share, because both
+ * `markSharePaid` and the contract's `record_payment` / `is_paid` duplicate
+ * guard key the record by the sender's wallet. Both the UI and `payShare`
+ * share this check so buttons never offer an action `payShare` would reject.
  */
 import type { SplitShare } from "@/types/expense";
 
-/** Stellar account ids are case-insensitive base32; compare them normalised. */
+/** Stellar account IDs are case-insensitive base32; compare them normalized. */
 export function sameWallet(a?: string | null, b?: string | null): boolean {
   const x = a?.trim().toUpperCase();
   const y = b?.trim().toUpperCase();
@@ -25,15 +17,15 @@ export function sameWallet(a?: string | null, b?: string | null): boolean {
 
 export interface SharePaymentCheck {
   share: Pick<SplitShare, "walletAddress" | "name">;
-  /** The wallet connected right now; null/undefined means nobody may pay. */
+  /** Currently connected wallet; null/undefined means nobody can pay. */
   connectedWallet?: string | null;
-  /** The creditor: the wallet of the member who paid the bill. */
+  /** Wallet of the member who paid the bill. */
   creditorWallet?: string | null;
 }
 
 /**
- * Why the connected wallet may not pay this share, or null if it may.
- * The messages are written for users and safe to show in a toast.
+ * Returns a user-facing reason if the connected wallet cannot pay this share,
+ * or null if it can.
  */
 export function sharePaymentDenial({ share, connectedWallet, creditorWallet }: SharePaymentCheck): string | null {
   if (!connectedWallet) return "Connect your Stellar wallet to pay your share.";

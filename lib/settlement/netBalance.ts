@@ -40,27 +40,24 @@ export function deriveRawDebts(
   const debts: RawDebt[] = [];
   forEachOpenShare(expenses, onChainEvents, (_expense, share, payer) => {
     debts.push({
-      from:       share.name,
-      fromId:     share.memberId,
-      to:         payer.name,
-      toId:       payer.id,
-      amount:     share.amount,
+      from: share.name,
+      fromId: share.memberId,
+      to: payer.name,
+      toId: payer.id,
+      amount: share.amount,
       fromWallet: share.walletAddress,
-      toWallet:   payer.walletAddress,
+      toWallet: payer.walletAddress,
     });
   });
   return debts;
 }
 
-/**
- * Calls `fn` for every share that is still owed: not the payer's own share,
- * not marked paid, and without an attested on-chain record.
- */
+// Skips payer's own share, already-paid shares, and attested on-chain payments
 function forEachOpenShare(
   expenses: Expense[],
   onChainEvents: ContractPaymentEvent[],
   fn: (expense: Expense, share: Expense["shares"][number], payer: Expense["members"][number]) => void,
-): void {
+) {
   const attestedOnChainSet = new Set(
     onChainEvents
       .filter((e) => e.attested === true)
@@ -134,12 +131,11 @@ export function computeNetPayments(
     if (fromWallet) wallets.set(fromId, fromWallet);
     if (toWallet) wallets.set(toId, toWallet);
   });
-  // A member whose shares were all paid directly after a settlement has no
-  // debts left, only the settlement: take their wallet from it.
-  settlements.forEach(({ fromMemberId, toMemberId, fromWallet, toWallet }) => {
+  // Fall back to settlement wallets when a member has no open debts left
+  for (const { fromMemberId, toMemberId, fromWallet, toWallet } of settlements) {
     if (fromWallet && !wallets.has(fromMemberId)) wallets.set(fromMemberId, fromWallet);
     if (toWallet && !wallets.has(toMemberId)) wallets.set(toMemberId, toWallet);
-  });
+  }
 
   const creditors: Array<{ id: string; balance: bigint }> = [];
   const debtors: Array<{ id: string; balance: bigint }> = [];
