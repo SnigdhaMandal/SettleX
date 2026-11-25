@@ -28,7 +28,7 @@ const RESPONSE_HEADERS = [
 
 type RouteContext = { params: { path: string[] } };
 
-async function proxy(request: Request, context: RouteContext): Promise<Response> {
+async function proxy(request: Request, context: RouteContext) {
   const logger = requestLogger("api.supabase.proxy", request);
   const method = request.method.toUpperCase();
   if (!ALLOWED_METHODS.has(method)) {
@@ -39,7 +39,7 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
     );
   }
 
-  const path = context.params.path;
+  const { path } = context.params;
   if (
     path.length < 3 ||
     path[0] !== "rest" ||
@@ -47,10 +47,7 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
     path.some((segment) => !/^[A-Za-z0-9_-]+$/.test(segment))
   ) {
     logger.finish("supabase.proxy_completed", 404, { method });
-    return NextResponse.json(
-      { error: "Not found." },
-      { status: 404, headers: logger.headers(NO_STORE) },
-    );
+    return NextResponse.json({ error: "Not found." }, { status: 404, headers: logger.headers(NO_STORE) });
   }
 
   if (method !== "GET" && method !== "HEAD") {
@@ -87,11 +84,7 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
     );
   }
 
-  if (
-    !claims ||
-    typeof claims[WALLET_CLAIM] !== "string" ||
-    claims.role !== "authenticated"
-  ) {
+  if (!claims || typeof claims[WALLET_CLAIM] !== "string" || claims.role !== "authenticated") {
     logger.finish("supabase.proxy_completed", 401, { method, reason: "invalid_session" });
     return NextResponse.json(
       { error: "Wallet sign-in is required." },
@@ -131,19 +124,16 @@ async function proxy(request: Request, context: RouteContext): Promise<Response>
       body: method === "GET" || method === "HEAD" ? undefined : await request.arrayBuffer(),
       cache: "no-store",
     });
+
     const responseHeaders = new Headers(logger.headers(NO_STORE));
     for (const name of RESPONSE_HEADERS) {
       const value = upstream.headers.get(name);
       if (value) responseHeaders.set(name, value);
     }
-    const body = method === "HEAD" || upstream.status === 204
-      ? null
-      : await upstream.arrayBuffer();
+
+    const body = method === "HEAD" || upstream.status === 204 ? null : await upstream.arrayBuffer();
     logger.finish("supabase.proxy_completed", upstream.status, { method });
-    return new Response(
-      body,
-      { status: upstream.status, headers: responseHeaders },
-    );
+    return new Response(body, { status: upstream.status, headers: responseHeaders });
   } catch (error) {
     logger.error("supabase.proxy_upstream_failed", error, { method });
     logger.finish("supabase.proxy_completed", 502, { method, reason: "upstream_unavailable" });

@@ -63,7 +63,6 @@
 }
 
 @layer components {
-  /* ── Button variants ── */
   .btn-primary {
     @apply inline-flex items-center justify-center gap-2 px-6 py-3 bg-[#B9FF66] text-[#0F0F14] font-semibold rounded-2xl
            transition-all duration-200 hover:bg-[#9AE040] hover:shadow-lime-glow hover:-translate-y-0.5
@@ -88,7 +87,6 @@
            active:translate-y-0 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#B9FF66];
   }
 
-  /* ── Card variants ── */
   .card-base {
     @apply bg-white rounded-3xl border border-[#E5E5E5] shadow-card
            transition-all duration-300 hover:shadow-card-hover hover:-translate-y-1;
@@ -104,7 +102,6 @@
            transition-all duration-300 hover:-translate-y-1;
   }
 
-  /* ── Badges ── */
   .badge-lime {
     @apply inline-flex items-center gap-1.5 px-3 py-1 bg-[#B9FF66]/20 text-[#2D6600] text-xs font-semibold rounded-full
            border border-[#B9FF66]/40;
@@ -115,7 +112,6 @@
            border border-white/10;
   }
 
-  /* ── Section helpers ── */
   .section-padding {
     @apply px-4 sm:px-6 lg:px-8 py-20 lg:py-28;
   }
@@ -124,7 +120,6 @@
     @apply max-w-7xl mx-auto;
   }
 
-  /* ── Typography ── */
   .heading-hero {
     @apply text-[3rem] sm:text-[3.5rem] lg:text-[5rem] xl:text-[5.5rem] font-black leading-[1.05] tracking-tight;
   }
@@ -137,13 +132,11 @@
     @apply text-xl font-bold leading-snug;
   }
 
-  /* ── Gradient text ── */
   .text-gradient-lime {
     @apply bg-clip-text text-transparent;
     background-image: linear-gradient(135deg, #B9FF66 0%, #7DD835 50%, #9AE040 100%);
   }
 
-  /* ── Noise overlay ── */
   .noise::before {
     content: '';
     position: absolute;
@@ -153,23 +146,21 @@
     border-radius: inherit;
   }
 
-  /* ── Grid background ── */
   .bg-grid {
-    background-image: 
+    background-image:
       linear-gradient(rgba(185,255,102,0.05) 1px, transparent 1px),
       linear-gradient(90deg, rgba(185,255,102,0.05) 1px, transparent 1px);
     background-size: 40px 40px;
   }
 
   .bg-grid-dark {
-    background-image: 
+    background-image:
       linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
       linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
     background-size: 40px 40px;
   }
 }
 
-/* ── Custom animations ── */
 @keyframes shimmer {
   0% { background-position: -200% 0; }
   100% { background-position: 200% 0; }
@@ -181,7 +172,6 @@
   animation: shimmer 2.5s ease-in-out infinite;
 }
 
-/* ── Gradient border ── */
 .gradient-border {
   position: relative;
   border-radius: 1.5rem;
