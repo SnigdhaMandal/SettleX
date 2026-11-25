@@ -9,7 +9,7 @@ interface BeforeInstallPromptEvent extends Event {
 
 const DISMISS_KEY = "settlex:install-dismissed";
 
-function isStandalone(): boolean {
+function isStandalone() {
   if (typeof window === "undefined") return false;
   return (
     window.matchMedia("(display-mode: standalone)").matches ||
@@ -18,16 +18,14 @@ function isStandalone(): boolean {
   );
 }
 
-function isIos(): boolean {
+function isIos() {
   if (typeof navigator === "undefined") return false;
   return /iphone|ipad|ipod/i.test(navigator.userAgent);
 }
 
 /**
- * Cross-platform "install this app" nudge.
- *  - Android / desktop Chrome: uses the native `beforeinstallprompt` event.
- *  - iOS Safari: has no such event, so we show a one-time "Add to Home Screen" hint.
- * Dismissal is remembered so we never nag.
+ * Cross-platform "install this app" prompt. Uses `beforeinstallprompt` on
+ * Android/Chrome and falls back to an "Add to Home Screen" hint on iOS Safari.
  */
 export function InstallPrompt() {
   const [deferred, setDeferred] = useState<BeforeInstallPromptEvent | null>(null);
@@ -45,7 +43,7 @@ export function InstallPrompt() {
     };
     window.addEventListener("beforeinstallprompt", onBeforeInstall);
 
-    // iOS never fires the event — offer the manual path instead.
+    // iOS doesn't fire beforeinstallprompt; show manual hint instead
     if (isIos()) {
       setIosHint(true);
       setShow(true);
