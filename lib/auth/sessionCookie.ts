@@ -8,7 +8,10 @@ export function getSessionCookie(request: Request): string | null {
   if (!cookieHeader) return null;
 
   const prefix = `${SESSION_COOKIE_NAME}=`;
-  const entry = cookieHeader.split(";").map((part) => part.trim()).find((part) => part.startsWith(prefix));
+  const entry = cookieHeader
+    .split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith(prefix));
   return entry ? entry.slice(prefix.length) || null : null;
 }
 

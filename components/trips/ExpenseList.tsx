@@ -76,7 +76,6 @@ export function ExpenseList({ expenses, onSelect }: ExpenseListProps) {
                 </div>
               </button>
 
-              {/* Progress bar */}
               {expense.shares.length > 0 && (
                 <div className="-mt-0.5 h-0.5 w-full bg-[#F0F0F0] rounded-b-xl overflow-hidden">
                   <div
