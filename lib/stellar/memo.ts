@@ -86,7 +86,7 @@ export function isPaymentMemo(memo: string | null | undefined): boolean {
   return parsePaymentMemo(memo) !== null;
 }
 
-// ─── Resolving a transaction to what it pays ─────────────────────────────────
+// Transaction-to-payment matching
 
 export interface ShareRef {
   expenseId: string;
@@ -213,7 +213,7 @@ export async function lookupPaymentByTxHash(
       if (tx.memo_type === "text" && typeof tx.memo === "string") memo = tx.memo;
     }
   } catch {
-    // Fall through to the recorded-hash match below.
+    // fall back to matching by recorded txHash
   }
   return resolvePaymentTarget({ memo, txHash }, context);
 }

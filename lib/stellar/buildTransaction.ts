@@ -55,14 +55,14 @@ export async function fetchSuggestedFee(): Promise<string> {
           TX_BASE_FEE
       );
       if (!isNaN(rawCandidate) && rawCandidate > 0) {
-        // Apply 1.5x congestion multiplier with reasonable ceiling
+        // 1.5x buffer for congestion, capped at our max fee
         const buffered = Math.ceil(rawCandidate * 1.5);
         const clamped = Math.min(Math.max(TX_BASE_FEE, buffered), TX_MAX_FEE_STROOPS);
         return String(clamped);
       }
     }
   } catch {
-    // Fall back to a safe default above network minimum during offline/mock tests
+    // Fallback above network minimum (e.g. offline or mock tests)
   }
   return String(Math.max(TX_BASE_FEE, 1000));
 }

@@ -24,9 +24,9 @@ import type {
 } from "@/types/contract";
 import { ContractErrorCode } from "@/types/contract";
 
-const SOROBAN_BASE_FEE  = "1000";
-const MAX_POLL_ATTEMPTS  = 20;
-const POLL_INTERVAL_MS   = 2500;
+const SOROBAN_BASE_FEE = "1000";
+const MAX_POLL_ATTEMPTS = 20;
+const POLL_INTERVAL_MS = 2500;
 const PAYMENT_EXPENSE_PAGE_SIZE = 50;
 const MAX_PAYMENT_PAGES = 1000;
 
@@ -85,8 +85,7 @@ async function loadAccount(publicKey: string): Promise<Account> {
   return new Account(publicKey, data.sequence);
 }
 
-// Placeholder public key for read simulations; simulation does not check
-// signatures, balances, or sequences, so any valid G-address works.
+// Dummy G-address for read simulations — sigs, balances, and sequences aren't checked.
 const SIMULATION_ACCOUNT_ADDRESS = "GA7QYNF7SOWQ3GLR2BGMZEHXAVIRZA4KVWLTJJFC7MGXUA74P7UJUAAY";
 
 function createSimulationAccount(callerPublicKey?: string): Account {
@@ -114,21 +113,9 @@ function contractReady(caller: string): boolean {
   return true;
 }
 
-/*
- * ─── Naming: the contract's `payer` / `member` are inverted (Issue #208) ────
- *
- * In the settlement contract (contract/contracts/settlement/src/lib.rs):
- *
- *   payer  = the CREDITOR: the member who paid the bill and RECEIVES the XLM
- *   member = the DEBTOR:   the member who owed a share and SENT the XLM
- *
- * That is the reverse of everyday usage and of the UI, where "Payer" is the
- * person who paid the bill. The names are part of the deployed contract's
- * interface (stored PaymentRecord fields and event payloads), so they stay
- * there; this wrapper speaks creditor/debtor instead, and maps them onto the
- * contract's argument order in one place below. When reading records or
- * events, treat `payer` as the creditor and `member` as the debtor.
- */
+// Note: the deployed contract inverts `payer` and `member` (Issue #208):
+// `payer` is the creditor (bill payer receiving XLM) and `member` is the debtor (sending XLM).
+// This wrapper sticks to creditor/debtor and maps onto the contract's argument order below.
 
 export interface RecordPaymentParams {
   /**
@@ -170,27 +157,26 @@ export async function recordPaymentOnChain(
 
   try {
     if (debtorPublicKey === creditorPublicKey) {
-      // The contract rejects this too (InvalidActor); fail before asking to sign.
+      // Contract rejects self-payments anyway (InvalidActor); fail before prompting to sign
       throw new Error("The sender and recipient of a share payment must differ.");
     }
 
-    const account  = await loadAccount(debtorPublicKey);
+    const account = await loadAccount(debtorPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     const amountStroops = xlmToStroops(amountXlm);
-    // record_payment(trip_id, expense_id, payer, member, amount, tx_hash)
-    //                                     ^creditor ^debtor
+    // record_payment(trip_id, expense_id, payer, member, amount, tx_hash) — payer=creditor, member=debtor
     const contractArgs = [
-      nativeToScVal(tripId,           { type: "string" }),
-      nativeToScVal(expenseId,        { type: "string" }),
+      nativeToScVal(tripId, { type: "string" }),
+      nativeToScVal(expenseId, { type: "string" }),
       new Address(creditorPublicKey).toScVal(),
       new Address(debtorPublicKey).toScVal(),
-      nativeToScVal(amountStroops,    { type: "i128" }),
-      nativeToScVal(txHash,           { type: "string" }),
+      nativeToScVal(amountStroops, { type: "i128" }),
+      nativeToScVal(txHash, { type: "string" }),
     ];
 
     const tx = new TransactionBuilder(account, {
-      fee:              SOROBAN_BASE_FEE,
+      fee: SOROBAN_BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(contract.call("record_payment", ...contractArgs))
@@ -268,7 +254,6 @@ export async function recordPaymentOnChain(
 
         const events = failedResult.diagnosticEventsXdr ?? failedResult.diagnosticEvents;
         const diagnosticError = extractDiagnosticError(events);
-
         const resultXdrBase64 = toBase64Xdr(failedResult.resultXdr);
 
         const rawMsg =
@@ -300,7 +285,7 @@ export async function getContractPayments(
   }
 
   try {
-    const account  = createSimulationAccount(callerPublicKey);
+    const account = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     type RawPayment = {
@@ -318,14 +303,13 @@ export async function getContractPayments(
       next_offset?: number | bigint | null;
     };
 
-    // This is intentionally simulation-only. get_payments is a pure read;
-    // TTL maintenance must be submitted as an extend_trip transaction.
+    // Pure simulation read; TTLs are maintained separately via extend_trip.
     const rawPayments: RawPayment[] = [];
     let offset = 0;
 
     for (let pageNumber = 0; pageNumber < MAX_PAYMENT_PAGES; pageNumber += 1) {
       const tx = new TransactionBuilder(account, {
-        fee:              SOROBAN_BASE_FEE,
+        fee: SOROBAN_BASE_FEE,
         networkPassphrase: NETWORK_PASSPHRASE,
       })
         .addOperation(
@@ -369,28 +353,22 @@ export async function getContractPayments(
     }
 
     const payments: ContractPaymentRecord[] = rawPayments.map((r) => ({
-      tripId:        tripId,
-      expenseId:     r.expense_id,
-      payer:         r.payer,   // creditor
-      member:        r.member,  // debtor
+      tripId,
+      expenseId: r.expense_id,
+      payer: r.payer, // creditor
+      member: r.member, // debtor
       amountStroops: r.amount,
-      txHash:        r.tx_hash,
-      timestamp:     Number(r.timestamp),
-      // Default to self-attested: a record from an older contract build that
-      // predates the flag has verified nothing, so it must not read as proof.
-      attested:      r.attested === true,
-      // Default to not-voided. An older build has no marker to report, and
-      // defaulting the other way would hide every legitimate record behind a
-      // repudiation that never happened.
-      voided:        r.voided === true,
+      txHash: r.tx_hash,
+      timestamp: Number(r.timestamp),
+      // Older contract builds omit these flags; default to unverified and not voided.
+      attested: r.attested === true,
+      voided: r.voided === true,
     }));
 
     return { payments, success: true };
   } catch (err) {
     const message = err instanceof Error ? err.message : "Failed to read contract payments.";
-    // A read failure is usually the Soroban RPC being down rather than a bug
-    // here, so it is a warning — but a countable one, since the UI silently
-    // falls back to an empty list.
+    // Usually means Soroban RPC is down; warn so the silent [] fallback in the UI is observable
     logWarn("contract.read_payments_failed", {
       fields: { tripId, error: message },
     });
@@ -413,24 +391,24 @@ export async function checkIsPaid(
   }
 
   try {
-    const account  = createSimulationAccount(callerPublicKey);
+    const account = createSimulationAccount(callerPublicKey);
     const contract = new Contract(CONTRACT_ID);
 
     const tx = new TransactionBuilder(account, {
-      fee:              SOROBAN_BASE_FEE,
+      fee: SOROBAN_BASE_FEE,
       networkPassphrase: NETWORK_PASSPHRASE,
     })
       .addOperation(
         contract.call(
           "is_paid",
-          nativeToScVal(expenseId,      { type: "string" }),
+          nativeToScVal(expenseId, { type: "string" }),
           new Address(debtorPublicKey).toScVal()
         )
       )
       .setTimeout(30)
       .build();
 
-    // This is intentionally simulation-only. is_paid does not mutate TTLs.
+    // Read-only simulation; doesn't touch TTLs.
     const simResult = await sorobanServer.simulateTransaction(tx);
 
     if (
@@ -444,7 +422,7 @@ export async function checkIsPaid(
     }
 
     const retval = simResult.result?.retval;
-    const paid   = retval ? (scValToNative(retval) as boolean) : false;
+    const paid = retval ? (scValToNative(retval) as boolean) : false;
 
     return { paid, success: true };
   } catch (err) {
