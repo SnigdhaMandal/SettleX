@@ -36,9 +36,7 @@ export function PayButton({
         "inline-flex items-center gap-1.5 font-bold rounded-xl transition-all",
         "bg-[#0F0F14] text-[#B9FF66] hover:bg-[#1A1A22]",
         "disabled:opacity-50 disabled:cursor-not-allowed",
-        size === "sm"
-          ? "text-xs px-3 py-1.5"
-          : "text-sm px-4 py-2.5",
+        size === "sm" ? "text-xs px-3 py-1.5" : "text-sm px-4 py-2.5",
         className
       )}
       title={`Pay ${xlm} XLM to ${recipientName}`}
