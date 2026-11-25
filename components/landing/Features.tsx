@@ -83,9 +83,7 @@ const features = [
 
 const containerVariants = {
   hidden: {},
-  visible: {
-    transition: { staggerChildren: 0.07 },
-  },
+  visible: { transition: { staggerChildren: 0.07 } },
 };
 
 const cardVariants = {
@@ -100,7 +98,6 @@ const cardVariants = {
 export default function Features() {
   return (
     <section id="features" className="section-padding bg-[#F6F6F6] relative overflow-hidden">
-      {/* Subtle radial */}
       <div
         className="pointer-events-none absolute inset-0"
         style={{
@@ -110,7 +107,6 @@ export default function Features() {
       />
 
       <div className="container-max relative">
-        {/* Section header */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -127,9 +123,7 @@ export default function Features() {
             <br />
             <span
               className="bg-clip-text text-transparent"
-              style={{
-                backgroundImage: "linear-gradient(135deg, #B9FF66, #7DD835)",
-              }}
+              style={{ backgroundImage: "linear-gradient(135deg, #B9FF66, #7DD835)" }}
             >
               settled on-chain.
             </span>
@@ -140,7 +134,6 @@ export default function Features() {
           </p>
         </motion.div>
 
-        {/* Feature Grid */}
         <motion.div
           variants={containerVariants}
           initial="hidden"
@@ -160,7 +153,6 @@ export default function Features() {
                     : "bg-white border-[#E5E5E5] hover:border-[#B9FF66]/40 hover:shadow-[0_8px_40px_-8px_rgba(0,0,0,0.12)]"
                 }`}
               >
-                {/* Icon */}
                 <div
                   className={`w-10 h-10 rounded-xl flex items-center justify-center mb-4 ${
                     feature.accent
@@ -171,7 +163,6 @@ export default function Features() {
                   <Icon size={18} />
                 </div>
 
-                {/* Tag */}
                 <div className="mb-3">
                   <span
                     className={`text-[10px] font-bold uppercase tracking-widest ${
@@ -182,7 +173,6 @@ export default function Features() {
                   </span>
                 </div>
 
-                {/* Content */}
                 <h3
                   className={`text-[17px] font-bold mb-2 leading-snug ${
                     feature.accent ? "text-[#0F0F14]" : "text-[#0F0F14]"
