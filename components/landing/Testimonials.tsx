@@ -10,15 +10,14 @@ const SAMPLE_TX = "04c679c7ab7ec960db505038b4c6ec1f367e5d3caae013696bf3111e493de
 const EXPLORER = "https://stellar.expert/explorer/testnet";
 const REPO = "https://github.com/SnigdhaMandal/SettleX";
 
-// Honest, verifiable proof points — no fabricated reviews. Every claim below is
-// something a visitor can independently check on-chain or in the source.
+// Verifiable claims instead of fake reviews — each can be checked on-chain or in the repo
 const proofs = [
   {
     icon: ShieldCheck,
     title: "Non-custodial by design",
     text: "Your private key never leaves your wallet. SettleX only ever receives a signed transaction — it can’t touch or hold your funds.",
-    href: undefined as string | undefined,
-    cta: undefined as string | undefined,
+    href: undefined,
+    cta: undefined,
   },
   {
     icon: Link2,
@@ -78,7 +77,6 @@ export default function Testimonials() {
       />
 
       <div className="container-max relative">
-        {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: 30 }}
           whileInView={{ opacity: 1, y: 0 }}
@@ -105,7 +103,6 @@ export default function Testimonials() {
           </p>
         </motion.div>
 
-        {/* Proof grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {proofs.map((p, i) => {
             const Icon = p.icon;
@@ -140,7 +137,6 @@ export default function Testimonials() {
           })}
         </div>
 
-        {/* Honest metrics — all independently true, no invented user counts */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}

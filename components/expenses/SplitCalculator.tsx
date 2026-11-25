@@ -8,37 +8,21 @@ import { PaymentRow } from "./PaymentRow";
 import type { SplitShare } from "@/types/expense";
 import type { NetSettledReason } from "@/lib/settlement/netBalance";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface SplitCalculatorProps {
   shares: SplitShare[];
-  /** Saved expense id; enables identifying memos for QR payments. */
-  expenseId?: string;
+  expenseId?: string; // enables identifying memos for QR payments
   payerName: string;
   totalAmount: string;
   expenseTitle?: string;
-  /** Called when user clicks Pay on a row. */
   onPay?: (share: SplitShare) => void;
-  /** Records a QR payment from a pasted transaction hash (Issue #204). */
-  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>;
-  /** ID of the share whose payment is currently in-flight (shows spinner). */
+  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>; // Issue #204
   payingShareId?: string;
-  /** Member ids whose share has a sent-but-unrecorded payment. */
-  pendingShareIds?: string[];
-  /**
-   * Unpaid shares covered by trip netting, by member id (Issue #203). These
-   * need no direct payment, so they show as settled with no Pay button.
-   */
-  netSettledShares?: Map<string, NetSettledReason>;
-  /** Disable pay buttons */
+  pendingShareIds?: string[]; // sent-but-unrecorded payments
+  netSettledShares?: Map<string, NetSettledReason>; // unpaid shares covered by trip netting (Issue #203)
   disablePay?: boolean;
-  /** Connected wallet address — Pay button only shows on the matching row. */
   connectedWalletAddress?: string | null;
-  /** Payer’s wallet address — never show Pay button for the payer, even if wallets overlap. */
-  payerWalletAddress?: string;
+  payerWalletAddress?: string; // never show Pay for the payer even if wallets overlap
 }
-
-// ─── Component ────────────────────────────────────────────────────────────────
 
 export function SplitCalculator({
   shares,
@@ -76,7 +60,6 @@ export function SplitCalculator({
 
   return (
     <div className="space-y-3">
-      {/* Summary bar */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 px-4 py-3 bg-[#F8F8F8] rounded-xl border border-[#E5E5E5]">
         <div className="flex items-start sm:items-center gap-2 text-sm text-[#555] min-w-0">
           <Calculator size={14} />
@@ -94,7 +77,6 @@ export function SplitCalculator({
         )}
       </div>
 
-      {/* Progress bar */}
       {paidCount > 0 && (
         <div className="h-1 w-full bg-[#F0F0F0] rounded-full overflow-hidden">
           <div
@@ -104,7 +86,6 @@ export function SplitCalculator({
         </div>
       )}
 
-      {/* Rows */}
       <div className="space-y-2">
         {shares.map((share, i) => (
           <PaymentRow
@@ -124,7 +105,6 @@ export function SplitCalculator({
         ))}
       </div>
 
-      {/* Split total vs actual total */}
       <div className="flex items-center justify-between text-xs text-[#AAA] px-1">
         <span>Split total</span>
         <span
