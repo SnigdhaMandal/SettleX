@@ -1,10 +1,7 @@
 /**
  * POST /api/payment/verify
  * GET  /api/payment/verify?txHash=...
- *
- * Verifies a transaction hash on the Stellar Horizon network before marking shares
- * paid, ensuring the transaction exists, succeeded on-chain, and optionally matches
- * recipient wallet details. Flags or rejects invalid/non-existent hashes.
+ * Verifies a transaction on Stellar Horizon before marking shares paid.
  */
 import { NextResponse } from "next/server";
 import { verifyTransactionOnHorizon } from "@/lib/stellar/verifyPayment";
@@ -26,7 +23,7 @@ export async function POST(request: Request) {
     return jsonWithCorrelation(
       logger,
       { error: "A JSON body is required.", valid: false, flagged: true },
-      { status: 400, headers: NO_STORE }
+      { status: 400, headers: NO_STORE },
     );
   }
 
@@ -42,7 +39,7 @@ export async function POST(request: Request) {
     return jsonWithCorrelation(
       logger,
       { error: "Transaction hash is required.", valid: false, flagged: true },
-      { status: 400, headers: NO_STORE }
+      { status: 400, headers: NO_STORE },
     );
   }
 
@@ -55,29 +52,17 @@ export async function POST(request: Request) {
   if (!result.exists) {
     logger.warn("payment.verify_not_found", { txHash, error: result.error });
     logger.finish("payment.verify_completed", 404);
-    return jsonWithCorrelation(
-      logger,
-      result,
-      { status: 404, headers: NO_STORE }
-    );
+    return jsonWithCorrelation(logger, result, { status: 404, headers: NO_STORE });
   }
 
   if (result.flagged) {
     logger.warn("payment.verify_flagged", { txHash, error: result.error });
     logger.finish("payment.verify_completed", 200, { flagged: true });
-    return jsonWithCorrelation(
-      logger,
-      result,
-      { status: 200, headers: NO_STORE }
-    );
+    return jsonWithCorrelation(logger, result, { status: 200, headers: NO_STORE });
   }
 
   logger.finish("payment.verify_completed", 200, { ledger: result.ledger });
-  return jsonWithCorrelation(
-    logger,
-    result,
-    { status: 200, headers: NO_STORE }
-  );
+  return jsonWithCorrelation(logger, result, { status: 200, headers: NO_STORE });
 }
 
 export async function GET(request: Request) {
@@ -93,7 +78,7 @@ export async function GET(request: Request) {
     return jsonWithCorrelation(
       logger,
       { error: "Query parameter 'txHash' is required.", valid: false, flagged: true },
-      { status: 400, headers: NO_STORE }
+      { status: 400, headers: NO_STORE },
     );
   }
 
@@ -106,17 +91,9 @@ export async function GET(request: Request) {
   if (!result.exists) {
     logger.warn("payment.verify_not_found", { txHash, error: result.error });
     logger.finish("payment.verify_completed", 404);
-    return jsonWithCorrelation(
-      logger,
-      result,
-      { status: 404, headers: NO_STORE }
-    );
+    return jsonWithCorrelation(logger, result, { status: 404, headers: NO_STORE });
   }
 
   logger.finish("payment.verify_completed", 200, { ledger: result.ledger, flagged: result.flagged });
-  return jsonWithCorrelation(
-    logger,
-    result,
-    { status: 200, headers: NO_STORE }
-  );
+  return jsonWithCorrelation(logger, result, { status: 200, headers: NO_STORE });
 }

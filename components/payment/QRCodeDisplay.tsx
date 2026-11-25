@@ -9,8 +9,6 @@ import type { QRPaymentData } from "@/lib/qr/generator";
 import { cn, formatXLM } from "@/lib/utils";
 import { STELLAR_NETWORK, stellarNetworkLabel } from "@/lib/utils/constants";
 
-// ─── Inline QR panel ──────────────────────────────────────────────────────────
-
 interface QRCodeDisplayProps {
   data: QRPaymentData;
   className?: string;
@@ -46,7 +44,7 @@ export function QRCodeDisplay({ data, className }: QRCodeDisplayProps) {
       </div>
 
       <div className="text-center">
-        {/* The exact amount the URI requests, not a rounded copy (Issue #204). */}
+        {/* Keep exact URI amount rather than rounding (Issue #204) */}
         <p className="text-xs font-semibold text-[#555] mb-0.5">
           Scan to pay {formatXLM(data.amount)} XLM
         </p>
@@ -77,8 +75,6 @@ export function QRCodeDisplay({ data, className }: QRCodeDisplayProps) {
     </div>
   );
 }
-
-// ─── Trigger button + inline toggle ──────────────────────────────────────────
 
 interface QRToggleProps {
   data: QRPaymentData;

@@ -57,31 +57,25 @@ interface SettlementSummaryProps {
   onSettlementsStale?: () => void;
 }
 
-/**
- * Arguments for one `recordPaymentOnChain` call. Field names match
- * `RecordPaymentParams` exactly so the record can be spread into the call.
- */
+// Matches RecordPaymentParams so it can be spread directly
 interface PendingOnChainRecord {
-  /** DEBTOR: the connected wallet that sent the settlement. */
   debtorPublicKey: string;
   tripId: string;
-  /** Per-settlement id, see settlementContractExpenseId. */
-  expenseId: string;
-  /** CREDITOR: the wallet that received the settlement. */
+  expenseId: string; // from settlementContractExpenseId
   creditorPublicKey: string;
   amountXlm: string;
   txHash: string;
   ledger: number;
 }
 
-function isAlreadyOnChain(error?: string): boolean {
+function isAlreadyOnChain(error?: string) {
   return Boolean(error && /already (marked as paid|settled on-chain)/i.test(error));
 }
 
 function filterMemberEvents(
   expenses: Expense[],
   events: ContractPaymentEvent[],
-): ContractPaymentEvent[] {
+) {
   const membersByExpense = new Map(
     expenses.map((expense) => [
       expense.id,
@@ -101,7 +95,7 @@ function filterMemberEvents(
 function deriveUnverifiedClaims(
   expenses: Expense[],
   onChainEvents: ContractPaymentEvent[] = [],
-): Map<string, number> {
+) {
   const unverifiedOnChainSet = new Set(
     onChainEvents
       .filter((e) => e.attested !== true)
@@ -125,11 +119,7 @@ function deriveUnverifiedClaims(
   return claims;
 }
 
-/**
- * One suggested net transfer. Paying it records ONE settlement row with the
- * exact amount that moved (Issue #203); it never marks gross shares paid,
- * because a net amount does not line up with whole shares.
- */
+// Records a single settlement row for the net amount instead of marking individual shares paid (Issue #203).
 function NetPaymentRow({
   payment,
   index,
@@ -155,11 +145,10 @@ function NetPaymentRow({
   } = useWallet();
   const { success: toastSuccess, error: toastError, info: toastInfo } = useToast();
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: "idle" });
-  // A transfer that moved but whose settlement row is not recorded yet.
+  // Transfer moved on Stellar, settlement row not saved yet
   const [pending, setPending] = useState<PendingSettlement | null>(null);
 
-  // Resume a transfer left over from an earlier visit, so it is recorded
-  // instead of paid twice.
+  // Pick up any unfinished transfer from an earlier visit so we don't pay twice
   useEffect(() => {
     if (!publicKey || !sameWallet(publicKey, payment.fromWallet)) return;
     const stored = getPendingSettlement(publicKey, tripId, payment.fromId, payment.toId);
@@ -194,7 +183,7 @@ function NetPaymentRow({
     paymentState.status === "partial_success" ||
     paymentState.status === "paid_unrecorded";
 
-  // Only the debtor of a net payment may send it (Issue #208).
+  // Only the debtor can send this (Issue #208)
   const canPay =
     Boolean(publicKey) &&
     Boolean(payment.toWallet) &&
@@ -203,10 +192,7 @@ function NetPaymentRow({
     !pending &&
     sameWallet(publicKey, payment.fromWallet);
 
-  /**
-   * Money has moved: write the on-chain receipt for the exact net amount, then
-   * the settlement row that changes everyone's balance.
-   */
+  // Write the on-chain receipt first, then save the settlement row that updates balances
   const finalize = async (entry: PendingSettlement, hash: string, ledger: number) => {
     let onChain = false;
     if (CONTRACT_ID && entry.tripId) {
