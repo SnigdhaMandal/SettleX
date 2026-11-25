@@ -42,23 +42,23 @@ export function stellarNetworkLabel(network: StellarNetwork): string {
   return network === "PUBLIC" ? "Mainnet" : "Testnet";
 }
 
-export const TX_BASE_FEE        = 100;
+export const TX_BASE_FEE = 100;
 export const TX_TIMEOUT_SECONDS = 180;
 export const TX_MAX_FEE_STROOPS = 10_000;
-export const MEMO_MAX_BYTES     = 28;
-export const MIN_SPLIT_WEIGHT   = 1;
-export const MAX_SPLIT_WEIGHT   = 1000;
-export const MAX_AMOUNT_XLM     = 100_000_000;
-export const STROOPS_PER_XLM    = 10_000_000n;
+export const MEMO_MAX_BYTES = 28;
+export const MIN_SPLIT_WEIGHT = 1;
+export const MAX_SPLIT_WEIGHT = 1000;
+export const MAX_AMOUNT_XLM = 100_000_000;
+export const STROOPS_PER_XLM = 10_000_000n;
 export const MAX_AMOUNT_STROOPS = BigInt(MAX_AMOUNT_XLM) * STROOPS_PER_XLM; // 1_000_000_000_000_000n
-export const MAX_DECIMALS_XLM   = 7;
+export const MAX_DECIMALS_XLM = 7;
 
-export const LS_PUBLIC_KEY        = "settlex:publicKey";
-export const LS_WALLET_ID         = "settlex:walletId";
+export const LS_PUBLIC_KEY = "settlex:publicKey";
+export const LS_WALLET_ID = "settlex:walletId";
 export const LS_NETWORK_CONFIRMED = "settlex:networkConfirmed";
-export const LS_EXPENSES          = "settlex:expenses";
-export const LS_TRIPS             = "settlex:trips";
-export const LS_USER              = "settlex:user";
+export const LS_EXPENSES = "settlex:expenses";
+export const LS_TRIPS = "settlex:trips";
+export const LS_USER = "settlex:user";
 
 export function getWalletScopedKey(baseKey: string, walletAddress?: string | null) {
   return walletAddress ? `${baseKey}:${walletAddress}` : baseKey;
@@ -67,7 +67,7 @@ export function getWalletScopedKey(baseKey: string, walletAddress?: string | nul
 export function clearAppCaches(walletAddress?: string | null) {
   if (typeof window === "undefined") return;
 
-  const keys = new Set<string>([
+  const keys = new Set([
     LS_USER,
     LS_EXPENSES,
     LS_TRIPS,
@@ -98,11 +98,11 @@ export function clearAppCaches(walletAddress?: string | null) {
       window.localStorage.removeItem(key);
     }
   } catch {
-    // Private mode can reject storage mutations; the app still clears in-memory state.
+    // Private mode can block storage writes; in-memory state is still cleared.
   }
 }
 
-export const APP_NAME    = process.env.NEXT_PUBLIC_APP_NAME    ?? "SettleX";
+export const APP_NAME = process.env.NEXT_PUBLIC_APP_NAME ?? "SettleX";
 export const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? "1.0.0";
 
 export const SOROBAN_RPC_URL =

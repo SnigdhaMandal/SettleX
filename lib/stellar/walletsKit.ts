@@ -234,8 +234,7 @@ const walletsKit: WalletsKitAdapter = {
   },
 
   async getNetworkFromWallet(): Promise<StellarNetwork> {
-    // The current kit adapters omit getNetwork for xBull and Rabet even though
-    // their injected providers expose it, so read those providers directly.
+    // Kit adapters omit getNetwork for xBull/Rabet, so read their injected providers directly
     const injectedNetwork = await readInjectedWalletNetwork();
     if (injectedNetwork) return injectedNetwork;
 
