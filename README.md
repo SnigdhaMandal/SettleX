@@ -20,7 +20,7 @@
     <img src="https://github.com/SnigdhaMandal/SettleX/actions/workflows/ci.yml/badge.svg" alt="CI Pipeline" />
   </a>
   <img src="https://img.shields.io/badge/Network-Stellar%20Testnet-7B68EE?style=flat-square" alt="Stellar Testnet" />
-  <img src="https://img.shields.io/badge/Tests-45%20Passing-brightgreen?style=flat-square" alt="45 Tests Passing" />
+  <img src="https://img.shields.io/badge/Tests-379%20Passing-brightgreen?style=flat-square" alt="379 Tests Passing" />
 </p>
 
 <p align="center">
@@ -38,7 +38,6 @@
 - [Screenshots](#screenshots)
 - [How It Works](#how-it-works)
 - [Smart Contract](#smart-contract)
-- [Submission Checklist Evidence](#submission-checklist-evidence)
 - [Setup Instructions](#setup-instructions)
 - [Environment Variables](#environment-variables)
 - [Wallet Authentication](#wallet-authentication)
@@ -60,16 +59,16 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 - **Non-custodial** — your private key never leaves your wallet extension. SettleX only receives the signed transaction envelope.
 - **No intermediary** — money moves peer-to-peer between Stellar wallets; the app never holds funds.
 - **On-chain receipts** — every settled share has a Stellar transaction hash you can verify on [stellar.expert](https://stellar.expert/explorer/testnet).
-- **Multi-wallet** — supports Freighter, xBull, Lobstr, and Rabet with install detection. WalletConnect is not enabled yet; see [docs/WALLET_INTEGRATION.md](docs/WALLET_INTEGRATION.md) for its project setup and integration requirements.
+- **Multi-wallet** — supports Freighter, xBull, Lobstr, and Rabet with install detection. WalletConnect is not currently configured in this app.
 
 ---
 
-
+## Features
 
 | Feature                                                      | Status |
 | ------------------------------------------------------------ | ------ |
 | Multi-wallet connect (Freighter, xBull, Lobstr, Rabet)      | Live   |
-| Create and split expenses — equal, percentage, custom weight | Live   |
+| Create and split expenses: equal or custom weight | Live   |
 | Pay shares with XLM (Stellar Payment operation)              | Live   |
 | SEP-0007 QR code generation for mobile wallets               | Live   |
 | Transaction hash receipt linked to Stellar Explorer          | Live   |
@@ -91,11 +90,11 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 | Styling          | Tailwind CSS 3.4, Framer Motion                |
 | Blockchain SDK   | `@stellar/stellar-sdk` v14                     |
 | Wallet support   | `@creit.tech/stellar-wallets-kit` v2          |
-| Smart contract   | Soroban (Rust, `soroban-sdk` v21)              |
+| Smart contract   | Soroban (Rust, `soroban-sdk` v22)              |
 | Network          | Stellar Testnet (Horizon + Soroban RPC)        |
 | Database         | Supabase (PostgreSQL via authenticated Next.js proxy) |
 | QR codes         | `qrcode.react`                                 |
-| Testing          | Jest 29 + ts-jest (45 unit tests)              |
+| Testing          | Jest 29 + ts-jest (379 tests)              |
 | State management | React Context + HttpOnly session cookie + localStorage cache |
 | UI primitives    | Radix UI, Lucide React                         |
 
@@ -133,17 +132,9 @@ The multi-wallet selector lets users connect via Freighter, xBull, or Lobstr. Wa
 
 ### New Expense Form
 
-Define members, set amounts, and choose the split mode (equal / percentage / custom weight). The form calculates each share in real time.
+Define members, set amounts, and choose equal or custom-weight split mode. The form calculates each share in real time.
 
 ![New Expense Form](public/new_expencess_form.png)
-
----
-
-### Test Output — 45 Tests Passing
-
-All three test suites passing with Jest + ts-jest.
-
-![Test Output](public/test_pass.png)
 
 ---
 
@@ -187,7 +178,7 @@ recordPaymentOnChain() stores to Soroban contract:
   trip_id, expense_id, payer, member, amount, tx_hash
     |
 tx hash stored in app, share marked "paid"
-useContractEvents polls every 10s -> syncs state for all participants
+useContractEvents polls every 10s -> displays contract events; it does not sync application state
 ```
 
 ### Payment memos
@@ -199,7 +190,7 @@ Every SettleX payment carries a 28-byte `MEMO_TEXT` that identifies exactly what
 | `SX1S:<23 base32 chars>` | one member's share of one expense | `sha256("settlex:share:v1:<expenseId>:<memberId>")` |
 | `SX1N:<23 base32 chars>` | one netted trip settlement | `sha256("settlex:settle:v1:<tripId>:<FROM_WALLET>:<TO_WALLET>")` |
 
-The memo is a one-way digest, so the public ledger shows no expense titles or member names. Anyone who can see the expense can recompute it. Given a transaction hash, `lookupPaymentByTxHash()` reads the memo from Horizon and returns the share or settlement it pays. For older payments made before share identifiers, it falls back to the share whose recorded `txHash` matches. `buildPaymentTransaction()` rejects any memo that is not in this format.
+The memo is a one-way digest, so the public ledger shows no expense titles or member names. The memo identifies the payment but is not the application expense ID. Anyone who can see the expense can recompute it. Given a transaction hash, `lookupPaymentByTxHash()` reads the memo from Horizon and returns the share or settlement it pays. For older payments made before share identifiers, it falls back to the share whose recorded `txHash` matches. `buildPaymentTransaction()` rejects any memo that is not in this format.
 
 ### QR payments (SEP-0007)
 
@@ -257,98 +248,70 @@ funds move yet. Settlement currently uses native **XLM**. USDC settlement,
 verified on-chain settlement, broader wallet support, and a Mainnet launch are on
 the roadmap. We state exactly where we are rather than overselling.
 
-The complete, honest plan to take SettleX from project to shipped product —
-including the known trust gaps and how each one is closed — lives in
-**[docs/PRODUCT_CONVERSION_GUIDE.md](docs/PRODUCT_CONVERSION_GUIDE.md)**.
+The project roadmap and known trust boundaries are documented in [docs/PRODUCT_CONVERSION_GUIDE.md](docs/PRODUCT_CONVERSION_GUIDE.md).
 
 | Area | Today | Next |
 | --- | --- | --- |
 | Network | Stellar Testnet | Mainnet (after a contract audit) |
 | Settlement asset | XLM (native) | USDC via Stellar path payments |
-| Settlement integrity | On-chain receipt log (tx hash stored; not yet verified in-contract) | Verified / atomic on-chain settlement |
-| Wallets | Freighter, xBull, Lobstr, Rabet | WalletConnect (mobile, not enabled), passkey smart wallets |
+| Settlement integrity | On-chain receipt log; transaction not verified in-contract | Verified / atomic on-chain settlement |
+| Wallets | Freighter, xBull, Lobstr, Rabet | Additional wallet options |
 | App shell | Installable PWA, nonce-based CSP | Push notifications, offline reads |
-| Identity | Wallet address (client-supplied) | Sign-In-With-Stellar (signed challenge) |
-
-Verified locally with `npm run build`, `npm run lint`, and `npm test`.
-
-## Submission Checklist Evidence
-
-This section maps the required submission checklist to concrete proof in this repository.
-
-| Requirement | Proof |
-| --- | --- |
-| Public GitHub repository | https://github.com/SnigdhaMandal/SettleX |
-| README with complete documentation | This file plus final docs links in [Final Documentation Package](#final-documentation-package) |
-| Minimum 8+ meaningful commits | Local repository history: 44 commits |
-| Live demo link | [https://settle-x-pi.vercel.app/](https://settle-x-pi.vercel.app/) |
-| Screenshot: mobile responsive view | UI pages were hardened for mobile in Phase 9. Add one fresh phone viewport screenshot to `public/mobile-responsive.png` and reference it here before final submission. |
-| Screenshot or badge: CI/CD pipeline running | CI badge at the top of this README (GitHub Actions `ci.yml`) |
-| Contract addresses and transaction hash | [Deployed Contracts](#deployed-contracts-testnet) and [Verified On-Chain Transactions](#verified-on-chain-transactions) |
-| Inter-contract call | **Not implemented.** `record_payment` is a single-contract ledger write; see [Smart Contract](#smart-contract) |
-| Token or pool address (if custom token or pool deployed) | Not applicable: no custom token or pool contract is deployed |
+| Identity | Sign-In-With-Stellar (verified signed challenge) | Further account and recovery options |
 
 ### Contract Functions
 
-#### Settlement Contract (`SettleXContract`)
+#### Settlement Contract (SettleXContract)
 
 | Function | Type | Authorization | Purpose |
 | --- | --- | --- | --- |
-| `__constructor(admin)` | Constructor | Admin | Initializes contract admin and schema version at deployment |
-| `init(admin)` | Write | Admin | Legacy initialization entrypoint (rejected after constructor initialization) |
-| `upgrade(new_wasm_hash)` | Write | Admin | Atomically upgrades contract code to a new WASM hash |
-| `migrate(from_version)` | Write | Admin | Migrates contract state between schema versions |
-| `set_attestor(attestor)` | Write | Admin | Sets required co-signing attestor address; emits `AttestorEventV1` |
-| `clear_attestor()` | Write | Admin | Clears attestor, reverting records to self-attested |
-| `get_attestor()` | Read | None | Returns current attestor (if any) and bumps instance TTL |
-| `clear_paid(expense_id, member)` | Write | Admin | Emergency escape hatch: clears `ExpensePaid` flag to unblock a griefed expense |
-| `record_payment(trip_id, expense_id, payer, member, amount, tx_hash)` | Write | Member (+ Attestor if set) | Stores on-chain payment receipt with 32-byte transaction hash (`BytesN<32>`). Pure ledger write: no cross-contract call, no token movement |
-| `get_payment(trip_id, expense_id, member)` | Read | None | Fetches payment record for specific member |
-| `get_payments(trip_id, offset, limit)` | Read | None | Returns a bounded page of payment history |
-| `is_paid(expense_id, member)` | Read | None | Checks if a member has already settled a specific share |
-| `extend_trip(trip_id, payment_offset, expense_offset, limit)` | Write | None (Permissionless) | Renews storage TTLs for bounded history pages |
-| `get_version()` | Read | None | Returns current contract schema version |
-| `get_admin()` | Read | None | Returns current contract admin address |
-
-`get_payments` and `is_paid` are pure simulated reads; they do not renew
-storage TTLs. To keep history live, submit `extend_trip` as a real transaction
-(a keeper or any participant may submit it), then repeat with the returned
-payment and expense offsets until both are `None`. If an entry has already
-expired, include the archived footprint in the transaction so Soroban can
-restore it, or restore the trip's data before calling `extend_trip`.
+| __constructor(admin) | Constructor | Admin | Initializes admin and schema version at deployment |
+| init(admin) | Write | Admin | Legacy initializer for instances deployed without a constructor |
+| upgrade(new_wasm_hash) | Write | Admin | Installs a new WASM version |
+| migrate() | Write | Admin | Migrates supported older state to the current schema |
+| set_attestor(attestor) | Write | Admin | Requires a verifier signature on future records |
+| clear_attestor() | Write | Admin | Removes the verifier requirement |
+| get_attestor() | Read | None | Returns the configured verifier, if any |
+| clear_paid(expense_id, member) | Write | Admin | Clears the paid marker while retaining audit history |
+| record_payment(trip_id, expense_id, payer, member, amount, tx_hash) | Write | Member and configured attestor | Records a receipt; it transfers no funds and makes no cross-contract call |
+| get_payments(trip_id, offset, limit) | Read | None | Reads a bounded page of trip history |
+| is_paid(expense_id, member) | Read | None | Checks the paid marker |
+| extend_trip(trip_id, payment_offset, expense_offset, limit) | Write | Permissionless | Renews storage TTL for bounded history pages |
+| get_version() | Read | None | Returns the current schema version |
+| get_admin() | Read | None | Returns the contract admin address |
 
 ### Contract Error Codes
 
-#### Settlement Contract Errors
+The contract defines errors 1-14; meanings and validation cases are listed below.
 
 | Code | Name | Meaning |
-| ---- | ---- | ------- |
-| #1 | `InvalidAmount` | Payment amount is zero or negative |
-| #2 | `AlreadyPaid` | Share is already settled on-chain |
-| #3 | `EmptyId` | Trip ID or expense ID is empty |
-| #4 | `AlreadyInitialized` | Contract has already been initialized |
-| #5 | `NotInitialized` | Contract has not been initialized yet |
-| #6 | `InvalidActor` | Invalid caller / address (e.g. payer equals member, or attestor equals admin) |
-| #7 | `IdTooLong` | Trip ID or expense ID exceeds maximum allowed length (64 bytes) |
-| #8 | `AmountTooLarge` | Payment amount exceeds `MAX_AMOUNT_STROOPS` (1e15 stroops / 1e8 XLM) |
-| #9 | `VersionMismatch` | State version mismatch during migration |
-| #10 | `TxHashTooLong` | Transaction hash validation error |
-| #11 | `NotPaid` | Attempted to clear an expense payment that was not marked as paid |
-| #12 | `Unauthorized` | Caller lacks authorization (e.g. non-admin or missing attestor signature) |
-| #13 | `InvalidPage` | Bounded pagination parameters are invalid (e.g. limit is 0) |
-| #14 | `IndexOverflow` | Bounded trip index exceeded maximum capacity |
+| --- | --- | --- |
+| 1 | InvalidAmount | Amount is zero or negative |
+| 2 | AlreadyPaid | Share already has a paid marker |
+| 3 | EmptyId | Required trip or expense ID is empty |
+| 4 | AlreadyInitialized | Contract initialization was already performed |
+| 5 | NotInitialized | Contract state has not been initialized |
+| 6 | InvalidActor | Invalid actor combination, including payer=member or attestor=admin |
+| 7 | IdTooLong | Trip or expense ID exceeds 64 bytes |
+| 8 | AmountTooLarge | Amount exceeds 1e15 stroops (1e8 XLM) |
+| 9 | VersionMismatch | Contract state version is unsupported |
+| 10 | TxHashTooLong | Transaction hash validation failed |
+| 11 | NotPaid | No paid marker exists to clear |
+| 12 | Unauthorized | Required admin or attestor authorization is missing |
+| 13 | InvalidPage | Page limit or pagination parameters are invalid |
+| 14 | IndexOverflow | Bounded trip index reached capacity |
 
 ### Why a Smart Contract?
 
 In a Horizon-only setup there is no shared source of truth for payment status — any user could mark a share as paid without actually transferring XLM. The Soroban contract solves this:
 
-- `record_payment` stores the real Stellar `tx_hash` as proof of transfer.
+- `record_payment` stores a submitted Stellar `tx_hash` as a receipt; the contract does not verify it against Horizon.
 - `is_paid` acts as a duplicate guard — re-settling an already-paid share is rejected on-chain with `AlreadyPaid (#2)`.
-- All records are permanently on the Stellar ledger and cannot be modified or deleted by anyone, including the app operator.
+- Receipt history is append-only; an admin can clear a paid marker, which preserves the original entry but marks it voided. Ledger retention follows Soroban storage TTL rules.
 
 ### Real-Time Events
 
-The contract emits a `pmt_rec` event for every confirmed payment. `hooks/useContractEvents.ts` polls the Soroban RPC every 10 seconds and on browser tab focus. New events are deduplicated by `txHash` and merged into React state — all participants see confirmed payments without refreshing the page.
+The contract emits a `pmt_rec` event when a payment record is written. `hooks/useContractEvents.ts` polls the Soroban RPC every 10 seconds and on browser tab focus, then exposes fetched events for display. It does not synchronize application state or confirm the underlying Stellar payment.
 
 ---
 
@@ -357,7 +320,7 @@ The contract emits a `pmt_rec` event for every confirmed payment. `hooks/useCont
 ### Prerequisites
 
 - **Node.js** v20 or later
-- **npm** v9 or later
+- **npm** v10 or later
 - **Freighter Wallet** browser extension — [freighter.app](https://freighter.app)
   - In Freighter: Settings → Network → select **Testnet**
 - A funded Stellar Testnet account — get free XLM from [Stellar Friendbot](https://horizon-testnet.stellar.org/friendbot?addr=YOUR_PUBLIC_KEY)
@@ -377,7 +340,7 @@ npm install
 
 ### 3. Create a Supabase project
 
-SettleX uses Supabase for cross-user sync, refreshed about every five seconds while a page is visible. Without it, data only persists locally in the current browser session.
+Supabase is required for authentication and application data. Run the SQL setup and configure the Supabase URL, anon key, and wallet-authentication secrets before starting the app.
 
 1. Create a free project at [supabase.com](https://supabase.com).
 2. In the SQL Editor, run the full schema from [`supabase-setup.sql`](supabase-setup.sql) (or follow [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) for a walkthrough).
@@ -390,7 +353,7 @@ SettleX uses Supabase for cross-user sync, refreshed about every five seconds wh
 cp .env.local.example .env.local
 ```
 
-Fill in your Supabase credentials. The contract ID and RPC URL are pre-filled with the deployed testnet values. See [Environment Variables](#environment-variables) for the full reference.
+The Stellar network and RPC URL defaults target Testnet. `NEXT_PUBLIC_CONTRACT_ID` is intentionally empty in the example and must be set to a deployed settlement contract. Configure the Supabase values and server-only auth secrets below. See [Environment Variables](#environment-variables) for the full reference.
 
 ### 5. Start the development server
 
@@ -411,42 +374,25 @@ npm run start
 
 ## Environment Variables
 
-Create (or edit) `.env.local` in the project root:
+Create .env.local from .env.local.example. The contract ID is intentionally blank in the example; choose a deployed settlement contract. NEXT_PUBLIC_SITE_URL should be your local or deployed origin.
 
-```env
-# Stellar Network
-NEXT_PUBLIC_STELLAR_NETWORK=TESTNET
-NEXT_PUBLIC_HORIZON_URL=https://horizon-testnet.stellar.org
-NEXT_PUBLIC_STELLAR_EXPLORER=https://stellar.expert/explorer/testnet
+| Variable | Purpose |
+| --- | --- |
+| NEXT_PUBLIC_STELLAR_NETWORK | Stellar network (TESTNET for local setup) |
+| NEXT_PUBLIC_HORIZON_URL | Horizon API endpoint |
+| NEXT_PUBLIC_STELLAR_EXPLORER | Explorer base URL |
+| NEXT_PUBLIC_SOROBAN_RPC_URL | Soroban RPC endpoint |
+| NEXT_PUBLIC_CONTRACT_ID | Deployed settlement contract ID; required and blank in the example |
+| NEXT_PUBLIC_SUPABASE_URL | Supabase project URL |
+| NEXT_PUBLIC_SUPABASE_ANON_KEY | Public Supabase anon key |
+| SUPABASE_JWT_SECRET | Signs wallet-authenticated JWTs used by RLS |
+| AUTH_CHALLENGE_SECRET | Challenge HMAC secret; required in production and different from JWT secret |
+| AUTH_SESSION_TTL_SECONDS | Optional token lifetime; defaults to 3600 seconds (1 hour), capped at 43200 seconds (12 hours) |
+| SUPABASE_SERVICE_ROLE_KEY | Required server-only shared nonce store (verification fails closed without it), shared rate limiting, and session revocation |
+| NEXT_PUBLIC_SITE_URL | Canonical application URL for metadata and PWA links |
+| NEXT_PUBLIC_APP_NAME, NEXT_PUBLIC_APP_VERSION | Display metadata |
 
-# Soroban Smart Contract (deployed — no changes needed)
-NEXT_PUBLIC_SOROBAN_RPC_URL=https://soroban-testnet.stellar.org
-NEXT_PUBLIC_CONTRACT_ID=CAXVH54JVEUCLDQQW45SMRFTCAAVUGVBT4SBVLAGYDQ2YMAPK6YL6ADI
-
-# Supabase (from Project Settings → API in your Supabase dashboard)
-NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
-NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key-here
-
-# App
-NEXT_PUBLIC_APP_NAME=SettleX
-NEXT_PUBLIC_APP_VERSION=1.0.0
-# Playwright base URL (defaults to http://127.0.0.1:3000)
-NEXT_PUBLIC_APP_URL=http://127.0.0.1:3000
-
-# ─── Server-only — never prefix these with NEXT_PUBLIC_ ─────────────────────
-# Supabase Dashboard → Settings → API → JWT Secret.
-SUPABASE_JWT_SECRET=your-supabase-jwt-secret
-# Binds an auth challenge to the wallet it was issued to. Required in
-# production and must differ from SUPABASE_JWT_SECRET (the server refuses to
-# boot otherwise); falls back to it in dev. Generate: openssl rand -base64 48
-AUTH_CHALLENGE_SECRET=
-# Optional. Session lifetime in seconds (default 3600 = 1h, capped at 43200 = 12h).
-AUTH_SESSION_TTL_SECONDS=43200
-```
-
-> Variables with the `NEXT_PUBLIC_` prefix are read client-side and are inlined into the JavaScript bundle — treat every one of them as public. The Supabase anon key is safe to expose because access is governed by Row Level Security.
->
-> `SUPABASE_JWT_SECRET` and `AUTH_CHALLENGE_SECRET` are **not** public. They are read only inside server-side auth and Supabase proxy route handlers. Prefixing either with `NEXT_PUBLIC_` would ship it to every visitor and let anyone mint a token for any wallet.
+Never expose SUPABASE_JWT_SECRET, AUTH_CHALLENGE_SECRET, or SUPABASE_SERVICE_ROLE_KEY with a NEXT_PUBLIC_ prefix. Review .env.local.example and [Authentication Setup](docs/AUTHENTICATION_SETUP.md) for production configuration.
 
 ---
 
@@ -514,7 +460,7 @@ Playwright Chromium browser, builds the app, and runs this command.
 | `__tests__/settlement/netBalance.test.ts` | Net-balance algorithm: simple debt, netting, three-person chains, wallet address passthrough |
 | `__tests__/utils/formatters.test.ts`      | `formatAddress`, `formatXLM`, `stroopsToXlm` conversions                                     |
 
-**45 tests across 3 suites — all passing.** See the test output screenshot in [Screenshots](#screenshots).
+**48 test suites and 379 tests** (repository counts).
 
 ### Rust contract tests
 
@@ -523,80 +469,35 @@ cd contract
 cargo test
 ```
 
-8 tests: `record_and_query`, `multiple_members`, `multiple_expenses_same_trip`, `duplicate_payment_rejected`, `zero_amount_rejected`, `negative_amount_rejected`, `is_paid_unknown_returns_false`, `get_payments_unknown_trip_is_empty`.
+The Rust suite covers initialization, authorization, upgrades and migration, attestor behavior, payment validation and duplicate guards, bounded history pagination, TTL extension, and event behavior. Consult contract/contracts/settlement/src/lib.rs for the current test names.
 
 ---
 
 ## Project Structure
 
+```text
+app/                    Next.js pages, auth/payment APIs, and health endpoint
+  api/auth/             challenge, verify, session, and signout routes
+  api/health/           deployment configuration health check
+components/             auth, dashboard, expenses, landing, payment, PWA, trips, wallet, and UI
+context/                auth, wallet, expense, and trip state
+hooks/                  wallet, expense, trip, payment, and contract-event hooks
+lib/auth/               challenge validation, JWT, revocation, rate limiting, and shared state
+lib/config/             production environment requirements
+lib/errors/             safe user-facing error mapping
+lib/observability/      logging, redaction, request metrics, and Supabase error handling
+lib/payments/           pending payments, QR reconciliation, and share ownership
+lib/settlement/         net balances and trip settlements
+lib/split/              expense split calculations
+lib/stellar/            wallet, Horizon, Soroban, contract, event, and payment helpers
+lib/supabase/           authenticated session proxy and row guards
+supabase/               schema migrations and database security tests
+contract/               Soroban settlement contract crate
+__tests__/              auth, config, context, errors, expenses, payments, security, settlement, Stellar, Supabase, trips, utilities, and wallet tests
+middleware.ts           CSP nonce and security headers
+instrumentation.ts       server startup configuration checks
+docs/                   setup, architecture, runbooks, and testing guides
 ```
-settlex/
-├── app/
-│   ├── page.tsx                  # Landing page
-│   ├── auth/page.tsx             # Authentication
-│   ├── dashboard/page.tsx        # Dashboard (wallet + balance)
-│   ├── expenses/page.tsx         # Expense list and management
-│   ├── trips/
-│   │   ├── page.tsx              # Trip list
-│   │   └── [id]/page.tsx         # Trip detail — expenses + settle-up tab
-│   └── api/auth/
-│       ├── challenge/route.ts    # Issues the challenge transaction to sign
-│       └── verify/route.ts       # Verifies the signature, mints the Supabase JWT
-│
-├── components/
-│   ├── landing/                  # Hero, Features, HowItWorks, Pricing, Testimonials
-│   ├── expenses/                 # ExpenseForm, SplitCalculator, PaymentRow, ReceiptModal
-│   ├── payment/                  # PayButton, PaymentStatus, QRCodeDisplay, TransactionHash
-│   ├── trips/                    # TripCard, TripForm, ExpenseList, SettlementSummary
-│   ├── wallet/                   # ConnectWalletButton, WalletInfo, WalletGuard
-│   └── ui/                       # Button, Modal, Badge, Spinner, Toast, Logo
-│
-├── context/
-│   ├── ExpenseContext.tsx        # Global expense state
-│   ├── TripContext.tsx           # Global trip state
-│   ├── AuthContext.tsx           # Authentication state
-│   └── WalletContext.tsx         # Wallet connection state
-│
-├── hooks/
-│   ├── useWallet.ts              # Multi-wallet connection (StellarWalletsKit)
-│   ├── useExpense.ts             # Expense CRUD
-│   ├── useTrip.ts                # Trip CRUD
-│   ├── usePayment.ts             # Full 7-state payment flow orchestration
-│   └── useContractEvents.ts      # Real-time Soroban event polling
-│
-├── lib/
-│   ├── auth/
-│   │   ├── challenge.ts          # Challenge build + signature verification (server)
-│   │   ├── jwt.ts                # Supabase access-token minting (server)
-│   │   ├── serverConfig.ts       # Server-only auth secrets
-│   │   └── rateLimit.ts          # Throttling for the public auth routes
-│   ├── supabase/session.ts       # Wallet-authenticated Supabase client (browser)
-│   ├── stellar/
-│   │   ├── walletsKit.ts         # Stellar Wallets Kit adapter
-│   │   ├── contract.ts           # Soroban contract calls + error decoding
-│   │   ├── events.ts             # pmt_rec event fetch and decode
-│   │   ├── buildTransaction.ts   # Stellar Payment transaction builder
-│   │   ├── submitTransaction.ts  # Horizon broadcast
-│   │   └── getBalance.ts         # Account balance query
-│   ├── qr/generator.ts           # SEP-0007 URI + QR generation
-│   └── settlement/netBalance.ts  # Net-balance optimisation algorithm
-│
-├── contract/
-│   └── contracts/settlement/      # Settlement contract crate and WASM
-│
-├── __tests__/
-│   ├── split/calculator.test.ts
-│   ├── settlement/netBalance.test.ts
-│   └── utils/formatters.test.ts
-│
-└── docs/
-    ├── QUICKSTART.md
-    ├── SUPABASE_SETUP.md
-    ├── AUTHENTICATION_SETUP.md
-    └── MANUAL_TESTING_GUIDE.md
-```
-
----
 
 ## Testnet Notes
 
@@ -615,7 +516,6 @@ settlex/
 **Product & strategy**
 - [Product Conversion Guide](docs/PRODUCT_CONVERSION_GUIDE.md) — the full project→product roadmap
 - [Brand Guidelines](docs/BRAND.md)
-- [Wallet Integration](docs/WALLET_INTEGRATION.md) — tested wallet support, network/account limits, and WalletConnect setup
 
 **Getting started & testing**
 - [Quickstart](docs/QUICKSTART.md)
@@ -633,4 +533,4 @@ settlex/
 
 ## License
 
-MIT © 2026 SettleX
+No license file is currently included in this repository.
