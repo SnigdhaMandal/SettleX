@@ -1,30 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 
 /**
- * Nonce-based Content-Security-Policy.
- *
- * A fresh nonce is generated per request and attached to Next.js's own inline
- * bootstrap scripts (Next reads the CSP from the request header and injects the
- * nonce automatically). `strict-dynamic` then lets those trusted scripts load
- * the rest of the bundle, so we never need `script-src 'unsafe-inline'` in
- * production — the single biggest XSS lever a money app must close.
- *
- * `style-src` still allows inline styles because Framer Motion and Tailwind
- * inject style attributes at runtime; there is no nonce path for those.
- *
- * This is the ONLY place a Content-Security-Policy is set for documents.
- * `next.config.mjs` used to also send a much weaker
- * `Content-Security-Policy-Report-Only` that reported nowhere; it has been
- * removed. If a violation needs fixing, fix it here — do not add a second
- * policy, and never relax one to satisfy the other. The one CSP that file still
- * sets covers static assets only (the paths this `matcher` skips), and is
- * strictly tighter than this policy.
+ * Sets a per-request nonce-based Content-Security-Policy on document responses.
+ * `style-src` keeps 'unsafe-inline' for Framer Motion and Tailwind runtime styles;
+ * document CSP lives solely here (static asset CSP is in next.config.mjs).
  */
 export function middleware(request: NextRequest) {
   const isDev = process.env.NODE_ENV === "development";
   const nonce = btoa(crypto.randomUUID());
 
-  function getOrigin(url?: string): string | undefined {
+  function getOrigin(url?: string) {
     if (!url) return undefined;
     try {
       return new URL(url).origin;
@@ -37,7 +22,6 @@ export function middleware(request: NextRequest) {
   const sorobanOrigin = getOrigin(process.env.NEXT_PUBLIC_SOROBAN_RPC_URL);
   const supabaseOrigin = getOrigin(process.env.NEXT_PUBLIC_SUPABASE_URL);
 
-  // Network origins the app legitimately talks to.
   const connectSrc = [
     "'self'",
     horizonOrigin,
@@ -51,8 +35,7 @@ export function middleware(request: NextRequest) {
     "wss://*.walletconnect.org",
     "https://*.reown.com",
     "wss://*.reown.com",
-    // Dev-only: Next.js HMR websocket + fast-refresh polling.
-    ...(isDev ? ["ws://localhost:*", "http://localhost:*"] : []),
+    ...(isDev ? ["ws://localhost:*", "http://localhost:*"] : []), // Next.js HMR & fast-refresh
   ].filter(Boolean).join(" ");
 
   const scriptSrc = isDev
@@ -66,16 +49,12 @@ export function middleware(request: NextRequest) {
     `img-src 'self' blob: data: https:`,
     `font-src 'self'`,
     `connect-src ${connectSrc}`,
-
     `worker-src 'self' blob:`,
     `manifest-src 'self'`,
     `object-src 'none'`,
     `base-uri 'self'`,
     `form-action 'self'`,
-    // Paired with `X-Frame-Options: DENY` in next.config.mjs. Older browsers
-    // read only the header, newer ones prefer this directive; if the two ever
-    // disagree, the weaker answer wins on some client. Change both or neither.
-    `frame-ancestors 'none'`,
+    `frame-ancestors 'none'`, // keep in sync with X-Frame-Options: DENY in next.config.mjs
     `upgrade-insecure-requests`,
   ]
     .join("; ")
@@ -93,10 +72,7 @@ export function middleware(request: NextRequest) {
 
 export const config = {
   matcher: [
-    /*
-     * Run on all routes except static assets and image optimizer output.
-     * `missing` skips prefetch/RSC requests so we don't pay the cost twice.
-     */
+    // Skip static assets, image optimizer, and prefetch/RSC requests
     {
       source: "/((?!_next/static|_next/image|favicon.ico|.*\\.(?:png|svg|jpg|jpeg|gif|webp|ico|webmanifest)$).*)",
       missing: [

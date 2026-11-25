@@ -1,16 +1,7 @@
 /**
  * POST /api/auth/signout
- *
- * Revokes the caller's access token server-side, so "log out" actually
- * invalidates rather than only clearing the browser's copy. The token is read
- * from an HttpOnly cookie and must verify before anything is written —
- * otherwise this endpoint would let anyone revoke anyone else's session.
- *
- * `everywhere: true` revokes every token issued to the wallet up to now, which
- * is the control to reach for after losing a device.
- *
- * A sign-out that silently fails to revoke leaves a live token behind, so every
- * failure path here is reported rather than printed.
+ * Revokes the caller's token server-side (verified via the HttpOnly cookie).
+ * Pass `everywhere: true` to revoke all tokens issued to the wallet so far.
  */
 import { verifyJwt } from "@/lib/auth/jwt";
 import { WALLET_CLAIM } from "@/lib/auth/constants";
@@ -57,41 +48,30 @@ export async function POST(request: Request) {
   if (origin && origin !== new URL(request.url).origin) {
     logger.warn("auth.signout_origin_rejected");
     logger.finish("auth.signout_completed", 403, { reason: "cross_origin" });
-    return jsonWithCorrelation(
-      logger,
-      { error: "Cross-origin requests are not allowed." },
-      { status: 403, headers: NO_STORE },
-    );
+    return jsonWithCorrelation(logger, { error: "Cross-origin requests are not allowed." }, { status: 403, headers: NO_STORE });
   }
 
   const token = getSessionCookie(request);
   if (!token) {
     logger.finish("auth.signout_completed", 401, { reason: "missing_token" });
-    return signoutResponse(
-      { error: "An authenticated session is required." },
-      { status: 401, headers: NO_STORE },
-    );
+    return signoutResponse({ error: "An authenticated session is required." }, { status: 401, headers: NO_STORE });
   }
 
   let body: unknown = null;
   try {
     body = await request.json();
   } catch {
-    // No body is fine — it just means "revoke this one token".
+    // empty body just means single-token signout
   }
   const everywhere = (body as { everywhere?: unknown } | null)?.everywhere === true;
 
   try {
-    // Only the holder of a valid token may revoke it. An expired or forged one
-    // needs no revoking anyway, so this is not a lockout risk.
+    // only valid tokens need revoking; expired/forged ones are already useless
     const claims = verifyJwt(token, getJwtSecret());
     if (!claims) {
       logger.warn("auth.signout_rejected", { reason: "invalid_token" });
       logger.finish("auth.signout_completed", 401, { reason: "invalid_token" });
-      return signoutResponse(
-        { error: "That access token is not valid." },
-        { status: 401, headers: NO_STORE },
-      );
+      return signoutResponse({ error: "That access token is not valid." }, { status: 401, headers: NO_STORE });
     }
 
     const walletAddress = claims[WALLET_CLAIM];
@@ -100,15 +80,11 @@ export async function POST(request: Request) {
     if (typeof walletAddress !== "string" || typeof exp !== "number") {
       logger.warn("auth.signout_rejected", { reason: "malformed_claims" });
       logger.finish("auth.signout_completed", 401, { reason: "malformed_claims" });
-      return signoutResponse(
-        { error: "That access token is not valid." },
-        { status: 401, headers: NO_STORE },
-      );
+      return signoutResponse({ error: "That access token is not valid." }, { status: 401, headers: NO_STORE });
     }
 
     if (!isRevocationConfigured()) {
-      // Say so plainly rather than reporting a sign-out that did not happen.
-      // Reported as an error: the operator must know tokens cannot be revoked.
+      // fail loudly so we don't report a signout that never actually happened
       logger.error("auth.revocation_not_configured", undefined, {
         walletAddress,
         detail: "SUPABASE_SERVICE_ROLE_KEY is not set.",
@@ -124,7 +100,7 @@ export async function POST(request: Request) {
       await revokeWallet(walletAddress);
     } else {
       if (typeof jti !== "string") {
-        // Tokens minted before `jti` existed cannot be denied individually.
+        // legacy tokens minted before jti existed can't be revoked individually
         logger.warn("auth.signout_rejected", { walletAddress, reason: "no_jti" });
         logger.finish("auth.signout_completed", 409, { reason: "no_jti" });
         return signoutResponse(
@@ -148,7 +124,7 @@ export async function POST(request: Request) {
       );
     }
     if (err instanceof RevocationUnavailable) {
-      // Fail loudly: the browser must not report a sign-out that did not happen.
+      // don't tell the browser sign-out worked if revocation failed
       logger.error("auth.revocation_failed", err);
       logger.finish("auth.signout_completed", 503, { reason: "revocation_unavailable" });
       return signoutResponse(
@@ -158,9 +134,6 @@ export async function POST(request: Request) {
     }
     logger.error("auth.signout_failed", err);
     logger.finish("auth.signout_completed", 500);
-    return signoutResponse(
-      { error: "Could not sign out." },
-      { status: 500, headers: NO_STORE },
-    );
+    return signoutResponse({ error: "Could not sign out." }, { status: 500, headers: NO_STORE });
   }
 }
