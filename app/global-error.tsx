@@ -1,24 +1,7 @@
 "use client";
 
-/**
- * Last-resort error boundary.
- *
- * `app/error.tsx` is rendered *inside* the root layout, so it cannot catch an
- * error thrown by the layout itself — a crash in a provider (wallet, toast,
- * expense context) would otherwise produce a blank page with nothing logged
- * anywhere. This boundary replaces the whole document, which is why it must
- * render its own <html> and <body> and cannot use the app's providers or
- * Tailwind-dependent chrome.
- *
- * Styles are inline for the same reason: if the failure was in the layout, the
- * stylesheet may never have loaded.
- *
- * Unlike `app/error.tsx`, this boundary never renders `error.message` at all,
- * not even a vetted one. A failure this deep is a provider or bundle crash whose
- * message is always internal ("Cannot read properties of undefined", a hydration
- * mismatch), so there is nothing here worth showing a user — only the reference
- * id and a way out. The detail goes to the reporter.
- */
+// Fallback when the root layout itself crashes — renders its own html/body with
+// inline styles since providers and Tailwind may not have loaded, and omits error.message.
 import { useEffect, useState } from "react";
 import { newCorrelationId, reportError } from "@/lib/observability/logger";
 
