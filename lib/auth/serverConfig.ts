@@ -1,19 +1,12 @@
 /**
- * Server-side secrets for the wallet authentication handshake.
- *
- * Every value here is read lazily inside a request handler so a missing secret
- * fails that request rather than the whole build. None of these may ever be
- * prefixed with `NEXT_PUBLIC_` — that would ship them in the browser bundle and
- * let anyone mint their own tokens.
+ * Server-side auth secrets, read lazily per request so missing env vars don't
+ * break builds. Never prefix these with NEXT_PUBLIC_.
  */
 import { DEFAULT_SESSION_TTL_SECONDS } from "@/lib/auth/constants";
 
 export class AuthConfigError extends Error {}
 
-/**
- * The Supabase project's JWT secret (Dashboard → Settings → API → JWT Secret).
- * Tokens signed with it are accepted by PostgREST and Realtime.
- */
+/** Supabase JWT secret used to sign tokens accepted by PostgREST/Realtime. */
 export function getJwtSecret(): string {
   const secret = process.env.SUPABASE_JWT_SECRET;
   if (!secret) {
@@ -25,14 +18,8 @@ export function getJwtSecret(): string {
 }
 
 /**
- * Key used to bind a challenge nonce to a wallet.
- *
- * Required in production, because sharing a key across two cryptographic
- * purposes gives up cheap insurance: a bug or leak in the challenge path would
- * then also compromise token signing, and rotating the Supabase JWT secret
- * would silently invalidate every outstanding challenge. Outside production the
- * JWT secret is still accepted so a local checkout runs with one value
- * configured.
+ * HMAC secret for challenge nonces. Required in production to isolate it from
+ * SUPABASE_JWT_SECRET; falls back to the JWT secret locally for convenience.
  */
 export function getChallengeSecret(): string {
   const secret = process.env.AUTH_CHALLENGE_SECRET;
@@ -50,17 +37,12 @@ export function getChallengeSecret(): string {
 }
 
 /**
- * Maximum session lifetime cap (12 hours = 43200s).
- *
- * NOTE: The database tombstone in `settlex_revoke_wallet` (supabase-setup.sql)
- * defaults to 13 hours (46800s) to strictly outlive this cap so revoked tokens
- * cannot become valid again before expiring. If MAX_SESSION_TTL_CAP_SECONDS is
- * ever changed, the revocation tombstone duration in `settlex_revoke_wallet`
- * must be updated accordingly to exceed this value.
+ * Max session lifetime (12h). Must stay below the 13h tombstone default in
+ * `settlex_revoke_wallet` (supabase-setup.sql) so revoked tokens can't resurrect.
  */
 export const MAX_SESSION_TTL_CAP_SECONDS = 12 * 60 * 60;
 
-/** Lifetime of an issued access token, in seconds. */
+/** Access token lifetime in seconds, capped at 12h. */
 export function getSessionTtlSeconds(): number {
   const raw = process.env.AUTH_SESSION_TTL_SECONDS;
   if (!raw) return DEFAULT_SESSION_TTL_SECONDS;
@@ -68,20 +50,11 @@ export function getSessionTtlSeconds(): number {
   const parsed = Number(raw);
   if (!Number.isFinite(parsed) || parsed <= 0) return DEFAULT_SESSION_TTL_SECONDS;
 
-  // Cap at 12h so a typo cannot mint a near-permanent token. Tokens are
-  // bearer credentials for a money app; the denylist only helps for sessions
-  // the user explicitly signs out of, so the ceiling stays low.
-  //
-  // NOTE: This cap must stay strictly less than the revocation tombstone TTL
-  // (13 hours in settlex_revoke_wallet, supabase-setup.sql).
+  // Keep below the 13h revocation tombstone TTL in settlex_revoke_wallet
   return Math.min(Math.floor(parsed), MAX_SESSION_TTL_CAP_SECONDS);
 }
 
-
-/**
- * Validates every auth secret at once, for the boot-time check in
- * `instrumentation.ts`. Throws on the first problem it finds.
- */
+/** Boot-time validation hook called from `instrumentation.ts`. */
 export function assertAuthConfig(): void {
   getJwtSecret();
   getChallengeSecret();

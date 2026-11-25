@@ -18,14 +18,13 @@ type RawEventLike = {
 export function parsePaymentEvent(raw: RawEventLike): ContractPaymentEvent | null {
   try {
     const topicScVals = Array.isArray(raw.topic) ? raw.topic : [];
-    
-    // SDK 1.x returns base64 XDR strings, earlier versions returned parsed objects
-    // If it's a string, decode it first.
+
+    // SDK 1.x returns base64 XDR strings whereas older versions returned parsed objects
     const decodeTopic = (val: unknown) => {
       if (typeof val === 'string') return xdr.ScVal.fromXDR(val, 'base64');
       return val as xdr.ScVal;
     };
-    
+
     const eventTripId = topicScVals[1]
       ? String(scValToNative(decodeTopic(topicScVals[1])))
       : "";
@@ -34,16 +33,16 @@ export function parsePaymentEvent(raw: RawEventLike): ContractPaymentEvent | nul
 
     const valueNative = raw.value ? scValToNative(decodeTopic(raw.value)) : null;
 
-    let expenseId     = "";
-    let member        = "";
+    let expenseId = "";
+    let member = "";
     let amountStroops = "0";
-    let attested      = false;
+    let attested = false;
 
     if (Array.isArray(valueNative) && valueNative.length >= 3) {
-      expenseId     = String(valueNative[0] ?? "");
-      member        = String(valueNative[1] ?? "");
+      expenseId = String(valueNative[0] ?? "");
+      member = String(valueNative[1] ?? "");
       amountStroops = String(valueNative[2] ?? "0");
-      attested      = valueNative[6] === true;
+      attested = valueNative[6] === true;
     } else if (valueNative && typeof valueNative === "object") {
       const obj = valueNative as Record<string, unknown>;
       expenseId = String(obj.expense_id ?? obj.expenseId ?? "");
@@ -53,13 +52,13 @@ export function parsePaymentEvent(raw: RawEventLike): ContractPaymentEvent | nul
     }
 
     return {
-      ledger:         Number(raw.ledger ?? 0),
+      ledger: Number(raw.ledger ?? 0),
       ledgerClosedAt: String(raw.ledgerClosedAt ?? ""),
-      tripId:         eventTripId,
+      tripId: eventTripId,
       expenseId,
       member,
       amountStroops,
-      txHash:         String(raw.txHash ?? ""),
+      txHash: String(raw.txHash ?? ""),
       attested,
     };
   } catch {
@@ -86,7 +85,7 @@ export async function fetchTripPaymentHistory(
       return [];
     }
 
-    // Filter out voided records (from clear_paid)
+    // Skip voided clear_paid records
     return result.payments
       .filter((record) => !record.voided)
       .map((record) => ({
@@ -135,7 +134,7 @@ export async function fetchContractEvents(
       ? nativeToScVal(tripId, { type: "string" }).toXDR("base64")
       : "*";
 
-    let cursor: string | undefined = undefined;
+    let cursor: string | undefined;
     let latestLedger = fromLedger;
     const allRawEvents: RawEventLike[] = [];
     const MAX_PAGES = 50;
@@ -153,9 +152,9 @@ export async function fetchContractEvents(
       } = {
         filters: [
           {
-            type:        "contract",
+            type: "contract",
             contractIds: [CONTRACT_ID],
-            topics:      [[symbolXdr, tripTopicXdr]],
+            topics: [[symbolXdr, tripTopicXdr]],
           },
         ],
         limit: 200,
@@ -178,7 +177,7 @@ export async function fetchContractEvents(
       const pageEvents = Array.isArray(response?.events) ? response.events : [];
       allRawEvents.push(...pageEvents);
 
-      const nextCursor: string | undefined =
+      const nextCursor =
         response?.cursor ??
         (pageEvents.length > 0
           ? (pageEvents[pageEvents.length - 1] as { pagingToken?: string })?.pagingToken
@@ -191,15 +190,13 @@ export async function fetchContractEvents(
       cursor = nextCursor;
     }
 
-    const events: ContractPaymentEvent[] = allRawEvents
+    const events = allRawEvents
       .map((ev) => parsePaymentEvent(ev))
       .filter((e): e is ContractPaymentEvent => e !== null && !!e.tripId);
 
     return { events, latestLedger };
   } catch (err) {
-    // Rethrown for the caller to handle; logged here because this is the layer
-    // that knows the RPC call failed, and a sustained spike means the Soroban
-    // RPC is down.
+    // Log at the RPC boundary before rethrowing so RPC outages are visible
     logWarn("contract.fetch_events_failed", {
       fields: { error: err instanceof Error ? err.message : String(err) },
     });

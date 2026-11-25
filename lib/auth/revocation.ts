@@ -1,33 +1,24 @@
 /**
- * Server-side token revocation.
+ * Server-side token revocation via `public.revoked_tokens`.
  *
- * Access tokens are bearer tokens: PostgREST accepts any correctly signed one
- * until its `exp`. Clearing the browser's copy on sign-out therefore proved
- * nothing — a token captured beforehand kept working for the rest of its life.
- *
- * Each token now carries a `jti`, and revoking one writes that id to
- * `public.revoked_tokens`. Every RLS policy resolves identity through
- * `settlex_wallet()`, which returns NULL for a revoked jti, so a denied token
- * matches no row on any table.
- *
- * Writing the denylist needs the service role key — a token must never be able
- * to un-revoke itself. Server-side only.
+ * Clearing cookies alone doesn't invalidate captured bearer tokens, so sign-out
+ * writes the token's `jti` to a denylist checked by `settlex_wallet()` in RLS.
+ * Requires the service role key (server-side only).
  */
 
-/** Raised when the denylist cannot be written, so callers can fail closed. */
+/** Thrown when the denylist can't be updated so callers can fail closed. */
 export class RevocationUnavailable extends Error {}
 
-/** RPC timeout — sign-out must not hang on a slow database. */
-const RPC_TIMEOUT_MS = 2_000;
+const RPC_TIMEOUT_MS = 2_000; // keep sign-out from hanging on a slow DB
 
-function config(): { url: string; key: string } | null {
+function config() {
   const url = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   return { url: url.replace(/[/]+$/, ""), key };
 }
 
-/** True when revocation is wired up, i.e. sign-out actually invalidates. */
+/** True when sign-out can actually revoke tokens server-side. */
 export function isRevocationConfigured(): boolean {
   return config() !== null;
 }
@@ -62,10 +53,7 @@ async function rpc<T>(fn: string, args: Record<string, unknown>): Promise<T> {
   }
 }
 
-/**
- * Denies a single token id until `expiresAt`, after which its own expiry takes
- * over and the row is purged.
- */
+/** Revokes a single token id until `expiresAt`. */
 export async function revokeToken(params: {
   jti: string;
   walletAddress: string;
@@ -84,12 +72,10 @@ export async function revokeToken(params: {
 }
 
 /**
- * Denies every token issued to a wallet before `now` — the "sign out
- * everywhere" case, and the one to reach for if a device is lost.
+ * Revokes all tokens issued to a wallet before now (sign out everywhere).
  *
- * @param walletAddress The Stellar address to revoke
- * @param ttlSeconds Optional tombstone lifetime in seconds. When omitted,
- *                   the database defaults to 13 hours (outliving the 12h session cap).
+ * @param walletAddress Stellar address to revoke
+ * @param ttlSeconds Tombstone lifetime in seconds (DB defaults to 13h, outliving the 12h session cap)
  */
 export async function revokeWallet(
   walletAddress: string,
@@ -108,4 +94,3 @@ export async function revokeWallet(
     throw new RevocationUnavailable(String(err));
   }
 }
-

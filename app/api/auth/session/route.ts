@@ -19,6 +19,7 @@ export async function GET(request: Request) {
     const claims = verifyJwt(token, getJwtSecret());
     const walletAddress = claims?.[WALLET_CLAIM];
     const expiresAt = claims?.exp;
+
     if (
       !claims ||
       typeof walletAddress !== "string" ||
@@ -30,10 +31,7 @@ export async function GET(request: Request) {
       return response;
     }
 
-    return NextResponse.json(
-      { session: { walletAddress, expiresAt: expiresAt * 1000 } },
-      { headers: NO_STORE },
-    );
+    return NextResponse.json({ session: { walletAddress, expiresAt: expiresAt * 1000 } }, { headers: NO_STORE });
   } catch (error) {
     if (error instanceof AuthConfigError) {
       return NextResponse.json(

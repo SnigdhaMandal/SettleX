@@ -14,39 +14,21 @@ import { canWalletPayShare } from "@/lib/payments/shareOwnership";
 import type { SplitShare } from "@/types/expense";
 import type { NetSettledReason } from "@/lib/settlement/netBalance";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 interface PaymentRowProps {
   share: SplitShare;
-  /** Expense this share belongs to; needed to build the identifying memo for QR payments. */
-  expenseId?: string;
+  expenseId?: string; // needed to build the QR payment memo
   index: number;
   expenseTitle?: string;
-  /** Called when user clicks "Pay". */
   onPay?: (share: SplitShare) => void;
-  /** When true, show spinner on Pay button (payment in-flight for this share). */
   isPaying?: boolean;
-  /** A transfer for this share may already have moved: Pay stays disabled. */
-  hasPendingPayment?: boolean;
-  /**
-   * Set when trip netting covers this unpaid share (Issue #203): a recorded
-   * settle-up transfer ("net-transfer"), or debts that cancelled out
-   * ("offset"). The share needs no direct payment, so Pay and QR are hidden.
-   */
-  netSettled?: NetSettledReason;
-  /** Connected wallet. Pay (and the QR code) are shown only when it owns this
-   *  share; with no wallet connected, nobody's share is payable. */
-  connectedWalletAddress?: string | null;
-  /** Creditor: wallet of the member who paid the bill, i.e. where payments go. */
-  payerWalletAddress?: string;
-  /**
-   * "I paid via QR" (Issue #204): records a QR payment from its pasted
-   * transaction hash after checking it on Horizon. Resolves true when recorded.
-   */
-  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>;
+  hasPendingPayment?: boolean; // disables Pay if a transfer might already be in flight
+  netSettled?: NetSettledReason; // set when trip netting covers this share ("net-transfer" | "offset"), hiding Pay and QR
+  connectedWalletAddress?: string | null; // Pay and QR only show when connected wallet owns this share
+  payerWalletAddress?: string; // creditor's wallet (where payments go)
+  onReconcileQr?: (share: SplitShare, txHash: string) => Promise<boolean>; // records a QR payment after Horizon check
 }
 
-/** Paste-the-hash form for a share paid by scanning its QR code. */
+// Paste-the-hash form for QR payments
 function QrHashForm({
   disabled,
   onSubmit,
@@ -109,8 +91,6 @@ function QrHashForm({
   );
 }
 
-// ─── Component ────────────────────────────────────────────────────────────────
-
 export function PaymentRow({
   share,
   expenseId,
@@ -128,13 +108,11 @@ export function PaymentRow({
   const explorerUrl = share.walletAddress
     ? `${STELLAR_EXPLORER}/account/${share.walletAddress}`
     : null;
-  // Same memo as the in-app Pay path, so a QR payment can be matched to this
-  // share too. Without an expense id (an unsaved preview) there is nothing to
-  // identify, so no QR is offered.
+
+  // Match the in-app Pay memo so QR payments reconcile cleanly; unsaved previews don't have an ID yet
   const memo = expenseId ? shareMemo(expenseId, share.memberId) : undefined;
 
-  // Only the share's own wallet may pay it, never a third party and never the
-  // member who paid the bill. Same rule payShare enforces (Issue #208).
+  // Only the share's own wallet can pay it — never a third party or the bill payer (Issue #208)
   const isMyRow = canWalletPayShare({
     share,
     connectedWallet: connectedWalletAddress,
@@ -143,7 +121,7 @@ export function PaymentRow({
 
   const settled = share.paid || Boolean(netSettled);
 
-  // When paidBy is recorded and doesn't match the share owner, someone else marked this share paid
+  // Someone other than the share owner marked this as paid
   const isMarkedByOther = Boolean(
     share.paid &&
       share.paidBy &&
@@ -164,9 +142,7 @@ export function PaymentRow({
             : "bg-white border-[#E5E5E5] hover:border-[#D0D0D0]"
         )}
       >
-        {/* Top row: avatar / name / amount / action */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 sm:gap-3">
-          {/* Avatar + name */}
           <div className="flex items-center gap-3 min-w-0">
             <div
               className={cn(
@@ -230,7 +206,6 @@ export function PaymentRow({
             </div>
           </div>
 
-          {/* Amount + action */}
           <div className="flex items-center justify-between sm:justify-end gap-2">
             <span className="text-sm font-bold text-[#0F0F14]">
               {formatXLM(share.amount)}{" "}
@@ -277,9 +252,7 @@ export function PaymentRow({
           </div>
         </div>
 
-        {/* QR toggle: lets the share's owner pay from a phone wallet. The
-            payment goes to the creditor (who paid the bill), not to the share's
-            own wallet. */}
+        {/* QR sends funds to the bill payer, not the share owner */}
         {!share.paid && !hasPendingPayment && isMyRow && payerWalletAddress && memo && (
           <div className="pl-11 flex flex-col gap-2">
             <QRToggle
@@ -295,7 +268,6 @@ export function PaymentRow({
         )}
       </motion.div>
 
-      {/* Receipt modal */}
       {share.paid && share.txHash && (
         <ReceiptModal
           open={showReceipt}

@@ -1,18 +1,12 @@
 /**
- * SEP-10 style wallet authentication challenge.
+ * SEP-10 style wallet auth challenge.
  *
- * The server hands the browser a transaction that can never be submitted
- * (sequence number 0) carrying a random nonce. Only the holder of the wallet's
- * private key can produce a valid signature over it, which is what turns a
- * claimed address into a proven one.
+ * Hands the browser an unsubmittable tx (sequence 0) with a random nonce. Only
+ * the wallet's private key can sign it, proving ownership. `challengeToken`
+ * binds the nonce + expiry via HMAC; `verifyChallengeShared` burns the nonce in
+ * Postgres so it can't be replayed across serverless instances.
  *
- * The nonce is bound to the wallet and an expiry by an HMAC (`challengeToken`),
- * so the handshake itself needs no session store. Single use is the one part
- * that does need shared state: `verifyChallengeShared` burns the nonce in
- * Postgres so a captured challenge cannot be replayed against a sibling
- * serverless instance.
- *
- * Server-side only — it needs `AUTH_CHALLENGE_SECRET`.
+ * Server-side only (uses AUTH_CHALLENGE_SECRET).
  */
 import { createHmac, randomBytes } from "crypto";
 import {
@@ -36,7 +30,7 @@ import { NETWORK_PASSPHRASE } from "@/lib/utils/constants";
 export interface Challenge {
   transactionXdr: string;
   networkPassphrase: string;
-  /** Opaque HMAC that proves this server issued the nonce. */
+  /** Opaque HMAC proving this server issued the nonce. */
   challengeToken: string;
   expiresAt: string;
 }
@@ -46,17 +40,12 @@ export type VerifyResult =
   | { ok: false; reason: string };
 
 interface ChallengePayload {
-  /** Wallet address the challenge was issued to. */
-  w: string;
-  /** Random nonce embedded in the transaction. */
-  n: string;
-  /** Expiry, in seconds since the epoch. */
-  exp: number;
+  w: string; // wallet address
+  n: string; // nonce
+  exp: number; // epoch seconds
 }
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-
-function base64url(value: Buffer | string): string {
+function base64url(value: Buffer | string) {
   return Buffer.from(value)
     .toString("base64")
     .replace(/\+/g, "-")
@@ -68,7 +57,7 @@ export function isValidWalletAddress(value: unknown): value is string {
   return typeof value === "string" && StrKey.isValidEd25519PublicKey(value);
 }
 
-function mintChallengeToken(payload: ChallengePayload, secret: string): string {
+function mintChallengeToken(payload: ChallengePayload, secret: string) {
   const body = base64url(JSON.stringify(payload));
   const mac = base64url(createHmac("sha256", secret).update(body).digest());
   return `${body}.${mac}`;
@@ -83,10 +72,11 @@ function readChallengeToken(token: string, secret: string): ChallengePayload | n
   if (!safeEqual(mac, expected)) return null;
 
   try {
-    const decoded: unknown = JSON.parse(
+    const decoded = JSON.parse(
       Buffer.from(body.replace(/-/g, "+").replace(/_/g, "/"), "base64").toString("utf8"),
-    );
+    ) as unknown;
     if (!decoded || typeof decoded !== "object") return null;
+
     const payload = decoded as ChallengePayload;
     if (typeof payload.w !== "string" || typeof payload.n !== "string") return null;
     if (typeof payload.exp !== "number") return null;
@@ -96,17 +86,10 @@ function readChallengeToken(token: string, secret: string): ChallengePayload | n
   }
 }
 
-// ─── Single-use nonce tracking ────────────────────────────────────────────────
-
-/**
- * Process-local replay guard. It only holds within one instance, so it is the
- * fallback used when no shared store is configured — `verifyChallengeShared`
- * burns the nonce in Postgres instead, which does hold across instances. See
- * `docs/ARCHITECTURE_AND_LIMITATIONS.md`.
- */
+// Process-local replay fallback when no shared store is configured (see docs/ARCHITECTURE_AND_LIMITATIONS.md).
 const usedNonces = new Map<string, number>();
 
-function consumeNonce(nonce: string, expiresAt: number, now: number): boolean {
+function consumeNonce(nonce: string, expiresAt: number, now: number) {
   for (const [key, exp] of usedNonces) {
     if (exp * 1000 <= now) usedNonces.delete(key);
   }
@@ -115,17 +98,15 @@ function consumeNonce(nonce: string, expiresAt: number, now: number): boolean {
   return true;
 }
 
-/** Test hook — drops every remembered nonce. */
+/** Test hook — clears remembered nonces. */
 export function resetNonceCache(): void {
   usedNonces.clear();
 }
 
-// ─── Challenge creation ───────────────────────────────────────────────────────
-
 export function createChallenge(
   walletAddress: string,
   secret: string,
-  now: number = Date.now(),
+  now = Date.now(),
 ): Challenge {
   if (!isValidWalletAddress(walletAddress)) {
     throw new Error("A valid Stellar public key is required.");
@@ -136,8 +117,7 @@ export function createChallenge(
   const issuedAt = Math.floor(now / 1000);
   const expiresAt = issuedAt + CHALLENGE_TTL_SECONDS;
 
-  // Sequence "-1" makes the builder emit sequence 0, which the network always
-  // rejects — the challenge can be signed but never submitted.
+  // "-1" emits sequence 0 so the tx can be signed, never submitted to Stellar
   const source = new Account(walletAddress, "-1");
 
   const transaction = new TransactionBuilder(source, {
@@ -162,8 +142,6 @@ export function createChallenge(
   };
 }
 
-// ─── Challenge verification ───────────────────────────────────────────────────
-
 export interface VerifyParams {
   walletAddress: string;
   signedTransactionXdr: string;
@@ -176,11 +154,7 @@ type CheckResult =
   | { ok: true; walletAddress: string; nonce: string; expiresAt: number }
   | { ok: false; reason: string };
 
-/**
- * Every check except the single-use one: HMAC, wallet binding, expiry, the
- * shape of the transaction and the Ed25519 signature. Burning the nonce is left
- * to the caller, because that is the only part that needs shared state.
- */
+// Validates everything except single-use; callers handle burning the nonce.
 function checkChallenge(params: VerifyParams): CheckResult {
   const { walletAddress, signedTransactionXdr, challengeToken, secret } = params;
   const now = params.now ?? Date.now();
@@ -236,6 +210,7 @@ function checkChallenge(params: VerifyParams): CheckResult {
 
   const bounds = transaction.timeBounds;
   if (!bounds) return { ok: false, reason: "The challenge was modified before signing." };
+
   const minTime = Number(bounds.minTime);
   const maxTime = Number(bounds.maxTime);
   if (nowSeconds + CLOCK_SKEW_SECONDS < minTime || nowSeconds - CLOCK_SKEW_SECONDS > maxTime) {
@@ -261,9 +236,8 @@ function checkChallenge(params: VerifyParams): CheckResult {
 const REPLAYED = "This challenge has already been used.";
 
 /**
- * Synchronous verification that burns the nonce in process memory. The guard is
- * per-instance — prefer `verifyChallengeShared` on any deployment that runs
- * more than one process.
+ * Sync verification using an in-memory nonce cache (single-instance only).
+ * Use `verifyChallengeShared` in multi-instance deployments.
  */
 export function verifyChallenge(params: VerifyParams): VerifyResult {
   const checked = checkChallenge(params);
@@ -276,13 +250,9 @@ export function verifyChallenge(params: VerifyParams): VerifyResult {
 }
 
 /**
- * Verification that burns the nonce in the shared store, so a captured
- * challenge cannot be replayed against a sibling serverless instance.
- *
- * With no store configured it degrades to the in-memory guard rather than
- * locking out a local or single-instance deployment. A store that is configured
- * but unreachable fails closed — the guard would be worthless if it could be
- * bypassed by making the database unavailable.
+ * Verifies the challenge and burns the nonce in Postgres so it can't be replayed
+ * across instances. Degrades to in-memory if no store is configured, but fails
+ * closed if a configured store is unreachable.
  */
 export async function verifyChallengeShared(params: VerifyParams): Promise<VerifyResult> {
   const checked = checkChallenge(params);

@@ -11,27 +11,19 @@ export default function ErrorBoundary({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
-  // Generated per error so the id shown to the user matches the reported one.
-  const [correlationId] = useState(newCorrelationId);
+  const [correlationId] = useState(newCorrelationId); // matches UI ref to logged error
 
-  // Raw `error.message` is not safe to render: the Supabase paths re-throw
-  // PostgREST errors, so this used to be able to print row-level-security and
-  // schema text at the user. Messages the app authored for people still show;
-  // everything else becomes a generic line and the detail goes to the log only.
+  // don't surface raw PostgREST/internal errors to the user
   const { message, wasSuppressed } = userFacingMessage(error);
 
   useEffect(() => {
-    // The full error always reaches the reporter — the suppression above changes
-    // what is displayed, never what is recorded. `digest` is React's own id for
-    // the server-side error, and is what ties this to the server log line.
+    // always report the full error; digest ties this to the server log
     reportError("ui.render_error", error, {
       correlationId,
       fields: {
         digest: error.digest,
         boundary: "app/error",
-        // Makes the substitution visible rather than silent, so a message that
-        // should have been user-facing can be spotted and reworded.
-        messageSuppressed: wasSuppressed,
+        messageSuppressed: wasSuppressed, // flag so missing user-facing messages are easy to spot
       },
     });
   }, [error, correlationId, wasSuppressed]);
@@ -47,8 +39,6 @@ export default function ErrorBoundary({
         >
           Try again
         </button>
-        {/* Gives the user something to quote in a support report that points
-            straight at the reported error. */}
         <p className="mt-4 text-[11px] text-[#AAA] font-mono break-all">
           Reference: {error.digest ?? correlationId}
         </p>

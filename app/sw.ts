@@ -11,7 +11,7 @@ declare global {
 
 declare const self: ServiceWorkerGlobalScope;
 
-function getOrigin(url?: string): string | undefined {
+function getOrigin(url?: string) {
   if (!url) return undefined;
   try {
     return new URL(url).origin;
@@ -20,14 +20,11 @@ function getOrigin(url?: string): string | undefined {
   }
 }
 
-function escapeRegExp(string: string): string {
+function escapeRegExp(string: string) {
   return string.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-// ── DYNAMIC MONEY-SAFE ORIGINS ─────────────────────────────────────────────
-// Build matchers from NEXT_PUBLIC_* origins at build time (plus custom env fallbacks).
-// Deployments with custom Horizon, Soroban RPC, or self-hosted Supabase must
-// be network-only to prevent serving stale balances or contract state.
+// Custom Horizon, Soroban, and Supabase origins must stay network-only so stale balances/state never get cached
 const configuredOrigins = Array.from(
   new Set(
     [
@@ -54,29 +51,19 @@ const serwist = new Serwist({
   clientsClaim: true,
   navigationPreload: true,
   runtimeCaching: [
-    // ── MONEY-SAFE RULE ────────────────────────────────────────────────────
-    // Chain reads (balances, sequence numbers, contract state) and DB writes
-    // must NEVER be served from cache — a stale balance in a payments app is a
-    // correctness/safety bug. Force network-only for these origins.
-    // 1. Default public Stellar, Soroban, and Supabase endpoints
+    // Never cache chain reads or DB writes — stale balances would be a bug
     { matcher: /^https:\/\/horizon(-testnet)?\.stellar\.org\//, handler: new NetworkOnly() },
     { matcher: /^https:\/\/soroban(-testnet)?\.stellar\.org\//, handler: new NetworkOnly() },
     { matcher: /^https:\/\/[^/]*sorobanrpc\.com\//, handler: new NetworkOnly() },
     { matcher: /^https:\/\/[^/]*\.supabase\.co\//, handler: new NetworkOnly() },
-    // 2. Custom origins configured via NEXT_PUBLIC_* at build time
-    ...configuredOriginMatchers,
-    // ── API ROUTES ──────────────────────────────────────────────────────────
-    // Internal API routes (auth challenges, session, payment verification,
-    // Supabase proxy) must NEVER be served from cache — defaultCache would
-    // otherwise apply NetworkFirst with up to a 24-hour cache.
+    ...configuredOriginMatchers, // custom env origins
+    // Skip caching API routes (defaultCache would otherwise NetworkFirst them for 24h)
     {
       matcher: ({ url }) => url.pathname.startsWith("/api/") || url.pathname === "/api",
       handler: new NetworkOnly(),
     },
     { matcher: /^https?:\/\/[^/]+\/api(?:\/|$)/, handler: new NetworkOnly() },
-    // Everything else (app shell, static assets, marketing) uses the sensible
-    // Next.js defaults from Serwist.
-    ...defaultCache,
+    ...defaultCache, // app shell, static assets, marketing
   ],
   fallbacks: {
     entries: [

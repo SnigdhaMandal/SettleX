@@ -26,7 +26,7 @@ export function xlmToStroops(xlm: string | number | bigint): bigint {
   const str = xlm.trim();
   if (!str) throw new Error("Invalid XLM amount: empty string");
 
-  // Reject scientific notation / exponents (e.g. 1e-7, 1e5, 1E10)
+  // disallow scientific notation (e.g. 1e-7, 1E10)
   if (/[eE]/.test(str)) {
     throw new Error(`Invalid XLM amount format: exponents not allowed: ${str}`);
   }
@@ -47,7 +47,6 @@ export function xlmToStroops(xlm: string | number | bigint): bigint {
     throw new Error(`Invalid XLM amount format: ${str}`);
   }
 
-  // Reject inputs with more than 7 decimal places
   if (fracPart.length > MAX_DECIMALS_XLM) {
     throw new Error(
       `Invalid XLM amount format: exceeds maximum ${MAX_DECIMALS_XLM} decimal places: ${str}`,
@@ -185,8 +184,6 @@ export function calculateSplit(
     ? calculateCustomSplit(totalXLM, members, paidByMemberId)
     : calculateEqualSplit(totalXLM, members, paidByMemberId);
 }
-
-// ─── Validation helpers ───────────────────────────────────────────────────────
 
 export function isValidSplitWeight(weight: number | undefined): weight is number {
   return (

@@ -79,7 +79,6 @@ export async function verifyTransactionOnHorizon(
     const txData = await res.json();
     const successful = txData.successful !== false;
 
-    // Check transaction operations if available
     let operations: Array<{ type: string; from?: string; to?: string; amount?: string; assetType?: string }> = [];
     try {
       const opsRes = await fetch(`${HORIZON_URL}/transactions/${normalizedHash}/operations`, {
@@ -98,10 +97,9 @@ export async function verifyTransactionOnHorizon(
         }));
       }
     } catch {
-      // Operations fetch failure is non-fatal
+      // non-fatal; tx-level fields still get checked below
     }
 
-    // Flag if transaction was submitted but failed on-chain
     if (!successful) {
       return {
         valid: false,
@@ -117,7 +115,6 @@ export async function verifyTransactionOnHorizon(
       };
     }
 
-    // Check destination wallet if specified
     if (options?.destinationWallet) {
       const targetDest = options.destinationWallet.toUpperCase();
       const hasDest = operations.some(
@@ -142,7 +139,6 @@ export async function verifyTransactionOnHorizon(
       }
     }
 
-    // Check source wallet if specified
     if (options?.sourceWallet) {
       const targetSource = options.sourceWallet.toUpperCase();
       const txSourceMatches =
@@ -168,7 +164,6 @@ export async function verifyTransactionOnHorizon(
       }
     }
 
-    // Check expected amount if specified
     if (options?.expectedAmount) {
       const targetAmount = Number(options.expectedAmount);
       const hasAmount = operations.some(

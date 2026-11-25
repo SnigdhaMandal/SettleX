@@ -30,7 +30,7 @@ export async function connectFreighter(): Promise<string> {
   let connectError: Error | null = null;
 
   await kit.openModal({
-    modalTitle:       "Connect Your Stellar Wallet",
+    modalTitle: "Connect Your Stellar Wallet",
     notAvailableText: "Install extension",
     onWalletSelected: async (wallet) => {
       kit.setWallet(wallet.id);
@@ -49,10 +49,7 @@ export async function connectFreighter(): Promise<string> {
   return resolvedAddress;
 }
 
-/**
- * Checks whether a signed transaction XDR contains a signature valid under
- * the expected Stellar network passphrase for the given signer address.
- */
+/** Checks if `signedTxXdr` has a valid signature from `signerAddress` under `networkPassphrase`. */
 export function verifySignedTxNetwork(
   signedTxXdr: string,
   signerAddress: string,
@@ -102,8 +99,7 @@ export async function signXDR(
     throw new Error("The wallet returned an empty signed transaction.");
   }
 
-  // If a decodable transaction was returned and we have a valid signer address,
-  // verify that the signature actually matches the target network.
+  // Verify the signature matches the target network when we can decode the tx.
   if (signerAddress && StrKey.isValidEd25519PublicKey(signerAddress)) {
     try {
       const tx = TransactionBuilder.fromXDR(signedTxXdr, networkPassphrase);
@@ -126,7 +122,6 @@ export async function signXDR(
           );
         }
 
-        // Successfully verified signature over the expected network
         if (typeof window !== "undefined") {
           try {
             localStorage.setItem(LS_NETWORK_CONFIRMED, "true");
@@ -137,7 +132,7 @@ export async function signXDR(
       if (err instanceof Error && err.message.includes("Transaction signature does not match")) {
         throw err;
       }
-      // Non-decodable synthetic or mocked payloads pass through for unit tests
+      // Let non-decodable mock/test payloads pass through
     }
   }
 

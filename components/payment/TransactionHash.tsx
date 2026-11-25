@@ -40,11 +40,7 @@ export function TransactionHash({ hash, className, compact = false }: Transactio
         title="Copy transaction hash"
         className="text-[#AAA] hover:text-[#555] transition-colors"
       >
-        {copied ? (
-          <Check size={12} className="text-[#2D6600]" />
-        ) : (
-          <Copy size={12} />
-        )}
+        {copied ? <Check size={12} className="text-[#2D6600]" /> : <Copy size={12} />}
       </button>
 
       <a

@@ -26,7 +26,7 @@ export function PendingInvitations() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [acceptingId, setAcceptingId] = useState<string | null>(null);
   const [decliningId, setDecliningId] = useState<string | null>(null);
-  const loadSequence = useRef(0);
+  const loadSequence = useRef(0); // prevents stale responses from overwriting newer wallet loads
 
   const loadInvitations = useCallback(async () => {
     const requestSequence = ++loadSequence.current;
@@ -70,18 +70,16 @@ export function PendingInvitations() {
       });
       if (error) throw error;
 
-      setInvitations((current) =>
-        current.filter((item) => item.entity_id !== invitation.entity_id),
-      );
+      setInvitations((current) => current.filter((item) => item.entity_id !== invitation.entity_id));
       window.dispatchEvent(new Event("settlex:consent-changed"));
       toastSuccess(
         invitation.entity_type === "expense" ? "Expense accepted" : "Trip accepted",
-        "The accepted item is now included in your SettleX balances.",
+        "The accepted item is now included in your SettleX balances."
       );
     } catch {
       toastError(
         "Could not accept invitation",
-        "Nothing changed. Please retry after checking your connection.",
+        "Nothing changed. Please retry after checking your connection."
       );
     } finally {
       setAcceptingId(null);
@@ -99,18 +97,16 @@ export function PendingInvitations() {
       });
       if (error) throw error;
 
-      setInvitations((current) =>
-        current.filter((item) => item.entity_id !== invitation.entity_id),
-      );
+      setInvitations((current) => current.filter((item) => item.entity_id !== invitation.entity_id));
       window.dispatchEvent(new Event("settlex:consent-changed"));
       toastSuccess(
         invitation.entity_type === "expense" ? "Expense declined" : "Trip declined",
-        "The invitation was dismissed and will not affect your balances.",
+        "The invitation was dismissed and will not affect your balances."
       );
     } catch {
       toastError(
         "Could not decline invitation",
-        "Nothing changed. Please retry after checking your connection.",
+        "Nothing changed. Please retry after checking your connection."
       );
     } finally {
       setDecliningId(null);
@@ -133,9 +129,7 @@ export function PendingInvitations() {
             <h2 id="pending-invitations-title" className="text-sm font-bold text-[#0F0F14]">
               Pending invitations
             </h2>
-            <p className="text-[11px] text-[#888]">
-              Nothing affects your balances until you accept.
-            </p>
+            <p className="text-[11px] text-[#888]">Nothing affects your balances until you accept.</p>
           </div>
         </div>
         {!loading && invitations.length > 0 && (
@@ -182,9 +176,7 @@ export function PendingInvitations() {
                     <Icon size={14} className="text-[#B9FF66]" aria-hidden="true" />
                   </div>
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-bold text-[#0F0F14]">
-                      {invitation.title}
-                    </p>
+                    <p className="truncate text-sm font-bold text-[#0F0F14]">{invitation.title}</p>
                     <p className="mt-0.5 text-xs text-[#666]">
                       From{" "}
                       <span className="font-mono text-[#0F0F14]">

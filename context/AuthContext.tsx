@@ -22,8 +22,6 @@ import { reportError } from "@/lib/observability/logger";
 import { supabaseErrorFields } from "@/lib/observability/supabaseError";
 import { userFacingMessage } from "@/lib/errors/userMessage";
 
-// ─── Types ────────────────────────────────────────────────────────────────────
-
 export interface User {
   id: string;
   walletAddress: string;
@@ -37,37 +35,24 @@ interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   isAuthenticated: boolean;
-  /**
-   * Set when the wallet could not prove ownership of its key (signature
-   * declined, server unreachable). Every database call fails while this is set,
-   * so the UI should ask the user to re-authenticate rather than carry on.
-   */
+  /** Set when the wallet can't prove key ownership; DB calls will fail until re-auth. */
   sessionError: string | null;
-  /** Whether the session is inside the expiry warning window or has expired. */
   isSessionExpiring: boolean;
-  /** Whether the session has passed its expiration time. */
   isSessionExpired: boolean;
-  /** Seconds until the session expires, or 0 if expired, or null if unauthenticated. */
+  /** Seconds left, 0 if expired, null if unauthenticated. */
   sessionSecondsRemaining: number | null;
-  /** True while the user is confirming a re-auth signature prompt. */
   isSigningToContinue: boolean;
-  /** Prompts the wallet to sign and re-authenticate an expiring or expired session. */
   signToContinue: () => Promise<void>;
   signUp: (displayName: string) => Promise<void>;
   signIn: () => Promise<void>;
   signOut: () => Promise<void>;
-  /** Re-runs the wallet signing handshake. */
   refreshSession: () => Promise<void>;
   updateProfile: (updates: Partial<Pick<User, "displayName">>) => Promise<void>;
   resolveUserProfile: (walletAddress: string) => Promise<string | null>;
 }
 
-// ─── Context ──────────────────────────────────────────────────────────────────
-
 const AuthContext = createContext<AuthContextType | null>(null);
 AuthContext.displayName = "AuthContext";
-
-// ─── Helper: Convert DB row to User ───────────────────────────────────────────
 
 function dbRowToUser(row: unknown): User {
   const parsed = parseUserRow(row);
@@ -81,9 +66,7 @@ function dbRowToUser(row: unknown): User {
   };
 }
 
-// ─── Provider ─────────────────────────────────────────────────────────────────
-
-// ─── localStorage helpers ────────────────────────────────────────────────────
+// localStorage cache helpers
 
 function saveUserToCache(user: User) {
   try {
@@ -119,14 +102,7 @@ function clearUserCache(walletAddress?: string | null) {
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(() => {
-    // Render hint only — shows the user's name instead of a flash of empty UI
-    // on refresh. It is NOT evidence of anything: `isAuthenticated` below
-    // ignores it entirely, and every request is authorized by the signed token.
-    //
-    // The wallet context has not run yet at this point, so the address comes
-    // straight from storage. It only ever selects *which* wallet's cache to
-    // read, so a hand-edited value surfaces that wallet's own cached profile
-    // and nothing else.
+    // Just a render hint to avoid a flash; not used for actual auth
     if (typeof window === "undefined") return null;
     try {
       return loadUserFromCache(localStorage.getItem(LS_PUBLIC_KEY));
@@ -136,10 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   });
   const [isLoading, setIsLoading] = useState(true);
   const [sessionError, setSessionError] = useState<string | null>(null);
-  // Bumped by refreshSession() to re-run the handshake effect below.
-  const [sessionNonce, setSessionNonce] = useState(0);
-  // Set only after the wallet has signed a server-issued challenge and the
-  // server has minted a token for this exact address.
+  const [sessionNonce, setSessionNonce] = useState(0); // bumped to re-run handshake
   const [verifiedWallet, setVerifiedWallet] = useState<string | null>(null);
   const [isSessionExpiring, setIsSessionExpiring] = useState(false);
   const [isSessionExpired, setIsSessionExpired] = useState(false);
@@ -147,17 +120,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isSigningToContinue, setIsSigningToContinue] = useState(false);
   const { publicKey, isConnected, isHydrated } = useWalletContext();
 
-  // Authorization rests on the verified token, never on cached state. Writing
-  // `settlex:user` and `settlex:publicKey` by hand now buys nothing: without a
-  // signature the server issues no token, so this stays false and every
-  // database call is rejected by RLS regardless.
+  // Auth is based on the verified token, not cached state — hand-editing localStorage won't help
   const isAuthenticated =
     !!user && isConnected && !!verifiedWallet && verifiedWallet === publicKey;
 
-  // ── Load user profile when wallet connects ────────────────────────────────────────────────────────
-
+  // Load user profile when wallet connects
   useEffect(() => {
-    // Wait for wallet hydration to complete before making auth decisions
     if (!isHydrated) return;
 
     if (!publicKey) {
@@ -170,19 +138,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return;
     }
 
-    // A different address than the one we verified means the wallet switched
-    // accounts. Revoke immediately — before any await — so no render can slip
-    // through with the old identity still marked authenticated.
+    // Wallet switched accounts — revoke before any await so the old identity can't slip through
     setVerifiedWallet((current) => (current === publicKey ? current : null));
 
     async function loadUser(wallet: string) {
-      // Prove key ownership before touching the database — the profile table is
-      // readable only by an authenticated wallet. This prompts the wallet to
-      // sign once per session, not once per page load.
+      // Sign once per session to prove key ownership before touching the DB
       const client = await getAuthenticatedClient(wallet).catch((err: unknown) => {
-        // Displayed in the UI, so it is vetted first: a handshake failure can
-        // carry a 503 body or transport text rather than anything a user can act
-        // on. The full error goes to the reporter.
         reportError("auth.session_handshake_failed", err);
         setSessionError(userFacingMessage(err).message);
         return null;
@@ -194,8 +155,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return;
       }
 
-      // The token exists and its `wallet_address` claim was signed by the
-      // server for this address — that, and only that, is what authorizes.
+      // Token verified — this is what actually authorizes DB access
       setVerifiedWallet(wallet);
       setSessionError(null);
 
@@ -228,8 +188,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     loadUser(publicKey);
   }, [publicKey, isHydrated, sessionNonce]);
 
-  // ── Monitor session expiry for proactive warning and prompt ───────────────
-
+  // Session expiry monitoring
   useEffect(() => {
     if (!publicKey || !verifiedWallet || verifiedWallet !== publicKey) {
       setIsSessionExpiring(false);
@@ -261,8 +220,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       unsubscribe();
     };
   }, [publicKey, verifiedWallet]);
-
-  // ── Sign up: Create new user profile ──────────────────────────────────────
 
   const signUp = useCallback(
     async (displayName: string) => {
@@ -330,8 +287,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [publicKey]
   );
 
-  // ── Sign in: Update last login time ───────────────────────────────────────
-
   const signIn = useCallback(async () => {
     if (!publicKey) {
       throw new Error("Wallet not connected");
@@ -377,14 +332,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [publicKey]);
 
-  // ── Sign out: Clear user state ──────────────────────────────────────────
-
   const { error: toastError } = useToast();
 
   const signOut = useCallback(async () => {
-    // Always clear locally first — the user must not be trapped in a session
-    // because of a network blip. Revocation is awaited so we can surface a
-    // warning without blocking the sign-out itself.
+    // Clear locally first so the user isn't stuck if revocation fails
     setUser(null);
     clearUserCache(publicKey);
     setVerifiedWallet(null);
@@ -408,8 +359,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   }, [publicKey, toastError]);
 
-  // ── Refresh session: re-run the wallet signing handshake ──────────────────
-
   const refreshSession = useCallback(async () => {
     await clearWalletSession();
     setVerifiedWallet(null);
@@ -417,8 +366,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setIsLoading(true);
     setSessionNonce((n) => n + 1);
   }, []);
-
-  // ── Sign to continue: re-authenticate session with wallet prompt ──────────
 
   const signToContinue = useCallback(async () => {
     if (!publicKey) return;
@@ -436,8 +383,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       setIsSigningToContinue(false);
     }
   }, [publicKey, toastError]);
-
-  // ── Update profile ─────────────────────────────────────────────────────────
 
   const updateProfile = useCallback(
     async (updates: Partial<Pick<User, "displayName">>) => {
@@ -487,8 +432,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     [publicKey, user]
   );
 
-  // ── Resolve profile: look up verified display name ────────────────────────
-
   const resolveUserProfile = useCallback(
     async (walletAddress: string): Promise<string | null> => {
       if (!publicKey || !walletAddress || !walletAddress.trim()) return null;
@@ -505,8 +448,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     },
     [publicKey]
   );
-
-  // ──────────────────────────────────────────────────────────────────────────
 
   const value: AuthContextType = {
     user,
@@ -528,8 +469,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }
-
-// ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useAuth() {
   const ctx = useContext(AuthContext);

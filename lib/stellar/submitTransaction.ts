@@ -7,13 +7,13 @@ export type { StellarSubmitResult };
 
 function friendlyOpError(code: string): string {
   const map: Record<string, string> = {
-    op_underfunded:          "Insufficient XLM balance to complete this payment.",
+    op_underfunded: "Insufficient XLM balance to complete this payment.",
     op_insufficient_balance: "Insufficient XLM balance to complete this payment.",
-    op_no_destination:       "The recipient account doesn't exist on the Stellar network.",
-    op_no_trust:             "The recipient hasn't set up a trustline for this asset.",
-    op_line_full:            "The recipient's account cannot receive more of this asset.",
-    op_not_authorized:       "You are not authorised to send to this account.",
-    op_malformed:            "Transaction is malformed — check the amount and addresses.",
+    op_no_destination: "The recipient account doesn't exist on the Stellar network.",
+    op_no_trust: "The recipient hasn't set up a trustline for this asset.",
+    op_line_full: "The recipient's account cannot receive more of this asset.",
+    op_not_authorized: "You are not authorised to send to this account.",
+    op_malformed: "Transaction is malformed — check the amount and addresses.",
   };
   return map[code] ?? `Operation failed: ${code}`;
 }
@@ -25,7 +25,7 @@ export function extractTxHash(tx: any): string {
       return typeof h === "string" ? h : h?.toString("hex") || "";
     }
   } catch {
-    // Ignore extraction failure
+    // ignore if tx doesn't expose hash()
   }
   return "";
 }
@@ -115,7 +115,7 @@ export async function pollTransactionByHash(
       if (err?.message?.includes("included in a ledger but failed")) {
         throw err;
       }
-      // 404 means transaction has not been included in a closed ledger yet — continue polling
+      // 404 just means it hasn't landed in a closed ledger yet
     }
     await new Promise((r) => setTimeout(r, intervalMs));
   }
@@ -135,7 +135,7 @@ function isDefinitiveFailure(err: unknown): { isDefinitive: boolean; message?: s
   const status = horizonErr?.response?.status ?? horizonErr?.status;
   const extras = horizonErr?.response?.data?.extras;
 
-  // 504 Timeout, 502 Bad Gateway, 503 Service Unavailable, network aborts are indeterminate
+  // Gateway/server timeouts may still land on-chain
   if (status === 504 || status === 502 || status === 503 || status === 500) {
     return { isDefinitive: false };
   }
@@ -167,7 +167,7 @@ function isDefinitiveFailure(err: unknown): { isDefinitive: boolean; message?: s
       return { isDefinitive: true, message: "Insufficient XLM balance to pay transaction fees." };
     }
 
-    // tx_bad_seq can happen if the transaction was already submitted and processed during a timeout retry
+    // tx_bad_seq can happen on retry if the first attempt actually went through
     if (transaction === "tx_bad_seq") {
       return { isDefinitive: false, message: "Transaction sequence mismatch. Please try again." };
     }
@@ -177,7 +177,7 @@ function isDefinitiveFailure(err: unknown): { isDefinitive: boolean; message?: s
     }
   }
 
-  // Network exceptions, fetch errors, timeouts without response are indeterminate
+  // Network drops / timeouts without a response are indeterminate
   return { isDefinitive: false };
 }
 
@@ -198,13 +198,11 @@ export async function submitSignedTransaction(
   } catch (err: unknown) {
     const check = isDefinitiveFailure(err);
 
-    // If it's a known deterministic failure, fail immediately
     if (check.isDefinitive && check.message) {
       throw new Error(check.message);
     }
 
-    // On indeterminate failures (504 timeout, network drops, 502/503, or tx_bad_seq race),
-    // poll Horizon by hash before failing to ensure we do not report false negatives
+    // Might have landed despite the error, so poll by hash before giving up
     if (txHash) {
       const pollResult = await pollTransactionByHash(
         txHash,
@@ -217,12 +215,10 @@ export async function submitSignedTransaction(
       }
     }
 
-    // If tx_bad_seq was reported and hash polling didn't find it, report bad sequence error
     if (check.message) {
       throw new SubmissionIndeterminateError(check.message, txHash);
     }
 
-    // Otherwise, if indeterminate and not confirmed after polling, provide an actionable warning
     throw new SubmissionIndeterminateError(
       "Transaction submission timed out. The network might still be processing your transaction. " +
       "Please check your transaction history or wait a moment before trying again to avoid duplicate payments.",

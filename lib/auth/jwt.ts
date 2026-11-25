@@ -1,30 +1,22 @@
 /**
- * Minimal HS256 JWT signing/verification, used to mint Supabase access tokens
- * once a wallet has proven control of its private key.
- *
- * Server-side only — it needs `SUPABASE_JWT_SECRET`, which must never reach the
- * browser bundle.
+ * Minimal HS256 JWT helpers for minting Supabase access tokens after wallet verification.
+ * Server-side only (depends on SUPABASE_JWT_SECRET).
  */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "crypto";
 import { WALLET_CLAIM } from "@/lib/auth/constants";
 
 export interface WalletClaims {
-  /** Deterministic UUID derived from the wallet address. */
-  sub: string;
+  sub: string; // deterministic UUID from wallet address
   aud: string;
   role: string;
   iss: string;
   iat: number;
   exp: number;
-  /** The Stellar address this token proves control of. */
   wallet_address: string;
-  /** Unique token id, so this one token can be revoked before it expires. */
-  jti: string;
+  jti: string; // unique token id for revocation
 }
 
-// ─── base64url helpers ────────────────────────────────────────────────────────
-
-function encodeSegment(value: Buffer | string): string {
+function encodeSegment(value: Buffer | string) {
   return Buffer.from(value)
     .toString("base64")
     .replace(/\+/g, "-")
@@ -32,11 +24,11 @@ function encodeSegment(value: Buffer | string): string {
     .replace(/=+$/, "");
 }
 
-function decodeSegment(segment: string): Buffer {
+function decodeSegment(segment: string) {
   return Buffer.from(segment.replace(/-/g, "+").replace(/_/g, "/"), "base64");
 }
 
-/** Constant-time comparison that tolerates differing lengths. */
+/** Constant-time string comparison that handles mismatched lengths. */
 export function safeEqual(a: string, b: string): boolean {
   const bufA = Buffer.from(a, "utf8");
   const bufB = Buffer.from(b, "utf8");
@@ -44,9 +36,7 @@ export function safeEqual(a: string, b: string): boolean {
   return timingSafeEqual(bufA, bufB);
 }
 
-// ─── Signing / verification ───────────────────────────────────────────────────
-
-function sign(input: string, secret: string): string {
+function sign(input: string, secret: string) {
   return encodeSegment(createHmac("sha256", secret).update(input).digest());
 }
 
@@ -58,14 +48,11 @@ export function signJwt(claims: Record<string, unknown>, secret: string): string
   return `${body}.${sign(body, secret)}`;
 }
 
-/**
- * Verifies signature and expiry. Returns the claims, or `null` when the token
- * is malformed, tampered with, or expired.
- */
+/** Verifies signature, alg, and expiry; returns claims or null. */
 export function verifyJwt(
   token: string,
   secret: string,
-  now: number = Date.now(),
+  now = Date.now(),
 ): Record<string, unknown> | null {
   if (!token || !secret) return null;
 
@@ -77,20 +64,19 @@ export function verifyJwt(
 
   let claims: Record<string, unknown>;
   try {
-    const decoded: unknown = JSON.parse(decodeSegment(payload).toString("utf8"));
+    const decoded = JSON.parse(decodeSegment(payload).toString("utf8")) as unknown;
     if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return null;
     claims = decoded as Record<string, unknown>;
   } catch {
     return null;
   }
 
-  const alg = (() => {
-    try {
-      return (JSON.parse(decodeSegment(header).toString("utf8")) as { alg?: unknown }).alg;
-    } catch {
-      return undefined;
-    }
-  })();
+  let alg: unknown;
+  try {
+    alg = (JSON.parse(decodeSegment(header).toString("utf8")) as { alg?: unknown }).alg;
+  } catch {
+    alg = undefined;
+  }
   if (alg !== "HS256") return null;
 
   const exp = claims.exp;
@@ -99,12 +85,9 @@ export function verifyJwt(
   return claims;
 }
 
-// ─── Supabase access tokens ───────────────────────────────────────────────────
-
 /**
- * Derives a stable RFC-4122 UUID from a wallet address so the `sub` claim looks
- * like a normal Supabase subject. Nothing authorizes on it — the wallet claim
- * is the identity — but PostgREST helpers such as `auth.uid()` expect a UUID.
+ * Derives a stable v4-shaped UUID from a wallet address so `sub` satisfies
+ * PostgREST helpers like `auth.uid()` (auth still keys off `wallet_address`).
  */
 export function walletToUuid(walletAddress: string): string {
   const bytes = createHash("sha256")
@@ -115,28 +98,16 @@ export function walletToUuid(walletAddress: string): string {
   uuid[6] = (uuid[6] & 0x0f) | 0x40; // version 4
   uuid[8] = (uuid[8] & 0x3f) | 0x80; // RFC 4122 variant
   const hex = uuid.toString("hex");
-  return [
-    hex.slice(0, 8),
-    hex.slice(8, 12),
-    hex.slice(12, 16),
-    hex.slice(16, 20),
-    hex.slice(20),
-  ].join("-");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 export interface AccessToken {
   token: string;
-  /** Expiry as an ISO timestamp. */
   expiresAt: string;
-  /** Id of this token, needed to revoke it on sign-out. */
   jti: string;
 }
 
-/**
- * Mints a Supabase-compatible access token binding the request to a wallet that
- * has already proven key ownership. RLS policies read the `wallet_address`
- * claim; the `role` claim is what PostgREST switches the database role to.
- */
+/** Mints a Supabase-compatible access token for a verified wallet. */
 export function issueAccessToken(params: {
   walletAddress: string;
   secret: string;

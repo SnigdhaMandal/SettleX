@@ -17,8 +17,6 @@ import { formatAddress, formatXLM } from "@/lib/utils";
 import { STELLAR_EXPLORER, type StellarNetwork } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils";
 
-// ─── Network badge colour ─────────────────────────────────────────────────────
-
 function NetworkBadge({ network }: { network: StellarNetwork | null }) {
   const isMainnet = network === "PUBLIC";
   const isUnverified = network === null;
@@ -47,8 +45,6 @@ function NetworkBadge({ network }: { network: StellarNetwork | null }) {
     </span>
   );
 }
-
-// ─── Dropdown menu ────────────────────────────────────────────────────────────
 
 interface WalletDropdownProps {
   publicKey: string;
@@ -88,7 +84,6 @@ function WalletDropdown({
       transition={{ duration: 0.18, ease: [0.22, 1, 0.36, 1] }}
       className="absolute right-0 top-full mt-2 w-72 bg-white rounded-2xl border border-[#E5E5E5] shadow-[0_8px_40px_-8px_rgba(0,0,0,0.15)] overflow-hidden z-[100]"
     >
-      {/* Header */}
       <div className="px-4 py-3 bg-[#F6F6F6] border-b border-[#E5E5E5]">
         <div className="flex items-center justify-between mb-1.5">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-[#AAA]">
@@ -97,7 +92,6 @@ function WalletDropdown({
           <NetworkBadge network={network} />
         </div>
 
-        {/* Address row */}
         <div className="flex items-center gap-2">
           <p className="text-sm font-mono font-semibold text-[#0F0F14] flex-1 truncate">
             {formatAddress(publicKey, 8)}
@@ -125,7 +119,6 @@ function WalletDropdown({
         </div>
       </div>
 
-      {/* Balance row */}
       <div className="px-4 py-3 border-b border-[#E5E5E5]">
         <div className="flex items-center justify-between">
           <div>
@@ -157,7 +150,6 @@ function WalletDropdown({
         </div>
       </div>
 
-      {/* Actions */}
       <div className="p-2">
         <button
           onClick={() => {
@@ -174,11 +166,8 @@ function WalletDropdown({
   );
 }
 
-// ─── Main component ───────────────────────────────────────────────────────────
-
 interface ConnectWalletButtonProps {
-  /** Compact mode for mobile menus — shows text only, no balance */
-  compact?: boolean;
+  compact?: boolean; // mobile menu mode (hides balance)
   className?: string;
 }
 
@@ -203,7 +192,7 @@ export function ConnectWalletButton({
   const [dropdownOpen, setDropdownOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
-  // Close dropdown on outside click
+  // close dropdown when clicking outside
   useEffect(() => {
     function handler(e: MouseEvent) {
       if (ref.current && !ref.current.contains(e.target as Node)) {
@@ -213,8 +202,6 @@ export function ConnectWalletButton({
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, []);
-
-  // ── Connected ──────────────────────────────────────────────────────────────
 
   if (isConnected && publicKey) {
     if (compact) {
@@ -251,12 +238,10 @@ export function ConnectWalletButton({
             "bg-white border-[#E5E5E5] hover:border-[#B9FF66]/60 hover:shadow-[0_2px_12px_-2px_rgba(185,255,102,0.3)]"
           )}
         >
-          {/* Avatar dot */}
           <div className="w-7 h-7 rounded-lg bg-[#B9FF66] flex items-center justify-center">
             <Wallet size={13} className="text-[#0F0F14]" />
           </div>
 
-          {/* Address */}
           <div className="hidden sm:block text-left">
             <p className="text-[11px] text-[#AAA] leading-none mb-0.5">Connected</p>
             <p className="text-xs font-mono font-semibold text-[#0F0F14] leading-none">
@@ -266,7 +251,6 @@ export function ConnectWalletButton({
 
           <span className="sm:hidden inline-flex items-center w-2 h-2 rounded-full bg-[#2D6600]" />
 
-          {/* Balance pill */}
           {!isLoadingBalance && balance && (
             <span className="hidden sm:flex items-center text-[11px] font-bold text-[#2D6600] bg-[#B9FF66]/15 px-2 py-0.5 rounded-lg">
               {formatXLM(balance)} XLM
@@ -302,8 +286,6 @@ export function ConnectWalletButton({
     );
   }
 
-  // ── Error state ────────────────────────────────────────────────────────────
-
   if (error) {
     return (
       <div className={cn("flex items-center gap-2", className)}>
@@ -317,8 +299,6 @@ export function ConnectWalletButton({
       </div>
     );
   }
-
-  // ── Default: connect button ────────────────────────────────────────────────
 
   return (
     <button

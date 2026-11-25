@@ -83,11 +83,7 @@ interface PendingOnChainRecord {
 
 type RecordOutcome = { ok: true } | { ok: false; message: string };
 
-/**
- * mark_share_paid errors that mean this transfer is already on record: the
- * share is paid, or this exact hash is already in `payments` (a previous
- * attempt succeeded but its response was lost).
- */
+// Errors meaning the transfer is already recorded (share paid, or hash already used)
 function isAlreadyRecorded(err: unknown): boolean {
   const message = (err as { message?: string })?.message ?? "";
   return /already marked as paid|already used on another/i.test(message);
@@ -109,14 +105,11 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
 
   const [paymentState, setPaymentState] = useState<PaymentState>({ status: "idle" });
   const [pendingOnChain, setPendingOnChain] = useState<PendingOnChainRecord | null>(null);
-  /** Durable pending payments for this expense, keyed by memberId. */
   const [pendingByMember, setPendingByMember] = useState<Record<string, PendingPayment>>({});
-  /** The pending entry the current paymentState refers to (for retries). */
   const activePendingRef = useRef<PendingPayment | null>(null);
-  /** Synchronous double-click guard: state updates land too late for that. */
   const inFlightRef = useRef(false);
 
-  // ─── Pending-payment bookkeeping ───────────────────────────────────────────
+  // Pending-payment bookkeeping
 
   const persistPending = useCallback(async (entry: PendingPayment, awaitRemote: boolean) => {
     savePendingPaymentLocal(entry);
@@ -143,7 +136,6 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     setTimeout(() => refreshBalance(), 8000);
   }, [refreshBalance]);
 
-  /** Marks the share paid in the database for a transfer that has landed. */
   const recordShare = useCallback(async (entry: PendingPayment): Promise<RecordOutcome> => {
     try {
       await markSharePaid(entry.expenseId, entry.memberId, entry.txHash);
@@ -158,10 +150,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     }
   }, [markSharePaid]);
 
-  /**
-   * Finishes a payment whose transfer has landed once the share is recorded:
-   * clears the pending entry and reports the final state.
-   */
+  // Finish up once a landed transfer has been recorded in the DB
   const finishRecorded = useCallback((entry: PendingPayment, ledger: number, announce: boolean) => {
     clearPending(entry);
 
@@ -185,10 +174,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     if (announce) toastSuccess("Payment recorded", `TX: ${entry.txHash.slice(0, 12)}…`);
   }, [clearPending, toastInfo, toastSuccess]);
 
-  /**
-   * Brings a pending entry to a resolved state using Horizon as the source of
-   * truth for whether the money moved.
-   */
+  // Check Horizon to see if the money actually moved, then reconcile
   const reconcilePending = useCallback(async (entry: PendingPayment, announce: boolean) => {
     activePendingRef.current = entry;
     setPaymentState({ status: "verifying", hash: entry.txHash });
@@ -299,7 +285,7 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     };
   }, [publicKey, expenseId]);
 
-  // ─── Public actions ────────────────────────────────────────────────────────
+  // Public actions
 
   const reset = useCallback(() => {
     setPaymentState({ status: "idle" });
@@ -319,7 +305,6 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     return false;
   }, [expectedNetwork, refreshNetwork, toastError]);
 
-  /** Retries the database record (or confirmation) of a pending payment. */
   const retryRecording = useCallback(async () => {
     const entry =
       activePendingRef.current ??
@@ -630,12 +615,8 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     ],
   );
 
-  /**
-   * "I paid via QR" (Issue #204): a QR payment happens in another wallet app,
-   * so its hash never comes back on its own. The owner pastes it; it is
-   * checked against Horizon (memo, sender, recipient, exact XLM amount) and
-   * then recorded exactly like an in-app payment.
-   */
+  // "I paid via QR": user pastes a TX hash from their external wallet app,
+  // we verify it against Horizon and then record it like a normal payment.
   const reconcileQrPayment = useCallback(
     async ({
       share,
@@ -777,7 +758,6 @@ export function usePayment({ expenseId }: UsePaymentOpts) {
     reset,
     retryOnChainRecord,
     retryRecording,
-    /** Shares with a payment that may have moved money; Pay must stay disabled. */
     pendingShareIds,
     hasPendingPayment: (memberId: string) => memberId in pendingByMember,
     isIdle:    paymentState.status === "idle",

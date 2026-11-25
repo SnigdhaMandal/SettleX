@@ -5,8 +5,7 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-// Precached by the service worker and shown when a navigation request fails
-// while offline. Intentionally dependency-free so it always renders.
+// Precached SW fallback; kept dependency-free so it always renders offline.
 export default function OfflinePage() {
   return (
     <main
