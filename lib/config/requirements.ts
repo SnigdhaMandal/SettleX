@@ -1,33 +1,20 @@
 /**
- * The single source of truth for what a production deployment must have set.
+ * Env vars required for a production deployment.
  *
- * This list exists because the pre-deploy workflow and the post-deploy health
- * endpoint used to disagree with reality: the workflow checked the two public
- * Supabase values and nothing else, so a deployment missing
- * `SUPABASE_JWT_SECRET` — without which every sign-in returns 503 — passed a job
- * named "Validate Production Build Inputs" and shipped unusable.
- *
- * Adding a variable here makes it checked in both places at once. `scripts/`
- * reads the same list from CI, so the workflow cannot drift from the runtime.
- *
- * Nothing here reads a value. Callers decide whether to report presence
- * (`/api/health`) or to fail (`checkProductionConfig`); neither ever echoes a
- * secret's contents.
+ * Kept in one place so CI scripts (`scripts/`) and runtime checks
+ * (`/api/health`, `checkProductionConfig`) stay in sync. Nothing here reads
+ * secret values; callers decide whether to report presence or fail.
  */
 
 /** Whether a missing variable breaks the deployment or only degrades it. */
 export type Requirement = "required" | "recommended";
 
 export interface ConfigRequirement {
-  /** Environment variable name. */
   name: string;
   requirement: Requirement;
-  /**
-   * `true` when the value is inlined into the browser bundle at build time, so
-   * it must be present in the *build* environment and not only at runtime.
-   */
+  /** True when inlined into the browser bundle at build time (must be set in the build env). */
   buildTime: boolean;
-  /** What breaks when it is missing, in operator terms. */
+  /** Operator-facing summary of what breaks when missing. */
   impact: string;
 }
 
@@ -80,14 +67,8 @@ export const CONFIG_REQUIREMENTS: readonly ConfigRequirement[] = [
   },
 ];
 
-/** A distinctness rule between two variables, checked only when both are set. */
-interface DistinctPair {
-  a: string;
-  b: string;
-  reason: string;
-}
-
-const MUST_DIFFER: readonly DistinctPair[] = [
+// Pairs that must not share the same value (checked only when both are set).
+const MUST_DIFFER = [
   {
     a: "AUTH_CHALLENGE_SECRET",
     b: "SUPABASE_JWT_SECRET",
@@ -103,23 +84,18 @@ export interface ConfigProblem {
 }
 
 export interface ConfigReport {
-  /** `false` when any `required` variable is missing or a rule is violated. */
-  ok: boolean;
+  ok: boolean; // false if any required var is missing or a rule fails
   problems: ConfigProblem[];
-  /** Names of `recommended` variables that are missing. */
-  warnings: ConfigProblem[];
+  warnings: ConfigProblem[]; // missing recommended vars
 }
 
-function isBlank(value: string | undefined): boolean {
+function isBlank(value: string | undefined) {
   return value === undefined || value.trim() === "";
 }
 
 /**
- * Checks `env` against the requirements above.
- *
- * Takes the environment as a parameter rather than reading `process.env` so the
- * CI script can check a build environment and the health endpoint can check the
- * running one, with the same code.
+ * Checks `env` against `CONFIG_REQUIREMENTS`.
+ * Accepts `env` as a parameter so CI scripts and `/api/health` share one code path.
  */
 export function checkConfig(env: NodeJS.ProcessEnv = process.env): ConfigReport {
   const problems: ConfigProblem[] = [];
