@@ -60,7 +60,7 @@ Every payment produces a **real, verifiable transaction hash** on the Stellar bl
 - **Non-custodial** — your private key never leaves your wallet extension. SettleX only receives the signed transaction envelope.
 - **No intermediary** — money moves peer-to-peer between Stellar wallets; the app never holds funds.
 - **On-chain receipts** — every settled share has a Stellar transaction hash you can verify on [stellar.expert](https://stellar.expert/explorer/testnet).
-- **Multi-wallet** — supports Freighter, xBull, Lobstr, and Rabet with install detection. WalletConnect (mobile wallets) is documented as a one-step add in [docs/WALLET_INTEGRATION.md](docs/WALLET_INTEGRATION.md).
+- **Multi-wallet** — supports Freighter, xBull, Lobstr, and Rabet with install detection. WalletConnect is not enabled yet; see [docs/WALLET_INTEGRATION.md](docs/WALLET_INTEGRATION.md) for its project setup and integration requirements.
 
 ---
 
@@ -266,7 +266,7 @@ including the known trust gaps and how each one is closed — lives in
 | Network | Stellar Testnet | Mainnet (after a contract audit) |
 | Settlement asset | XLM (native) | USDC via Stellar path payments |
 | Settlement integrity | On-chain receipt log (tx hash stored; not yet verified in-contract) | Verified / atomic on-chain settlement |
-| Wallets | Freighter, xBull, Lobstr, Rabet | + WalletConnect (mobile), passkey smart wallets |
+| Wallets | Freighter, xBull, Lobstr, Rabet | WalletConnect (mobile, not enabled), passkey smart wallets |
 | App shell | Installable PWA, nonce-based CSP | Push notifications, offline reads |
 | Identity | Wallet address (client-supplied) | Sign-In-With-Stellar (signed challenge) |
 
@@ -584,7 +584,7 @@ settlex/
 **Product & strategy**
 - [Product Conversion Guide](docs/PRODUCT_CONVERSION_GUIDE.md) — the full project→product roadmap
 - [Brand Guidelines](docs/BRAND.md)
-- [Wallet Integration](docs/WALLET_INTEGRATION.md) — supported wallets + adding WalletConnect
+- [Wallet Integration](docs/WALLET_INTEGRATION.md) — tested wallet support, network/account limits, and WalletConnect setup
 
 **Getting started & testing**
 - [Quickstart](docs/QUICKSTART.md)
