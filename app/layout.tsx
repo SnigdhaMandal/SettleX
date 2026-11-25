@@ -21,7 +21,7 @@ const poppins = Poppins({
 
 export const metadata: Metadata = {
   metadataBase: new URL(
-    process.env.NEXT_PUBLIC_SITE_URL || 
+    process.env.NEXT_PUBLIC_SITE_URL ||
     (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "https://settlex.app")
   ),
   title: {
@@ -51,15 +51,13 @@ export const metadata: Metadata = {
     title: "SettleX — Split Bills on the Stellar Blockchain",
     description:
       "Decentralized bill-splitting powered by Stellar. Split instantly, pay transparently.",
-    // Social image is provided by app/opengraph-image.tsx (file convention).
   },
   twitter: {
     card: "summary_large_image",
     title: "SettleX — Split Bills on the Stellar Blockchain",
     description: "Decentralized bill-splitting powered by Stellar.",
-    // Image provided by app/twitter-image.tsx (file convention).
   },
-  // Icons are provided by app/icon.svg + app/apple-icon.tsx (file conventions).
+  // icons live in app/icon.svg + app/apple-icon.tsx
   applicationName: "SettleX",
   appleWebApp: {
     capable: true,
@@ -73,9 +71,7 @@ export const viewport: Viewport = {
   themeColor: "#B9FF66",
   width: "device-width",
   initialScale: 1,
-  // Extend under the iOS notch / home indicator so safe-area insets work in the
-  // installed PWA.
-  viewportFit: "cover",
+  viewportFit: "cover", // needed for iOS notch / PWA safe-area insets
 };
 
 export default function RootLayout({
@@ -86,8 +82,7 @@ export default function RootLayout({
   return (
     <html lang="en" className={`scroll-smooth ${poppins.variable}`}>
       <body className="bg-[#F6F6F6] text-[#0F0F14] font-sans antialiased font-[family-name:var(--font-poppins)]">
-        {/* First in the tree: attaches error reporting before any provider
-            below it can throw. Renders nothing. */}
+        {/* mount error reporting before any provider can throw */}
         <ObservabilityInit />
         <ToastProvider>
           <WalletProvider>
