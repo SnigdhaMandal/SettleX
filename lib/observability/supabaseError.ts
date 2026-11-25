@@ -1,17 +1,9 @@
 /**
- * Classifies a Supabase/PostgREST error so failures can be counted by cause.
+ * Classifies Supabase/PostgREST errors so RLS denials, auth expiries,
+ * conflicts, and network drops can be counted separately.
  *
- * The issue asks specifically about knowing "when RLS rejects a write". An RLS
- * denial is not a bug in the query — it means the caller's `wallet_address`
- * claim did not authorize the row, which is either an auth problem (the token
- * expired, the wrong wallet is signed in) or a policy problem. Either way it
- * needs a different response than a dropped connection, so it gets its own
- * event name instead of being lumped into a generic write failure.
- *
- * Postgres error codes, via PostgREST's `code` field:
- *   42501 — insufficient_privilege, which is what an RLS policy violation
- *           surfaces as.
- *   PGRST301 — PostgREST's own "JWT expired / not authenticated".
+ * Key PostgREST codes: `42501` (insufficient_privilege / RLS violation),
+ * `PGRST301` (JWT expired / unauthenticated).
  */
 
 export type SupabaseFailureKind =
@@ -56,11 +48,8 @@ export function classifySupabaseError(error: unknown): SupabaseFailureKind {
 }
 
 /**
- * Fields worth attaching to a Supabase failure log line.
- *
- * Deliberately excludes `details`, which can quote the offending row's values —
- * amounts and wallet addresses — into the log. `code` and `kind` are what a
- * dashboard groups by.
+ * Extracts safe log fields (`kind` and `code`) from a Supabase error,
+ * omitting `details` which can leak row values like amounts or wallet addresses.
  */
 export function supabaseErrorFields(error: unknown): Record<string, unknown> {
   const candidate = asPostgrest(error);

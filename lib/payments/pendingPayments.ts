@@ -1,20 +1,10 @@
 /**
- * Durable record of share payments whose XLM transfer may have moved but whose
- * share has not yet been marked paid in the database (Issue #205).
+ * Tracks share payments whose XLM transfer may have gone through before the DB
+ * marked the share paid, preventing accidental double-payments.
  *
- * Lifecycle of an entry, keyed by (expenseId, memberId):
- *   1. "signed"    – written after the wallet signs and BEFORE submission; the
- *                    transaction hash is already fixed at this point.
- *   2. "submitted" – Horizon accepted the transaction; money has moved.
- *   3. removed     – mark_share_paid succeeded, or Horizon shows the
- *                    transaction failed / expired without landing.
- *
- * While an entry exists the share's Pay action is blocked, so a database
- * failure after the transfer can no longer lead to paying twice.
- *
- * Entries live in localStorage (synchronous, survives reloads and offline) and
- * are mirrored best-effort to the `pending_payments` table so other devices of
- * the same wallet see them too.
+ * Entries move from "signed" (pre-submit, hash already known) -> "submitted"
+ * (accepted by Horizon) -> removed once marked paid or confirmed dead.
+ * Stored synchronously in localStorage and mirrored best-effort to `pending_payments`.
  */
 
 import { HORIZON_URL } from "@/lib/utils/constants";
@@ -25,12 +15,9 @@ import type { Database } from "@/types/supabase";
 
 export const LS_PENDING_PAYMENTS = "settlex:pendingPayments";
 
-/** How long past a transaction's max time we wait before declaring it dead. */
-const EXPIRY_GRACE_MS = 60_000;
-/** Fallback lifetime for an entry without time bounds. */
-const UNBOUNDED_EXPIRY_MS = 15 * 60_000;
-/** Remote mirror calls must never hold up a payment for long. */
-const REMOTE_TIMEOUT_MS = 4_000;
+const EXPIRY_GRACE_MS = 60_000; // wait past tx max time before declaring it dead
+const UNBOUNDED_EXPIRY_MS = 15 * 60_000; // fallback lifetime when tx has no time bounds
+const REMOTE_TIMEOUT_MS = 4_000; // never let remote mirror calls stall a payment
 
 export type PendingPaymentStatus = "signed" | "submitted";
 
@@ -38,29 +25,29 @@ export interface PendingPayment {
   expenseId: string;
   memberId: string;
   txHash: string;
-  /** The wallet that SENT the transfer: the share's owner (debtor). */
+  /** Share owner (debtor) who sent the transfer. */
   payerWallet: string;
-  /** The wallet that received it: the member who paid the bill (creditor). */
+  /** Member who paid the bill (creditor). */
   destinationWallet: string;
   amount: string;
   tripId: string | null;
   status: PendingPaymentStatus;
   ledger: number | null;
   validUntil: string | null;
-  /** True once the Soroban contract record succeeded (trip expenses only). */
+  /** Set once the Soroban contract call succeeds (trip expenses only). */
   onChainRecorded: boolean;
   createdAt: string;
 }
 
 type PendingRow = Database["public"]["Tables"]["pending_payments"]["Row"];
 
-// ─── localStorage ────────────────────────────────────────────────────────────
+// localStorage store
 
-function storageKey(walletAddress: string): string {
+function storageKey(walletAddress: string) {
   return `${LS_PENDING_PAYMENTS}:${walletAddress}`;
 }
 
-function entryKey(expenseId: string, memberId: string): string {
+function entryKey(expenseId: string, memberId: string) {
   return `${expenseId}:${memberId}`;
 }
 
@@ -81,10 +68,13 @@ function readStore(walletAddress: string): Record<string, PendingPayment> {
   try {
     const raw = window.localStorage.getItem(storageKey(walletAddress));
     if (!raw) return {};
+
     const parsed = JSON.parse(raw) as Record<string, unknown>;
     const out: Record<string, PendingPayment> = {};
     for (const [key, value] of Object.entries(parsed ?? {})) {
-      if (isPendingPayment(value) && value.payerWallet === walletAddress) out[key] = value;
+      if (isPendingPayment(value) && value.payerWallet === walletAddress) {
+        out[key] = value;
+      }
     }
     return out;
   } catch {
@@ -101,7 +91,7 @@ function writeStore(walletAddress: string, store: Record<string, PendingPayment>
       window.localStorage.setItem(storageKey(walletAddress), JSON.stringify(store));
     }
   } catch {
-    // Private mode / quota: the database mirror is the fallback.
+    // Private mode / quota exceeded; fall back to the DB mirror
   }
 }
 
@@ -125,8 +115,8 @@ export function savePendingPaymentLocal(entry: PendingPayment): void {
 }
 
 /**
- * Removes the entry. When `txHash` is given, only an entry for that exact
- * transaction is removed, so a stale reconcile cannot wipe a newer payment.
+ * Removes an entry. If `txHash` is passed, only removes if it matches so a
+ * stale reconcile won't wipe out a newer attempt.
  */
 export function removePendingPaymentLocal(
   walletAddress: string,
@@ -139,18 +129,25 @@ export function removePendingPaymentLocal(
   const existing = store[key];
   if (!existing) return;
   if (txHash && existing.txHash !== txHash) return;
+
   delete store[key];
   writeStore(walletAddress, store);
 }
 
-// ─── Database mirror (best-effort) ───────────────────────────────────────────
+// Best-effort database mirror
 
 function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
+  return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("Timed out")), ms);
     promise.then(
-      (value) => { clearTimeout(timer); resolve(value); },
-      (err) => { clearTimeout(timer); reject(err); },
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err) => {
+        clearTimeout(timer);
+        reject(err);
+      },
     );
   });
 }
@@ -183,7 +180,7 @@ function rowToEntry(row: PendingRow): PendingPayment {
   };
 }
 
-/** Upserts the entry's row. Never throws; returns whether it was written. */
+/** Upserts the entry's row. Never throws; returns whether it succeeded. */
 export async function syncPendingPaymentRemote(entry: PendingPayment): Promise<boolean> {
   const client = await remoteClient(entry.payerWallet);
   if (!client) return false;
@@ -218,7 +215,7 @@ export async function syncPendingPaymentRemote(entry: PendingPayment): Promise<b
   }
 }
 
-/** Deletes the entry's row (only if it still refers to `txHash`). Never throws. */
+/** Deletes the entry's row if it still points to `txHash`. Never throws. */
 export async function deletePendingPaymentRemote(
   walletAddress: string,
   expenseId: string,
@@ -247,7 +244,7 @@ export async function deletePendingPaymentRemote(
   }
 }
 
-/** Pending rows for this wallet and expense from the database. Never throws. */
+/** Fetches pending rows for this wallet and expense from the DB. Never throws. */
 export async function fetchPendingPaymentsRemote(
   walletAddress: string,
   expenseId: string,
@@ -275,7 +272,7 @@ export async function fetchPendingPaymentsRemote(
   }
 }
 
-// ─── Horizon reconciliation ──────────────────────────────────────────────────
+// Horizon reconciliation
 
 export type HorizonTxStatus =
   | { state: "confirmed"; ledger: number }
@@ -291,6 +288,7 @@ export async function checkTransactionOnHorizon(txHash: string): Promise<Horizon
     });
     if (res.status === 404) return { state: "not_found" };
     if (!res.ok) return { state: "unknown" };
+
     const tx = (await res.json()) as { successful?: boolean; ledger?: number; ledger_attr?: number };
     if (tx.successful === false) return { state: "failed" };
     return { state: "confirmed", ledger: Number(tx.ledger_attr ?? tx.ledger ?? 0) };
@@ -300,8 +298,8 @@ export async function checkTransactionOnHorizon(txHash: string): Promise<Horizon
 }
 
 /**
- * True once a transaction that Horizon does not know about can no longer be
- * included in a ledger, so its pending entry can safely be dropped.
+ * True once a transaction missing from Horizon can no longer make it into a
+ * ledger, so its pending entry can safely be dropped.
  */
 export function isPastValidity(entry: PendingPayment, now = Date.now()): boolean {
   const deadline = entry.validUntil
@@ -311,7 +309,7 @@ export function isPastValidity(entry: PendingPayment, now = Date.now()): boolean
   return now > deadline + EXPIRY_GRACE_MS;
 }
 
-/** Merges database rows into local ones; local entries win (they are newer). */
+/** Merges remote DB rows with local entries; local wins since it's fresher. */
 export function mergePendingPayments(
   local: PendingPayment[],
   remote: PendingPayment[],
