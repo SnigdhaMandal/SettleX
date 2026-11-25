@@ -23,16 +23,6 @@ import { supabaseErrorFields } from "@/lib/observability/supabaseError";
 import { parseExpenseRow } from "@/lib/supabase/rowGuards";
 import { userFacingMessage } from "@/lib/errors/userMessage";
 
-
-/**
- * True only after the server has confirmed an active session for this wallet.
- *
- * The offline cache is readable by anyone at this keyboard, so possession of an
- * address alone must not unlock it: otherwise a wallet that connects and never
- * signs (or declines to) would be shown the rows of whichever account cached
- * them. The cookie itself is never read by browser code; the server verifies it
- * before this in-memory marker is set.
- */
 function hasProvenOwnership(walletAddress: string | null): boolean {
   if (!walletAddress) return false;
   try {
@@ -41,7 +31,6 @@ function hasProvenOwnership(walletAddress: string | null): boolean {
     return false;
   }
 }
-
 
 interface ExpenseContextType {
   expenses: Expense[];
@@ -62,13 +51,9 @@ function isRowForWallet(
   walletAddress: string | null
 ): boolean {
   if (!walletAddress || !row) return false;
-  return (
-    row.created_by_wallet === walletAddress ||
-    (Array.isArray(row.member_wallets) &&
-      row.member_wallets.includes(walletAddress) &&
-      Array.isArray(row.accepted_wallets) &&
-      row.accepted_wallets.includes(walletAddress))
-  );
+  return row.created_by_wallet === walletAddress ||
+    (Array.isArray(row.member_wallets) && row.member_wallets.includes(walletAddress) &&
+      Array.isArray(row.accepted_wallets) && row.accepted_wallets.includes(walletAddress));
 }
 
 function isCachedExpenseForWallet(expense: Expense, walletAddress: string | null): boolean {
@@ -131,16 +116,12 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   const [client, setClient] = useState<SupabaseClient<Database> | null>(null);
   const { publicKey, reconcile } = useWalletContext();
 
-  // Every call is scoped by a JWT the server issues only after the wallet has
-  // signed a challenge, so RLS has a wallet identity it can actually trust.
   const getClient = useCallback(async () => {
     if (!publicKey) throw new Error("Wallet not connected");
     await reconcile();
     return requireAuthenticatedClient(publicKey);
   }, [publicKey, reconcile]);
 
-  // Rebind whenever the session is established or dropped, so a re-signed
-  // session never leaves this provider holding a client with a stale token.
   const [sessionGeneration, setSessionGeneration] = useState(0);
   const [consentGeneration, setConsentGeneration] = useState(0);
   useEffect(() => onSessionChange(() => setSessionGeneration((n) => n + 1)), []);
@@ -149,6 +130,14 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
     window.addEventListener("settlex:consent-changed", refresh);
     return () => window.removeEventListener("settlex:consent-changed", refresh);
   }, []);
+
+  // Persist after React commits state. Never perform storage writes inside a
+  // state updater: React may invoke those updaters more than once in Strict Mode.
+  useEffect(() => {
+    if (!publicKey || !hasProvenOwnership(publicKey)) return;
+    const cacheKey = getWalletScopedKey(LS_EXPENSES, publicKey);
+    localStorage.setItem(cacheKey, JSON.stringify(expenses));
+  }, [expenses, publicKey]);
 
   // Listen for trip deletion to clean up cascaded expenses locally
   useEffect(() => {
@@ -159,7 +148,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setExpenses((prev) => {
           const updated = prev.filter((exp) => !deletedIds.includes(exp.id));
           const cacheKey = publicKey ? getWalletScopedKey(LS_EXPENSES, publicKey) : LS_EXPENSES;
-          localStorage.setItem(cacheKey, JSON.stringify(updated));
           return updated;
         });
       }
@@ -171,30 +159,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
   // Resolve the authenticated client once per wallet so the initial load and
   // periodic refresh share it. Concurrent callers reuse a single handshake,
   // so the wallet is only ever asked to sign once.
-  useEffect(() => {
-    let cancelled = false;
-
-    if (!publicKey) {
-      setClient(null);
-      return;
-    }
-
-    getAuthenticatedClient(publicKey, { interactive: false })
-      .then((resolved) => {
-        if (!cancelled) setClient(resolved);
-      })
-      .catch((err) => {
-        if (cancelled) return;
-        logWarn("expense.signin_failed_using_cache", {
-          fields: { ...supabaseErrorFields(err), error: err instanceof Error ? err.message : String(err) },
-        });
-        setClient(null);
-      });
-
-    return () => {
-      cancelled = true;
-    };
-  }, [publicKey, sessionGeneration]);
 
 
   useEffect(() => {
@@ -240,7 +204,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         if (isMounted && data) {
           const expenses = data.map(dbRowToExpense);
           setExpenses(expenses);
-          localStorage.setItem(cacheKey, JSON.stringify(expenses));
         }
       } catch (err) {
         logWarn("expense.load_failed_using_cache", { fields: supabaseErrorFields(err) });
@@ -297,7 +260,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           .filter((row) => isRowForWallet(row, publicKey))
           .map(dbRowToExpense);
         setExpenses(expenses);
-        localStorage.setItem(cacheKey, JSON.stringify(expenses));
         failureReported = false;
       } catch (error) {
         if (!stopped && !failureReported) {
@@ -345,7 +307,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
 
       setExpenses((prev) => {
         const updated = [localExpense, ...prev];
-        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -378,7 +339,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
                 const stored = dbRowToExpense(data[0]);
                 setExpenses((prev) => {
                   const synced = prev.map((e) => (e.id === expense.id ? stored : e));
-                  localStorage.setItem(cacheKey, JSON.stringify(synced));
                   return synced;
                 });
               }
@@ -437,7 +397,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       } catch (err) {
         setExpenses((prev) => {
           const rolled = prev.filter((e) => e.id !== expense.id);
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
@@ -457,7 +416,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       // Optimistic update
       setExpenses((prev) => {
         const updated = prev.map((e) => (e.id === id ? merged : e));
-        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -514,7 +472,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
             const winner = dbRowToExpense(fresh);
             setExpenses((prev) => {
               const synced = prev.map((e) => (e.id === id ? winner : e));
-              localStorage.setItem(cacheKey, JSON.stringify(synced));
               return synced;
             });
           }
@@ -530,7 +487,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         const stored = dbRowToExpense(data[0]);
         setExpenses((prev) => {
           const synced = prev.map((e) => (e.id === id ? stored : e));
-          localStorage.setItem(cacheKey, JSON.stringify(synced));
           return synced;
         });
       } catch (err) {
@@ -543,7 +499,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         if (!(err instanceof ExpenseConflictError)) {
           setExpenses((prev) => {
             const rolled = prev.map((e) => (e.id === id ? current : e));
-            localStorage.setItem(cacheKey, JSON.stringify(rolled));
             return rolled;
           });
         }
@@ -563,15 +518,21 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
       // Optimistic deletion
       setExpenses((prev) => {
         const updated = prev.filter((e) => e.id !== id);
-        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
       try {
         const client = await getClient();
-        const { error } = await client.from("expenses").delete().eq("id", id);
+        const { data, error } = await client
+          .from("expenses")
+          .delete()
+          .eq("id", id)
+          .select("id");
 
         if (error) throw error;
+        if (!data || data.length === 0) {
+          throw new Error("You do not have permission to delete this expense.");
+        }
 
         // Notify TripContext to remove dangling references in local trips
         if (typeof window !== "undefined") {
@@ -589,7 +550,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         setExpenses((prev) => {
           if (prev.some((e) => e.id === id)) return prev;
           const rolled = [current, ...prev];
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         throw err;
@@ -624,7 +584,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
           const settled = shares.every((s) => s.paid);
           return { ...e, shares, settled };
         });
-        localStorage.setItem(cacheKey, JSON.stringify(updated));
         return updated;
       });
 
@@ -651,7 +610,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
         const updatedRow = dbRowToExpense(rpcData[0]);
         setExpenses((prev) => {
           const synced = prev.map((e) => (e.id === expenseId ? updatedRow : e));
-          localStorage.setItem(cacheKey, JSON.stringify(synced));
           return synced;
         });
       } catch (err) {
@@ -675,7 +633,6 @@ export function ExpenseProvider({ children }: { children: React.ReactNode }) {
             );
             return { ...e, shares, settled: shares.every((s) => s.paid) };
           });
-          localStorage.setItem(cacheKey, JSON.stringify(rolled));
           return rolled;
         });
         // PostgREST errors are plain objects, not Error instances, so pass the

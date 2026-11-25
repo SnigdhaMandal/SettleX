@@ -8,10 +8,7 @@ import { formatAddress, formatXLM } from "@/lib/utils";
 import { STELLAR_EXPLORER } from "@/lib/utils/constants";
 import { cn } from "@/lib/utils";
 
-/**
- * Full wallet info panel — intended for the dashboard sidebar or page header.
- * Shows: address, network, balance, copy/explorer/refresh/disconnect actions.
- */
+/** Full wallet info panel for the dashboard sidebar or page header. */
 export function WalletInfo({ className }: { className?: string }) {
   const {
     publicKey,
@@ -28,7 +25,7 @@ export function WalletInfo({ className }: { className?: string }) {
   if (!isConnected || !publicKey) return null;
 
   const explorerUrl = `${STELLAR_EXPLORER}/account/${publicKey}`;
-  const isMainnet   = network === "PUBLIC";
+  const isMainnet = network === "PUBLIC";
   const isUnverified = network === null;
 
   const handleCopy = () => {
@@ -45,7 +42,6 @@ export function WalletInfo({ className }: { className?: string }) {
         className
       )}
     >
-      {/* Network bar */}
       <div
         className={cn(
           "flex items-center gap-2 px-4 py-2 border-b border-[#E5E5E5] text-xs font-semibold",
@@ -74,7 +70,6 @@ export function WalletInfo({ className }: { className?: string }) {
       </div>
 
       <div className="p-4 sm:p-5">
-        {/* Address */}
         <div className="mb-4">
           <p className="text-[11px] font-semibold uppercase tracking-wider text-[#AAA] mb-1">
             Wallet Address
@@ -112,7 +107,6 @@ export function WalletInfo({ className }: { className?: string }) {
           </div>
         </div>
 
-        {/* Balance */}
         <div className="p-3 bg-[#F6F6F6] rounded-xl mb-3">
           <div className="flex items-center justify-between">
             <div>
@@ -142,7 +136,6 @@ export function WalletInfo({ className }: { className?: string }) {
           </div>
         </div>
 
-        {/* Disconnect */}
         <button
           onClick={disconnect}
           className="w-full flex items-center justify-center gap-2 py-2 text-sm font-medium text-red-500 rounded-xl border border-red-100 hover:bg-red-50 transition-colors"
